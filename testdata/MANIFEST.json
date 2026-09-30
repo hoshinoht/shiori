@@ -4,7 +4,7 @@
   "generatedAt": "2026-09-30T08:34:09.583Z",
   "oracle": {
     "description": "Reference TypeScript workplan engine, executed as a black box. Outputs are data; no source was copied into this repository.",
-    "checkout": "/Users/cantabile/.config/opencode.rice-backup",
+    "checkout": "<reference-checkout>",
     "gitHead": "fa060fcc36d8c39be43ad9b3cea50acd442d8f5c",
     "gitDirty": true,
     "files": {

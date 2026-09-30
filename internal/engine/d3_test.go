@@ -439,9 +439,9 @@ func TestD3GeneratedIDs(t *testing.T) {
 	e := mustEngineD3(t, root.Path)
 	long := strings.Repeat("Very long title words ", 8)
 	mustMutate(t, e, "workplan_create", `{"id":"ids","goal":"g","phases":[
-		{"title":"Core bot","steps":[{"title":"Write tests"},{"title":"Write tests"},{"id":"write-tests-3","title":"x"},{"title":"日本語"}]},
-		{"title":"Core bot","steps":[{"title":"Write tests"},{"title":"`+long+`"}]},
-		{"id":"core-bot-2","title":"Explicit"}]}`)
+		{"title":"Core api","steps":[{"title":"Write tests"},{"title":"Write tests"},{"id":"write-tests-3","title":"x"},{"title":"日本語"}]},
+		{"title":"Core api","steps":[{"title":"Write tests"},{"title":"`+long+`"}]},
+		{"id":"core-api-2","title":"Explicit"}]}`)
 	p := planFile(t, root.Path, "ids")
 	var got []string
 	for _, ph := range p.Phases {
@@ -451,16 +451,16 @@ func TestD3GeneratedIDs(t *testing.T) {
 		}
 		got = append(got, ph.ID+":"+strings.Join(st, ","))
 	}
-	if got[0] != "core-bot:write-tests,write-tests-2,write-tests-3,"+p.Phases[0].Steps[3].ID || !strings.HasPrefix(p.Phases[0].Steps[3].ID, "step-") {
+	if got[0] != "core-api:write-tests,write-tests-2,write-tests-3,"+p.Phases[0].Steps[3].ID || !strings.HasPrefix(p.Phases[0].Steps[3].ID, "step-") {
 		t.Fatalf("phase 0: %v", got)
 	}
-	if !strings.HasPrefix(got[1], "core-bot-3:write-tests-4,very-long-title-words") || len(p.Phases[1].Steps[1].ID) > maxSlugUnits || got[2] != "core-bot-2:" {
+	if !strings.HasPrefix(got[1], "core-api-3:write-tests-4,very-long-title-words") || len(p.Phases[1].Steps[1].ID) > maxSlugUnits || got[2] != "core-api-2:" {
 		t.Fatalf("ids %v", got)
 	}
 	// addSteps/addPhases: slugs avoid every existing id; existing ids stay.
-	mustMutate(t, e, "workplan_update", `{"id":"ids","addPhases":[{"phase":{"title":"Core bot"}}],"addSteps":[{"phaseId":"core-bot-2","step":{"title":"Write tests"}}]}`)
+	mustMutate(t, e, "workplan_update", `{"id":"ids","addPhases":[{"phase":{"title":"Core api"}}],"addSteps":[{"phaseId":"core-api-2","step":{"title":"Write tests"}}]}`)
 	p2 := planFile(t, root.Path, "ids")
-	if p2.Phases[3].ID != "core-bot-4" || p2.Phases[2].Steps[0].ID != "write-tests-5" {
+	if p2.Phases[3].ID != "core-api-4" || p2.Phases[2].Steps[0].ID != "write-tests-5" {
 		t.Fatalf("added ids %s %s", p2.Phases[3].ID, p2.Phases[2].Steps[0].ID)
 	}
 	for i := range p.Phases {

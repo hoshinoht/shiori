@@ -123,7 +123,7 @@ so parse/hash cost is not the bottleneck at this size; X1 matters only at
   step bytes; handwritten Markdown sections (work packages, execution
   receipts, decision register) are append-only.
 - A full `read` returned 576 KB (~145k tokens) versus ~12 KB for `resume` at
-  the 12000 budget. (hoshi-opencode2 now steers agents to bounded reads.)
+  the 12000 budget. (The owner's OpenCode configuration now steers agents to bounded reads.)
 - The v1 journal stores base64 before/after content, so one status change on
   this plan writes on the order of 1 MB plus fsyncs, growing with every note.
 - Loose `.patch` files (~200 KB) sit in the workplan root unclassified.

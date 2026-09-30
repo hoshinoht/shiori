@@ -229,15 +229,15 @@ fixture content):
 | Machine / OS | Apple M4 Pro (8P+4E), 24 GiB, macOS 27.0.1 (26A434), local APFS, AC power. The owner's own OpenCode was running at the same time, so expect some noise |
 | Shiori | `f1f0ad7` (clean tree), `CGO_ENABLED=0 go build -trimpath` |
 | Toolchains | Go 1.27.1, bun 1.4.0, OpenCode 2.0.20 |
-| TS engine | The stage A black-box oracle (`opencode.rice-backup/src/custom-tools/workplan.ts`), run in-process by a bun harness |
+| TS engine | The stage A black-box oracle (`<reference-checkout>/src/custom-tools/workplan.ts`), run in-process by a bun harness |
 | TS plugin | Read-only scratch copy of `packages/workplan-tools` with absolute dependency links (as in the stage D parity run) |
 
 ### Fixtures
 
 | Label | Plan JSON | Plan MD | Checkpoint | Source |
 | --- | --- | --- | --- | --- |
-| 66 KB | 65,939 | 115,721 | 3,621 | `cp -Rp` of the kanade roadmap scratch copy |
-| 257 KB | 257,151 | 203,367 | 2,718 | `cp -Rp` of the kanade hardening scratch copy |
+| 66 KB | 65,939 | 115,721 | 3,621 | `cp -Rp` of the `real-plan-a` scratch copy |
+| 257 KB | 257,151 | 203,367 | 2,718 | `cp -Rp` of the `real-plan-b` scratch copy |
 | 1 MiB | 1,048,711 | 860,239 | none | `perf-1m` (sha256 as above) |
 | 10 MiB | 10,486,061 | 8,648,334 | none | `perf-10m` (sha256 as above) |
 
@@ -424,10 +424,10 @@ The remaining costs:
 
 - **Process hop.** A new CLI process adds about 3–4 ms. A new serve child adds
   about 11 ms for spawn and handshake, once per plugin lifetime. End to end,
-  Shiori's first `read` is 29–31 ms at the kanade sizes, against 5–11 ms warm.
+  Shiori's first `read` is 29–31 ms at the real-plan sizes (66 KB, 257 KB), against 5–11 ms warm.
   One 1 MiB first read took 177 ms (a single sample).
 - **Permission bridge.** Its cost matches the TS plugin's. The reply RTT is
-  0.5–0.9 ms. Tool call to `permission.asked` takes 6–8 ms at the kanade sizes
+  0.5–0.9 ms. Tool call to `permission.asked` takes 6–8 ms at the real-plan sizes
   for both plugins (TS 7–9 ms), which includes Shiori's prepare frame. Host
   plus adapter overhead over the engine is about 8–10 ms per write for both
   plugins.

@@ -23,15 +23,14 @@ sections below keep the full record.
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
 | D.4.2 | done | `cdcaa24` (pushed) |
 
-**Live.** hoshi-opencode2 (`~/.config/opencode`, remote
-`git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
-tools: git submodule `vendor/shiori` pinned to `02d2333` (D.4), plugin
-entry `./vendor/shiori/adapter/opencode` with option `bin:
+**Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
+Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
+`02d2333` (D.4), plugin entry `./vendor/shiori/adapter/opencode` with option `bin:
 {env:HOME}/.config/opencode/vendor/shiori/shiori` (a locally built
 binary, not tracked). The reference plugin `./packages/workplan-tools` is
 the rollback (swap back once `workplan_doctor` shows no pending journal;
 never register both). After each future stage: bump the submodule,
-rebuild `vendor/shiori/shiori`, run hoshi-opencode2 `bun test` and restart
+rebuild `vendor/shiori/shiori`, run the configuration's `bun test` and restart
 OpenCode. Nothing in
 `~/.config/opencode` is changed by Shiori stages.
 
@@ -66,12 +65,11 @@ OpenCode. Nothing in
   fixtures (`testdata/perf/*.tar.gz`, unpacked by the benchmarks into
   `$TMPDIR/shiori-perf-<go version>/`).
 - Owner-plan evidence (never copied into the repository): read-only
-  copies `kanade-fixture` (13-phase roadmap, `kanade-v5-roadmap`) and
-  `kanade-hardening` (257 KB plan, `kanade-v5-beta-hardening`) in the
-  session scratchpad `/private/tmp/claude-501/-Users-cantabile--config-opencode/cd0126d5-9456-499c-8c8d-47d08ad247e9/scratchpad/`
-  (temporary; recreate with `cp -Rp` from the originals under
-  `~/projects/personal/maplestory/kanade-bot/.opencode/workplan/` and its
-  `docs/v5/` specs, never modifying the originals). Always work on a
+  copies of two private plans, `real-plan-a` (66 KB roadmap, 13 phases,
+  38 steps) and `real-plan-b` (257 KB plan, 214 notes), in a temporary
+  scratch directory `<scratch>/` (recreate with `cp -Rp` from the
+  originals under `<private-project>/.opencode/workplan/` and their linked
+  spec files, never modifying the originals). Always work on a
   further `cp -Rp` copy with `chmod -R u+w`.
 - Reference TypeScript plugin (for `adapter/opencode/scripts/snapshot-registration.ts`):
   `~/.config/opencode/packages/workplan-tools/src/core`.
@@ -569,7 +567,7 @@ against it.
 ### Stage E prerequisites (not done; separately decided)
 
 1. Build the core at a fixed absolute path, e.g.
-   `CGO_ENABLED=0 go build -trimpath -o /Users/cantabile/projects/personal/shiori/shiori ./cmd/shiori`.
+   `CGO_ENABLED=0 go build -trimpath -o <shiori-checkout>/shiori ./cmd/shiori`.
 2. With no OpenCode session active and no pending workplan transaction (run
    `workplan_doctor`; resolve any journal first), replace in
    `~/.config/opencode/opencode.json` the entry
@@ -581,7 +579,7 @@ against it.
    with
 
    ```jsonc
-   { "package": "/Users/cantabile/projects/personal/shiori/adapter/opencode", "options": { "bin": "/Users/cantabile/projects/personal/shiori/shiori" } }
+   { "package": "<shiori-checkout>/adapter/opencode", "options": { "bin": "<shiori-checkout>/shiori" } }
    ```
 
    (or keep `options` out and export `SHIORI_BIN` with the same absolute path
@@ -741,17 +739,17 @@ page size, which the review did not ask for.
 | Read of the 38-step plan | Before | After |
 | --- | --- | --- |
 | unfiltered | 227236 bytes | identical bytes |
-| `--phase core-bot` | 192517 bytes (whole document + Markdown) | 13714 bytes (33441 with `--notes`) |
-| `--phase core-bot --step context` | 185476 bytes | 6673 bytes |
+| `--phase phase-m1a` | 192517 bytes (whole document + Markdown) | 13714 bytes (33441 with `--notes`) |
+| `--phase phase-m1a --step step-a` | 185476 bytes | 6673 bytes |
 
 C, on the unmodified copy: `validate` returns `valid: true` plus the
-drift warning for `.opencode/workplan/kanade-v5-roadmap.md`, because the
+drift warning for `.opencode/workplan/real-plan-a.md`, because the
 owner's Markdown is hand-edited. `doctor` repeats the warning on the plan
 entry. D, on a scratch copy: an update that sets `in_progress` and adds a
 step without validation is refused with
 `issues[{path: "phases.6.steps.7.validation"}]`, and `blocked` is
 accepted. F, on a scratch copy: with an orphan
-`kanade-v5-next.checkpoint.json` and a `rename.patch` added, doctor lists
+`real-plan-a-next.checkpoint.json` and a `rename.patch` added, doctor lists
 both with the `archive/` suggestion and changes nothing.
 
 ### Remaining issues (D.1)
@@ -871,43 +869,43 @@ same copies:
 
 - **Unchanged without a sidecar.** On an unmodified copy, `resume` (12000,
   6000, 4096), `validate`, `doctor`, `inspect --limit 500` and
-  `read --phase core-bot` are byte-identical between D.1 and D.2.
-- **12-entry graph** (synthetic, M1 core-bot/core-evidence → M2
-  workspace/authoring-ops/member-portal → M3 later-extension → release-ops),
+  `read --phase phase-m1a` are byte-identical between D.1 and D.2.
+- **12-entry graph** (synthetic, M1 phase-m1a/phase-m1b → M2
+  phase-m2a/phase-m2b/phase-m2c → M3 phase-m3 → phase-r),
   written with `update --input '{"dependencies":[...]}'`: no warnings.
   Resume page sizes D.1/D.2 are 6/6 at 12000, 1/1 at 6000 and 4096, and
-  20/20 at 64000. The current step `core-bot/context` is `ready, unblocks
-  11`. At 64000 the ranked page starts with `core-bot/reliability` and
-  `core-bot/staging` (unblocks 11 each), then ready steps with 0, then
-  blocked steps (`core-evidence/offline-proof` blocked by reliability and
-  staging). Inspect's critical path is `core-bot/reliability →
-  core-evidence/offline-proof → m1-stability → workspace/visual-contract →
-  m3e-pass → later-extension/nexon-feasibility → guide-publisher →
-  release-ops/roadmap-completion` (8 steps).
-- **offline-proof completed early:** the update succeeds with `Order
-  warning: step core-evidence/offline-proof was set to completed while its
-  prerequisites are not completed: core-bot/reliability (draft),
-  core-bot/staging (draft)...`. Validate stays `valid: true` with the
+  20/20 at 64000. The current step `phase-m1a/step-a` is `ready, unblocks
+  11`. At 64000 the ranked page starts with `phase-m1a/step-b` and
+  `phase-m1a/step-c` (unblocks 11 each), then ready steps with 0, then
+  blocked steps (`phase-m1b/step-d` blocked by step-b and
+  step-c). Inspect's critical path is `phase-m1a/step-b →
+  phase-m1b/step-d → step-e → phase-m2a/step-f →
+  step-g → phase-m3/step-h → step-j →
+  phase-r/step-k` (8 steps).
+- **step-d completed early:** the update succeeds with `Order
+  warning: step phase-m1b/step-d was set to completed while its
+  prerequisites are not completed: phase-m1a/step-b (draft),
+  phase-m1a/step-c (draft)...`. Validate stays `valid: true` with the
   matching `dependencies: Order warning`, and doctor repeats it. The doctor
   plan is `valid: false` only because the owner's checkpoint went stale with
   the update, as in D.1.
-- **nexon-feasibility cancelled:** the update warns that
-  `later-extension/nexon-enrichment` and `guide-publisher` are now blocked
+- **step-h cancelled:** the update warns that
+  `phase-m3/step-i` and `step-j` are now blocked
   by a cancelled prerequisite. Validate and doctor flag both, and resume
   lists both `Dependency order warning`s in the shown safety warnings. The
-  items carry `blockedBy[{... nexon-feasibility, status: "cancelled"}]`
-  (guide-publisher also `member-portal/member-reads (draft)`).
-- **Dropping later-extension via phase replacement:** refused (exit 1,
+  items carry `blockedBy[{... step-h, status: "cancelled"}]`
+  (step-j also `phase-m2c/step-l (draft)`).
+- **Dropping phase-m3 via phase replacement:** refused (exit 1,
   before the prompt) with the six dangling links listed
-  (`dependencies.8: Source step later-extension/nexon-feasibility does not
+  (`dependencies.8: Source step phase-m3/step-h does not
   exist; ...`). The plan bytes are unchanged.
 - **Empty dependsOn:** refused with `Invalid dependency metadata:
   dependencies.12.dependsOn: Dependency entry must list at least one
   prerequisite`.
-- **Backward link** (`core-bot/context` depends on
-  `release-ops/metadata-docs`): accepted. The result and validate carry
-  `dependencies.12.dependsOn.0: Backward link: core-bot/context depends on
-  release-ops/metadata-docs, which comes later in plan order.`
+- **Backward link** (`phase-m1a/step-a` depends on
+  `phase-r/step-m`): accepted. The result and validate carry
+  `dependencies.12.dependsOn.0: Backward link: phase-m1a/step-a depends on
+  phase-r/step-m, which comes later in plan order.`
 
 ### Owner decisions on the D.2 review (2026-09-30)
 
@@ -1014,7 +1012,7 @@ pristine fixture's paths, modes, mtimes and bytes were identical before and
 after. Before is `e47e667`, after is the working tree.
 
 - **Draft reset** (after adding a 5-entry dependency graph and setting the
-  plan and `core-bot/context` in progress): `e47e667` refuses the
+  plan and `phase-m1a/step-a` in progress): `e47e667` refuses the
   handwritten Markdown; with `--replace-markdown` it leaves 0 phases, 0
   steps, 0 notes, 0 findings, overwrites the Markdown, keeps the checkpoint
   and leaves 12 dangling dependency issues. D.3 without flags keeps 13
@@ -1026,7 +1024,7 @@ after. Before is `e47e667`, after is the working tree.
   confirmation are input errors; a wrong token is refused. The preview
   changed nothing and listed 13/38/4/35 removals and the two sidecar
   deletions. Apply wrote
-  `archive/kanade-v5-roadmap/state-0947ec8328a2-51963ef4dab8.json` (0600)
+  `archive/real-plan-a/state-0947ec8328a2-51963ef4dab8.json` (0600)
   holding the exact original JSON, Markdown, checkpoint and dependency
   bytes, then left an empty draft plan with no sidecars.
 - **Truncated plan** (JSON cut in half): `e47e667` doctor/validate/list
@@ -1168,7 +1166,7 @@ pristine fixture's paths, modes, mtimes, sizes and bytes were identical
 before and after. Before is `83a3414` (D.3), after is the working tree.
 
 - **Unmodified copy:** resume (12000/6000/4096), validate, doctor,
-  `inspect --limit 500` and `read --phase core-bot` are byte-identical
+  `inspect --limit 500` and `read --phase phase-m1a` are byte-identical
   between D.3 and D.3.1 (fresh checkpoint, no sidecar, handwritten
   Markdown).
 - **Step gate:** after adding a draft step with an action but no
@@ -1178,30 +1176,30 @@ before and after. Before is `83a3414` (D.3), after is the working tree.
   accepted, and `in_progress` plus `validation` in the same call is
   accepted.
 - **Unreadable plan with a moved link** (`planFile` moved to
-  `.opencode/workplan/roadmap/kanade-v5.md`, JSON cut in half): D.3.1
-  doctor reports `recoveredPlanFile: .opencode/workplan/roadmap/kanade-v5.md`;
+  `.opencode/workplan/roadmap/real-plan-a.md`, JSON cut in half): D.3.1
+  doctor reports `recoveredPlanFile: .opencode/workplan/roadmap/real-plan-a.md`;
   update is refused with the repair hint naming the doctor state hash;
   `create --overwrite --expected-hash <that hash>` relinks the handwritten
-  `roadmap/kanade-v5.md` and writes
-  `archive/kanade-v5-roadmap/state-c8ce6f258585-1d43c6e33c63.json` (0600,
+  `roadmap/real-plan-a.md` and writes
+  `archive/real-plan-a/state-c8ce6f258585-1d43c6e33c63.json` (0600,
   `workplanJson` byte-identical to the damaged file, sha256 matches, 115 KB
   of original Markdown). D.3 has no `recoveredPlanFile`, no hint and no
-  archive, and relinks the stale `kanade-v5-roadmap.md` copy left by the
+  archive, and relinks the stale `real-plan-a.md` copy left by the
   move (the wrong file).
 - **Stale checkpoint** (a line appended to the Markdown): D.3 resume
-  diagnostic `null`; D.3.1 `changed: .opencode/workplan/kanade-v5-roadmap.md`
+  diagnostic `null`; D.3.1 `changed: .opencode/workplan/real-plan-a.md`
   at 12000/6000/4096, with the same page sizes (6/1/1) and truncated-field
   sets; +46 units.
-- **Critical path** (3-entry graph `core-bot/reliability,staging →
-  core-evidence/offline-proof → m1-stability → workspace/visual-contract`,
+- **Critical path** (3-entry graph `phase-m1a/step-b,step-c →
+  phase-m1b/step-d → step-e → phase-m2a/step-f`,
   which also makes the checkpoint stale): D.3.1 resume adds
-  `criticalPath {length 4, nextStep core-bot/reliability}` at
+  `criticalPath {length 4, nextStep phase-m1a/step-b}` at
   64000/12000/6000 (page sizes 20/6/1, same as D.3; truncated fields
   unchanged), matching inspect. At 4096 the critical path is dropped; the
   D.3 packet was already in the emergency tier there (display cap 64), and
   the stale diagnostic moves it one step lower (48).
 - **Wipe:** doctor adds `phases: Plan was wiped …; the removed content is
-  archived at .opencode/workplan/archive/kanade-v5-roadmap/state-8ed35bcbe9c6-3725f90fc967.json. Add phases …`;
+  archived at .opencode/workplan/archive/real-plan-a/state-8ed35bcbe9c6-3725f90fc967.json. Add phases …`;
   validate keeps only `phases: At least one phase is required`; D.3 doctor
   has no note.
 - **Old-rendering generated Markdown** (regenerated with the D.3 binary,
@@ -1324,11 +1322,11 @@ read-only fixtures; nothing from them is in the repository. The pristine
 copies' paths, modes, mtimes, sizes and bytes were identical before and
 after. Before is `df74f35` (D.3.1), after is the working tree.
 
-- **Roadmap copy** (`kanade-v5-roadmap`, 65 939-byte JSON, 35 notes): no
+- **Roadmap copy** (`real-plan-a`, 65 939-byte JSON, 35 notes): no
   advice. `resume` (12000/6000/4096), `doctor`, `validate`, `inspect
-  --limit 500`, `read --phase core-bot` and the full `read` are
+  --limit 500`, `read --phase phase-m1a` and the full `read` are
   byte-identical between D.3.1 and D.4.
-- **Hardening copy** (`kanade-v5-beta-hardening`: 257 151-byte JSON,
+- **Hardening copy** (`real-plan-b`: 257 151-byte JSON,
   203 367-byte handwritten Markdown, 12 phases, 62 steps, 214 notes, 32
   resolved findings, fresh checkpoint). `validate` is identical. Doctor
   advice: reasons `notes: 105 notes are eligible for rollover (threshold
@@ -1345,7 +1343,7 @@ after. Before is `df74f35` (D.3.1), after is the working tree.
   notes with `estimatedSavings` JSON 257 151 → 196 808 (−60 343, 23%);
   apply wrote exactly 196 808 bytes (`savings` identical), left the
   handwritten Markdown byte-identical and refreshed the checkpoint. The
-  archive `archive/kanade-v5-beta-hardening/state-538980bf42a0-5ffce10e9ccc.json`
+  archive `archive/real-plan-b/state-538980bf42a0-5ffce10e9ccc.json`
   (0600, 535 KB) holds all 105 removed notes byte-identical to the
   originals (59 616 bytes of note text), `source.workplanJson`
   byte-identical to the original JSON (sha256 `d4ea2174534a…`), the
@@ -1528,12 +1526,12 @@ including the new pointer rule, by the independent implementation).
   shown/dropped counts in the sweep).
 
 Owner-plan evidence ran on fresh `cp -Rp` copies (`chmod -R u+w`) of the
-read-only `kanade-hardening` fixture; nothing from it is in the
+read-only `real-plan-b` fixture; nothing from it is in the
 repository. The pristine copy's paths, modes, mtimes, sizes and bytes
 were identical before and after. Before is `76c9fda` (D.4.1), after is the
 working tree.
 
-- **Resume** (`kanade-v5-beta-hardening`, UTF-16 units; page items):
+- **Resume** (`real-plan-b`, UTF-16 units; page items):
   at 12000 D.4.1 returned 11 533 with the advice and 5 items; D.4.2
   returns 11 964 without it and 6 items, byte-identical to
   `--compaction-advice off`. At 6000, 8000, 16000, 32000 and 64000 the
