@@ -1,12 +1,15 @@
 # Frozen contract v1 (stage A)
 
-Status: **PROPOSED for review**, 2026-09-30. Everything in this document is a
-stage A output: the reviewed schemas, the golden corpus, and a concrete proposal
-for each open item in [05 §6](specs/05-migration-and-acceptance.md). Items
-marked **PROPOSED** need the owner's approval before stage B depends on them.
-Items marked **OBSERVED** describe what the reference implementation actually
-does, as recorded in `testdata/`. Where OBSERVED and the specifications
-disagree, section 7 lists the difference and proposes a resolution.
+Status: **APPROVED 2026-09-30** by the owner (section 9 records the approval).
+Everything in this document is a stage A output: the reviewed schemas, the
+golden corpus, and a resolution for each open item in
+[05 §6](specs/05-migration-and-acceptance.md). Items marked **APPROVED
+2026-09-30** were proposals at stage A and are now binding. Items marked
+**OBSERVED** describe what the reference implementation actually does, as
+recorded in `testdata/`. Where OBSERVED and the specifications disagree,
+section 7 lists the difference and the approved resolution. Section 10 records
+stage B findings (reference behaviour the corpus pins down that stage A did not
+spell out).
 
 ## 1. Sources of truth
 
@@ -24,7 +27,7 @@ reference source was copied, ported or paraphrased into this repository. The
 harness scripts that drove it are kept outside the repository, and only their
 sha256 fingerprints are recorded.
 
-## 2. Schema layout (PROPOSED)
+## 2. Schema layout (APPROVED 2026-09-30)
 
 - The dialect is 2020-12. `$id` values use `https://shiori.invalid/schema/v1/…`.
   They are identifiers only and are never fetched. Relative `$ref`s resolve
@@ -132,7 +135,7 @@ Cursor checksums use the same style of preimage:
 
 ## 5. Resolutions for 05 §6 ("choose/freeze before implementation")
 
-### 5.1 Schema and binding tooling: PROPOSED
+### 5.1 Schema and binding tooling: APPROVED 2026-09-30
 
 1. The JSON Schema files in `schema/` are the single source of truth. There is
    no code generator in stages B–D. Go types are hand-written against the
@@ -155,7 +158,7 @@ Cursor checksums use the same style of preimage:
 4. Schema changes bump the directory version (`schema/v2/…`). Version v1 is
    frozen once the owner approves it.
 
-### 5.2 Limits: PROPOSED (configurable, benchmark-revisited in stage F)
+### 5.2 Limits: APPROVED 2026-09-30 (configurable, benchmark-revisited in stage F)
 
 | Limit | Default | Notes |
 | --- | --- | --- |
@@ -170,7 +173,7 @@ Cursor checksums use the same style of preimage:
 | Resume / doctor / inspect `limit` | 1–100 default 20 / 1–100 default 50 / 1–500 default 100 | Unchanged |
 | Lock wait / abandonment grace | 5 s / 5 min | Unchanged; age alone never reclaims |
 
-### 5.3 Packaging and distribution: PROPOSED
+### 5.3 Packaging and distribution: APPROVED 2026-09-30
 
 - **Core.** A single static Go binary named `shiori`, built with `CGO_ENABLED=0`,
   `-trimpath`, reproducible flags, and the Go module
@@ -187,7 +190,7 @@ Cursor checksums use the same style of preimage:
   artifacts (GitHub release, per-platform binaries plus `SHA256SUMS`) belong to
   stage E, and are neither published nor automated before that.
 
-### 5.4 Process lifecycle: PROPOSED
+### 5.4 Process lifecycle: APPROVED 2026-09-30
 
 - The adapter lazily spawns **one** `shiori serve --stdio` child per plugin
   instance on the first tool call. There is no daemon shared across projects or
@@ -212,7 +215,7 @@ Cursor checksums use the same style of preimage:
 - **One-shot CLI.** `shiori <operation> …` runs the same engine in-process, with
   no child and no protocol.
 
-### 5.5 Standalone CLI mutation confirmation: PROPOSED
+### 5.5 Standalone CLI mutation confirmation: APPROVED 2026-09-30
 
 The CLI acts under OS/local operator authority, not OpenCode policy (spec 02 §7).
 
@@ -231,7 +234,7 @@ The CLI acts under OS/local operator authority, not OpenCode policy (spec 02 §7
   excludes every ordinary update flag.
 - `--json` emits the protocol result object on stdout, and nothing else.
 
-### 5.6 Platform and host matrix: PROPOSED
+### 5.6 Platform and host matrix: APPROVED 2026-09-30
 
 | Target | Read ops | Writes | Evidence required before claiming |
 | --- | --- | --- | --- |
@@ -248,7 +251,7 @@ The CLI acts under OS/local operator authority, not OpenCode policy (spec 02 §7
 
 ## 6. Unknown-field preservation and error text
 
-### 6.1 Unknown fields: PROPOSED policy, with OBSERVED reference behaviour
+### 6.1 Unknown fields: APPROVED 2026-09-30 policy, with OBSERVED reference behaviour
 
 **Stored plan JSON (document, phase, step, finding).** Unknown members must
 survive unrelated writes with their values and nesting intact. The reference
@@ -275,7 +278,7 @@ wholesale. This matches the reference.
 nested phase/step/finding/patch objects (D2). The core/CLI surface follows the
 same rule.
 
-### 6.2 Error text policy: PROPOSED
+### 6.2 Error text policy: APPROVED 2026-09-30
 
 1. The reference's own messages must match byte-for-byte after `$ROOT`
    substitution. These are the messages listed in the behavioural contract and in
@@ -380,12 +383,68 @@ To regenerate, rerun the out-of-repo harness against an oracle whose file
 fingerprints equal `MANIFEST.oracle.files`. A fingerprint mismatch invalidates
 the corpus, and requires review before replacement.
 
-## 9. Open for the owner
+## 9. Owner decisions (APPROVED 2026-09-30)
 
-1. Approve or amend the PROPOSED items in sections 2, 5 and 6, and the proposals
-   D1–D12.
-2. Confirm that shipping ~1 MB of compressed performance fixtures in git is
-   acceptable. The alternative is generator parameters only, with the fixture
-   sha256s recorded in `docs/baseline.md`.
-3. Confirm the validator test dependency (5.1). Stage B adds `go.mod` and must
-   not add it without approval.
+The owner approved, on 2026-09-30:
+
+1. Every item previously marked PROPOSED in sections 2, 5 and 6, and the
+   proposed resolutions D1–D12 in section 7. They are bug fixes to the
+   original workplan design, applied in the narrowest way: the V2
+   plan/checkpoint/dependencies/journal formats, the `.opencode/workplan/`
+   layout, the thirteen `workplan_*` identities, their argument shapes, the
+   hash algorithm and the generated Markdown stay unchanged. A fix that would
+   need a design change is not implemented; it is listed in
+   [STATUS.md](STATUS.md) instead.
+2. Keeping the compressed performance fixtures (`testdata/perf/*.tar.gz`,
+   ~1 MB) in git.
+3. Adding `go.mod` (module `github.com/hoshinoht/shiori`) and the test-only
+   JSON Schema validator `github.com/santhosh-tekuri/jsonschema/v6` (pinned
+   v6.0.3; its `golang.org/x/text` requirement comes with it). Only
+   `_test.go` files import it, so it is never linked into the `shiori`
+   binary. Its regexp engine is Go RE2 with `\uXXXX` escapes translated;
+   no further dependency.
+
+## 10. Stage B findings (OBSERVED, pinned by the corpus)
+
+These reference behaviours were not written down at stage A. The Go core
+reproduces them byte-for-byte; the vectors named are the evidence.
+
+- **Tool output text** is `JSON.stringify(result, null, 2)` for every tool
+  except `workplan_resume`, whose packet chooses its own format (below). Every
+  `outputSha256` in `tools/`, `resume/` and `paging/` is the SHA-256 of that
+  text after `$ROOT` substitution.
+- **Pending journal short-circuit.** `read`, `inspect` and `resume` on a plan
+  with `<id>.transaction.json` return only
+  `{recoveryRequired, journalPath, planHash, stateHash}`; `read` adds
+  `"workplan": null` and `resume` adds `"planFresh": false`
+  (`tools/pending-journal/*`, `resume/pending-journal/*`).
+- **Resume cursor filters.** The resume cursor stores `phaseId`/`stepId` as
+  `"sha256:" + hex(SHA-256(id))`, not the raw id; the inspect cursor stores the
+  raw `phaseId` (`paging/resume-big-phase2-step20`, `paging/inspect-big-*`).
+- **Resume budget policy.** A packet is built with a pinned-list cap *L*, a
+  display-string cap *C* (UTF-16 code units, the last one being `…`, never
+  splitting a surrogate pair) and a page size, and the first candidate whose
+  complete text fits `maxChars` is returned:
+  1. *L* = 4 when `maxChars` is 4096 and 8 at 12000 and 64000. The cut-over
+     between those budgets is not covered by the corpus; Go uses 8192.
+  2. For *C* in 512, 256, 128, 64, 32, 21, 10, 5, 2, 1: pretty
+     (`JSON.stringify(v, null, 2)`), then compact, with the full page.
+  3. Then, at *C* = 1, the page shrinks one item at a time (pretty, then
+     compact).
+
+  The corpus forbids a cap in 11–20, 22–31 or 33–58 (a packet at such a cap
+  would have fit and been chosen), and requires 32, 21, 10, 2 and 1; 256, 128,
+  64 and 5 are unconstrained and follow the halving pattern. `truncatedFields`
+  lists danger fields first, then the rest, in packet order, capped at 4·*L*.
+  All 87 `resume/` and 74 `paging/` vectors reproduce exactly.
+- **Checkpoint diagnostics.** A checkpoint that is JSON but matches neither
+  version is `checkpoint: : Invalid input` in doctor and
+  `Invalid workplan checkpoint document at <path>: : Invalid input` in resume
+  (`tools/list-mixed/a-plan--doctor`, `resume/list-mixed/a-plan--*`).
+- **Doctor filtering.** `doctor {id}` keeps `planCount` for the whole
+  directory, filters plans by exact file name against the normalized id, and
+  lists every sidecar, lock and journal (`tools/list-mixed/UPPER--doctor`).
+- **Case-insensitive lookup is inherited from the filesystem.** On APFS,
+  `read UPPER` normalizes to `upper` and opens `UPPER.json`; the vectors
+  record that. The same call on a case-sensitive Linux filesystem reports
+  `Workplan file not found`.

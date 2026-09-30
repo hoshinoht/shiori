@@ -1,0 +1,302 @@
+package snapshot
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"syscall"
+
+	"github.com/hoshinoht/shiori/internal/model"
+	"github.com/hoshinoht/shiori/internal/ojson"
+)
+
+// Limits (contracts §5.2). They are configurable by the trusted caller
+// only, never by model input.
+type Limits struct {
+	MaxArtifactBytes int64
+	MaxSnapshotBytes int64
+	MaxSpecFiles     int
+}
+
+// DefaultLimits are the approved defaults.
+var DefaultLimits = Limits{
+	MaxArtifactBytes: 64 << 20,
+	MaxSnapshotBytes: 256 << 20,
+	MaxSpecFiles:     1024,
+}
+
+// ErrUnsupported marks a request that exceeds a configured capability.
+var ErrUnsupported = errors.New("unsupported_capability")
+
+// Artifact is one file read exactly once.
+type Artifact struct {
+	Rel    string // project-relative path ('/' separators, as stored)
+	Path   string // absolute path
+	Bytes  []byte
+	Exists bool
+}
+
+// Snapshot is the complete, byte-exact artifact set of one plan.
+type Snapshot struct {
+	Root string
+	ID   string // normalized id used for the file names
+
+	JSON         Artifact
+	Plan         *model.Plan // decoded with normalized planFile/specFiles
+	Markdown     Artifact
+	Specs        []Artifact
+	Checkpoint   Artifact
+	Dependencies Artifact
+	Journal      Artifact
+
+	PlanManifest  []Entry
+	StateManifest []Entry
+	PlanHash      string
+	StateHash     string
+
+	// MissingPlanArtifacts lists linked Markdown/spec paths that are absent.
+	MissingPlanArtifacts []string
+	// BackslashPaths lists linked paths containing '\' (D5).
+	BackslashPaths []string
+}
+
+// PlanRel is the primary JSON path for an id.
+func PlanRel(id string) string { return WorkplanDir + "/" + id + ".json" }
+
+// SidecarRel is a sidecar path for an id and suffix such as ".checkpoint.json".
+func SidecarRel(id, suffix string) string { return WorkplanDir + "/" + id + suffix }
+
+// Reader reads artifacts under a canonical root. It only opens files
+// read-only and never creates, renames or touches anything.
+type Reader struct {
+	Root   string
+	Limits Limits
+	total  int64
+}
+
+func (r *Reader) read(rel string) (Artifact, error) {
+	a := Artifact{Rel: rel, Path: abs(r.Root, rel)}
+	f, err := os.Open(a.Path)
+	if err != nil {
+		// ENOENT, or ENOTDIR when a path component is a file, is "missing".
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return a, nil
+		}
+		return a, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return a, err
+	}
+	if st.IsDir() {
+		return a, fmt.Errorf("Artifact is a directory: %s", a.Path)
+	}
+	if st.Size() > r.Limits.MaxArtifactBytes {
+		return a, fmt.Errorf("%w: artifact %s is %d bytes, above the %d-byte read limit", ErrUnsupported, a.Path, st.Size(), r.Limits.MaxArtifactBytes)
+	}
+	r.total += st.Size()
+	if r.total > r.Limits.MaxSnapshotBytes {
+		return a, fmt.Errorf("%w: snapshot exceeds the %d-byte limit", ErrUnsupported, r.Limits.MaxSnapshotBytes)
+	}
+	// Read into a buffer sized from Stat (one allocation); a file that grew
+	// meanwhile is still bounded by the limit.
+	data := make([]byte, 0, st.Size()+1)
+	for {
+		if int64(len(data)) > r.Limits.MaxArtifactBytes {
+			return a, fmt.Errorf("%w: artifact %s exceeds the read limit", ErrUnsupported, a.Path)
+		}
+		if len(data) == cap(data) {
+			data = append(data, 0)[:len(data)]
+		}
+		n, err := f.Read(data[len(data):cap(data)])
+		data = data[:len(data)+n]
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return a, err
+		}
+	}
+	a.Bytes = data
+	a.Exists = true
+	return a, nil
+}
+
+// ReadFile reads one project-relative artifact (exported for doctor/list).
+func (r *Reader) ReadFile(rel string) (Artifact, error) { return r.read(rel) }
+
+// NotFoundError is the reference "Workplan file not found" error.
+type NotFoundError struct{ Path string }
+
+func (e *NotFoundError) Error() string { return "Workplan file not found: " + e.Path }
+
+// InvalidJSONError wraps a parse failure with the stable reference prefix.
+type InvalidJSONError struct {
+	Path string
+	Err  error
+}
+
+func (e *InvalidJSONError) Error() string {
+	return "Invalid workplan JSON at " + e.Path + ": " + e.Err.Error()
+}
+
+// LoadPlanDocument reads and decodes only the primary JSON.
+func (r *Reader) LoadPlanDocument(id string) (Artifact, *model.Plan, error) {
+	a, err := r.read(PlanRel(id))
+	if err != nil {
+		return a, nil, err
+	}
+	if !a.Exists {
+		return a, nil, &NotFoundError{Path: a.Path}
+	}
+	parsed, err := ojson.ParseImmutable(a.Bytes)
+	if err != nil {
+		return a, nil, &InvalidJSONError{Path: a.Path, Err: err}
+	}
+	p, err := model.DecodePlan(parsed)
+	if err != nil {
+		return a, nil, err
+	}
+	return a, p, nil
+}
+
+// Load reads the complete artifact set for a normalized id.
+func Load(root, id string, limits Limits) (*Snapshot, error) {
+	r := &Reader{Root: root, Limits: limits}
+	s := &Snapshot{Root: root, ID: id}
+	var err error
+	s.JSON, s.Plan, err = r.LoadPlanDocument(id)
+	if err != nil {
+		return nil, err
+	}
+	p := s.Plan
+	if p.PlanFile, err = NormalizePlanFile(root, p.PlanFile); err != nil {
+		return nil, err
+	}
+	if len(p.SpecFiles) > limits.MaxSpecFiles {
+		return nil, fmt.Errorf("%w: %d linked spec files exceed the limit of %d", ErrUnsupported, len(p.SpecFiles), limits.MaxSpecFiles)
+	}
+	specs := make([]string, len(p.SpecFiles))
+	for i, raw := range p.SpecFiles {
+		if specs[i], err = NormalizeSpecFile(root, raw); err != nil {
+			return nil, err
+		}
+	}
+	p.SpecFiles = specs
+
+	if !withinRoot(root, abs(root, p.PlanFile)) {
+		return nil, fmt.Errorf("Plan file must stay inside workspace root: %s", p.PlanFile)
+	}
+	if s.Markdown, err = r.read(p.PlanFile); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{ManifestPath(s.JSON.Rel): true, ManifestPath(p.PlanFile): true}
+	planEntries := []Entry{
+		EntryFor(ManifestPath(s.JSON.Rel), s.JSON.Bytes, true),
+		EntryFor(ManifestPath(p.PlanFile), s.Markdown.Bytes, s.Markdown.Exists),
+	}
+	if !s.Markdown.Exists {
+		s.MissingPlanArtifacts = append(s.MissingPlanArtifacts, p.PlanFile)
+	}
+	if containsBackslash(p.PlanFile) {
+		s.BackslashPaths = append(s.BackslashPaths, p.PlanFile)
+	}
+	for _, rel := range specs {
+		if !withinRoot(root, abs(root, rel)) {
+			return nil, fmt.Errorf("Spec file must stay inside workspace root: %s", rel)
+		}
+		a, err := r.read(rel)
+		if err != nil {
+			return nil, err
+		}
+		s.Specs = append(s.Specs, a)
+		if containsBackslash(rel) {
+			s.BackslashPaths = append(s.BackslashPaths, rel)
+		}
+		mp := ManifestPath(rel)
+		if seen[mp] {
+			continue
+		}
+		seen[mp] = true
+		planEntries = append(planEntries, EntryFor(mp, a.Bytes, a.Exists))
+		if !a.Exists {
+			s.MissingPlanArtifacts = append(s.MissingPlanArtifacts, rel)
+		}
+	}
+	for _, sc := range []struct {
+		dst    *Artifact
+		suffix string
+	}{{&s.Checkpoint, ".checkpoint.json"}, {&s.Dependencies, ".dependencies.json"}, {&s.Journal, ".transaction.json"}} {
+		if *sc.dst, err = r.read(SidecarRel(id, sc.suffix)); err != nil {
+			return nil, err
+		}
+	}
+	s.PlanManifest = SortEntries(planEntries)
+	stateEntries := append([]Entry{}, planEntries...)
+	for _, a := range []Artifact{s.Checkpoint, s.Dependencies, s.Journal} {
+		stateEntries = append(stateEntries, EntryFor(a.Rel, a.Bytes, a.Exists))
+	}
+	s.StateManifest = SortEntries(stateEntries)
+	s.PlanHash = ManifestHash(PlanHashVersion, planEntries)
+	s.StateHash = ManifestHash(StateHashVersion, stateEntries)
+	return s, nil
+}
+
+// InterruptedStateHash computes the read-only state hash of a plan whose
+// primary JSON is absent but whose journal is pending (D1, S09): the
+// primary is recorded as missing and only the journal's own targets and
+// the id's sidecars contribute.
+func InterruptedStateHash(root, id string, limits Limits, journalTargets []string) (string, error) {
+	r := &Reader{Root: root, Limits: limits}
+	entries := []Entry{}
+	seen := map[string]bool{}
+	add := func(rel string) error {
+		mp := ManifestPath(rel)
+		if seen[mp] {
+			return nil
+		}
+		seen[mp] = true
+		a, err := r.read(rel)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, EntryFor(mp, a.Bytes, a.Exists))
+		return nil
+	}
+	if err := add(PlanRel(id)); err != nil {
+		return "", err
+	}
+	for _, t := range journalTargets {
+		if _, ok := relInRoot(root, t); !ok {
+			continue
+		}
+		if err := add(t); err != nil {
+			return "", err
+		}
+	}
+	for _, suffix := range []string{".checkpoint.json", ".dependencies.json", ".transaction.json"} {
+		if err := add(SidecarRel(id, suffix)); err != nil {
+			return "", err
+		}
+	}
+	return ManifestHash(StateHashVersion, entries), nil
+}
+
+func containsBackslash(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+// DirExists reports whether the workplan directory exists.
+func DirExists(root string) bool {
+	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(WorkplanDir)))
+	return err == nil && st.IsDir()
+}

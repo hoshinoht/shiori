@@ -1,0 +1,204 @@
+package engine
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/testutil"
+)
+
+var readOnlyTools = map[string]bool{
+	"workplan_read": true, "workplan_list": true, "workplan_inspect": true,
+	"workplan_validate": true, "workplan_resume": true, "workplan_doctor": true,
+}
+
+// parseForSurface validates input and re-renders the accepted data in the
+// reference's key order (schema order, workspaceRoot first on core).
+func parseForSurface(tool string, v ojson.Value, s Surface) (map[string]any, error) {
+	out := map[string]any{}
+	put := func(k string, p any) {
+		switch x := p.(type) {
+		case *string:
+			if x != nil {
+				out[k] = *x
+			}
+		case *int:
+			if x != nil {
+				out[k] = float64(*x)
+			}
+		case *bool:
+			if x != nil {
+				out[k] = *x
+			}
+		case string:
+			out[k] = x
+		}
+	}
+	switch tool {
+	case "workplan_read":
+		in, err := ParseReadInput(v, s)
+		if err != nil {
+			return nil, err
+		}
+		put("workspaceRoot", in.WorkspaceRoot)
+		put("id", in.ID)
+		put("phaseId", in.PhaseID)
+		put("stepId", in.StepID)
+		put("includeMarkdown", in.IncludeMarkdown)
+	case "workplan_list":
+		in, err := ParseListInput(v, s)
+		if err != nil {
+			return nil, err
+		}
+		put("workspaceRoot", in.WorkspaceRoot)
+	case "workplan_inspect":
+		in, err := ParseInspectInput(v, s)
+		if err != nil {
+			return nil, err
+		}
+		put("workspaceRoot", in.WorkspaceRoot)
+		put("id", in.ID)
+		put("phaseId", in.PhaseID)
+		put("limit", in.Limit)
+		put("cursor", in.Cursor)
+	case "workplan_validate":
+		in, err := ParseValidateInput(v, s)
+		if err != nil {
+			return nil, err
+		}
+		put("workspaceRoot", in.WorkspaceRoot)
+		put("id", in.ID)
+	case "workplan_resume":
+		in, err := ParseResumeInput(v, s)
+		if err != nil {
+			return nil, err
+		}
+		put("workspaceRoot", in.WorkspaceRoot)
+		put("id", in.ID)
+		put("maxChars", in.MaxChars)
+		put("limit", in.Limit)
+		put("cursor", in.Cursor)
+		put("phaseId", in.PhaseID)
+		put("stepId", in.StepID)
+	case "workplan_doctor":
+		in, err := ParseDoctorInput(v, s)
+		if err != nil {
+			return nil, err
+		}
+		put("workspaceRoot", in.WorkspaceRoot)
+		put("id", in.ID)
+		put("limit", in.Limit)
+	}
+	return out, nil
+}
+
+// TestInputVectors checks accept/reject and exact messages for the
+// read-only tools on both surfaces. Mutating tools' input vectors belong
+// to stage C (prepared intents) and are counted as deferred.
+func TestInputVectors(t *testing.T) {
+	files, _ := filepath.Glob(testutil.Testdata("vectors", "validation", "input", "*.json"))
+	if len(files) != 55 {
+		t.Fatalf("expected 55 input vectors, got %d", len(files))
+	}
+	ran, deferred := 0, 0
+	for _, f := range files {
+		var v struct {
+			ID     string          `json:"id"`
+			Tool   string          `json:"tool"`
+			Input  json.RawMessage `json:"input"`
+			Expect map[string]*struct {
+				OK      bool           `json:"ok"`
+				Data    map[string]any `json:"data"`
+				Message string         `json:"message"`
+			} `json:"expect"`
+		}
+		data, _ := os.ReadFile(f)
+		if err := json.Unmarshal(data, &v); err != nil {
+			t.Fatal(err)
+		}
+		if !readOnlyTools[v.Tool] {
+			deferred++
+			continue
+		}
+		ran++
+		t.Run(v.ID, func(t *testing.T) {
+			parsed, err := ojson.Parse(v.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sf := range []struct {
+				name string
+				s    Surface
+			}{{"core", SurfaceCore}, {"native", SurfaceNative}} {
+				exp := v.Expect[sf.name]
+				got, err := parseForSurface(v.Tool, parsed.Value, sf.s)
+				if !exp.OK {
+					if err == nil || err.Error() != exp.Message {
+						t.Fatalf("%s: error %v, want %q", sf.name, err, exp.Message)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("%s: unexpected error %v", sf.name, err)
+				}
+				if !reflect.DeepEqual(got, exp.Data) {
+					t.Fatalf("%s: data %v want %v", sf.name, got, exp.Data)
+				}
+			}
+		})
+	}
+	t.Logf("input vectors: %d read-only checked, %d mutating deferred to stage C", ran, deferred)
+	if ran != 16 {
+		t.Fatalf("expected 16 read-only input vectors, ran %d", ran)
+	}
+}
+
+// TestGeneratedClassification checks markdown/generated-classification:
+// stored Markdown is "generated" iff it byte-equals the rendering of the
+// normalized stored JSON.
+func TestGeneratedClassification(t *testing.T) {
+	var doc struct {
+		Rows []struct {
+			Fixture   string `json:"fixture"`
+			PlanID    string `json:"planId"`
+			Present   *bool  `json:"markdownPresent"`
+			Generated *bool  `json:"generated"`
+			Error     string `json:"error"`
+		} `json:"rows"`
+	}
+	testutil.ReadJSON(t, testutil.Testdata("vectors", "markdown", "generated-classification.json"), &doc)
+	for _, row := range doc.Rows {
+		t.Run(row.Fixture+"/"+row.PlanID, func(t *testing.T) {
+			root := testutil.NewRoot(t, row.Fixture)
+			e, err := New(root.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := normalizeRequested(row.PlanID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gen, present, err := e.MarkdownGenerated(id)
+			if row.Error != "" {
+				if err == nil {
+					t.Fatalf("expected error %q", row.Error)
+				}
+				got, want := normEngineText(root.Normalize(err.Error())), normEngineText(row.Error)
+				if got != want {
+					t.Fatalf("error %q want %q", got, want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if present != *row.Present || (row.Generated != nil && gen != *row.Generated) {
+				t.Fatalf("present=%v generated=%v want %v/%v", present, gen, *row.Present, row.Generated)
+			}
+		})
+	}
+}

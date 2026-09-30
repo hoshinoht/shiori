@@ -1,0 +1,302 @@
+package engine
+
+import (
+	"strings"
+
+	"github.com/hoshinoht/shiori/internal/model"
+	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/snapshot"
+)
+
+// DefaultDoctorLimit is the doctor page size default.
+const DefaultDoctorLimit = 50
+
+const msgInvalidPlans = "One or more primary plans are invalid; see per-plan diagnostics"
+
+// Doctor implements workplan_doctor: read-only diagnostics of roots,
+// classification, freshness, locks, pending journals and recovery
+// pointers. Host facts it cannot prove stay unknown (null). It never asks
+// for approval, repairs, or changes anything.
+func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
+	limit := DefaultDoctorLimit
+	if in.Limit != nil {
+		limit = *in.Limit
+	}
+	var filterID *string
+	if in.ID != nil {
+		n, err := normalizeRequested(*in.ID)
+		if err != nil {
+			return ojson.Value{}, err
+		}
+		filterID = &n
+	}
+	l, err := e.scanDir()
+	if err != nil {
+		return ojson.Value{}, err
+	}
+	var topIssues []string
+	if !l.exists {
+		topIssues = append(topIssues, "Workplan directory is missing: "+e.dir())
+	}
+
+	// Journals first: a journal-only plan (primary JSON absent) is
+	// reported with its interrupted-state hash (D1).
+	type pending struct {
+		entry   dirEntry
+		id      string
+		journal *model.Journal
+	}
+	var journals []pending
+	var locks []dirEntry
+	var sidecars []dirEntry
+	for _, sc := range l.sidecars {
+		switch sc.kind {
+		case kindArchive:
+			continue
+		case kindTransaction:
+			id := strings.TrimSuffix(sc.name, ".transaction.json")
+			pj := pending{entry: sc, id: id}
+			r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
+			if a, err := r.ReadFile(snapshot.WorkplanDir + "/" + sc.name); err == nil && a.Exists {
+				if parsed, err := ojson.Parse(a.Bytes); err == nil {
+					if j, ok := model.DecodeJournal(parsed.Value); ok {
+						pj.journal = j
+					}
+				}
+			}
+			journals = append(journals, pj)
+		case kindLock:
+			locks = append(locks, sc)
+		}
+		sidecars = append(sidecars, sc)
+	}
+
+	names := l.primary
+	primarySet := map[string]bool{}
+	for _, n := range names {
+		primarySet[n] = true
+	}
+	if filterID != nil {
+		names = nil
+		if primarySet[*filterID] {
+			names = []string{*filterID}
+		}
+	}
+	plans := []ojson.Value{}
+	anyInvalid := false
+	returned := 0
+	for _, name := range names {
+		if returned >= limit {
+			break
+		}
+		returned++
+		entry := e.doctorPlan(name)
+		if v, _ := entry.Get("valid"); !v.Bool() {
+			anyInvalid = true
+		}
+		plans = append(plans, entry)
+	}
+	// D1: journal-only plans (no primary JSON) get an entry that carries
+	// the read-only interrupted-state hash so explicit recovery can supply
+	// its expectedHash. It uses only the existing plan-entry fields.
+	journalOnly := 0
+	for _, pj := range journals {
+		if primarySet[pj.id] || (filterID != nil && *filterID != pj.id) {
+			continue
+		}
+		journalOnly++
+		if returned >= limit {
+			continue
+		}
+		returned++
+		var targets []string
+		if pj.journal != nil {
+			for _, t := range pj.journal.Targets {
+				targets = append(targets, t.Path)
+			}
+		}
+		b := ojson.NewObject(5).
+			Set("id", ojson.StringValue(pj.id)).
+			Set("valid", ojson.BoolValue(false)).
+			Set("issues", ojson.StringsValue([]string{"Primary workplan not found: " + pj.id}))
+		if sh, err := snapshot.InterruptedStateHash(e.Root, pj.id, e.Limits, targets); err == nil {
+			b.Set("stateHash", ojson.StringValue(sh))
+		}
+		b.Set("recoveryRequired", ojson.BoolValue(true))
+		plans = append(plans, b.Value())
+	}
+	if filterID != nil && len(names) == 0 {
+		topIssues = append([]string{"Primary workplan not found: " + *filterID}, topIssues...)
+	}
+
+	lockValues := []ojson.Value{}
+	for i, lk := range locks {
+		if i >= limit {
+			break
+		}
+		v, diag := e.lockValue(lk.name)
+		lockValues = append(lockValues, v)
+		if diag != "" {
+			topIssues = append(topIssues, e.absRel(snapshot.WorkplanDir+"/"+lk.name)+": "+diag)
+		}
+	}
+	pendingValues := []ojson.Value{}
+	for i, pj := range journals {
+		if i >= limit {
+			break
+		}
+		b := ojson.NewObject(5).
+			Set("path", ojson.StringValue(e.absRel(snapshot.WorkplanDir+"/"+pj.entry.name)))
+		if pj.journal != nil {
+			b.Set("workplanId", ojson.StringValue(pj.journal.WorkplanID)).
+				Set("valid", ojson.BoolValue(true)).
+				Set("transactionId", ojson.StringValue(pj.journal.TransactionID)).
+				Set("targetCount", ojson.IntValue(int64(len(pj.journal.Targets))))
+		} else {
+			b.Set("workplanId", ojson.StringValue(pj.id)).
+				Set("valid", ojson.BoolValue(false)).
+				Set("transactionId", ojson.NullValue()).
+				Set("targetCount", ojson.NullValue())
+		}
+		pendingValues = append(pendingValues, b.Value())
+	}
+	if anyInvalid {
+		topIssues = append(topIssues, msgInvalidPlans)
+	}
+	sidecarValues := []ojson.Value{}
+	for i, sc := range sidecars {
+		if i >= limit {
+			break
+		}
+		sidecarValues = append(sidecarValues, sidecarValue(sc))
+	}
+	if topIssues == nil {
+		topIssues = []string{}
+	}
+	planCount := len(l.primary) + journalOnly
+	return ojson.NewObject(20).
+		Set("requestedRoot", ojson.StringValue(e.RequestedRoot)).
+		Set("canonicalRoot", ojson.StringValue(e.Root)).
+		Set("directory", ojson.StringValue(e.dir())).
+		Set("planCount", ojson.IntValue(int64(planCount))).
+		Set("returnedPlans", ojson.IntValue(int64(len(plans)))).
+		Set("omittedPlans", ojson.IntValue(int64(len(names)+journalOnly-len(plans)))).
+		Set("plans", ojson.ArrayValue(plans)).
+		Set("sidecars", ojson.ArrayValue(sidecarValues)).
+		Set("sidecarCount", ojson.IntValue(int64(len(sidecars)))).
+		Set("omittedSidecars", ojson.IntValue(int64(len(sidecars)-len(sidecarValues)))).
+		Set("locks", ojson.ArrayValue(lockValues)).
+		Set("lockCount", ojson.IntValue(int64(len(locks)))).
+		Set("omittedLocks", ojson.IntValue(int64(len(locks)-len(lockValues)))).
+		Set("pendingTransactions", ojson.ArrayValue(pendingValues)).
+		Set("pendingTransactionCount", ojson.IntValue(int64(len(journals)))).
+		Set("omittedPendingTransactions", ojson.IntValue(int64(len(journals)-len(pendingValues)))).
+		Set("runtimeFacts", runtimeFacts()).
+		Set("issues", ojson.StringsValue(topIssues)).
+		Set("readOnly", ojson.BoolValue(true)).Value(), nil
+}
+
+// doctorPlan diagnoses one primary plan by its listed file name.
+func (e *Engine) doctorPlan(name string) ojson.Value {
+	id, err := model.NormalizeID(name)
+	journalExists := false
+	if err == nil {
+		r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
+		if a, rerr := r.ReadFile(snapshot.SidecarRel(id, ".transaction.json")); rerr == nil {
+			journalExists = a.Exists
+		}
+	}
+	var s *snapshot.Snapshot
+	if err == nil {
+		s, err = e.load(id)
+	}
+	if err != nil {
+		return ojson.NewObject(4).
+			Set("id", ojson.StringValue(name)).
+			Set("valid", ojson.BoolValue(false)).
+			Set("issues", ojson.StringsValue([]string{err.Error()})).
+			Set("recoveryRequired", ojson.BoolValue(journalExists)).Value()
+	}
+	p := s.Plan
+	issues := model.ValidateStructure(p, &name)
+	var missing []string
+	missing = append(missing, s.MissingPlanArtifacts...)
+	if len(missing) > 0 {
+		issues = append(issues, "Missing linked artifacts: "+strings.Join(missing, ", "))
+	}
+	if s.Markdown.Exists && model.Blank(string(s.Markdown.Bytes)) {
+		issues = append(issues, "Linked Markdown is empty: "+s.Markdown.Rel)
+	}
+	for _, sp := range s.Specs {
+		if sp.Exists && model.Blank(string(sp.Bytes)) {
+			issues = append(issues, "Linked spec is empty: "+sp.Rel)
+		}
+	}
+	dv := e.dependencies(s, nil)
+	for _, is := range dv.issues {
+		issues = append(issues, "dependencies: "+is)
+	}
+	cv := classifyCheckpoint(s)
+	if cv.issue != "" {
+		issues = append(issues, "checkpoint: "+cv.issue)
+	}
+	if s.Journal.Exists {
+		issues = append(issues, "Recovery required: "+s.Journal.Rel)
+	}
+	if issues == nil {
+		issues = []string{}
+	}
+	return ojson.NewObject(9).
+		Set("id", ojson.StringValue(name)).
+		Set("valid", ojson.BoolValue(len(issues) == 0)).
+		Set("issues", ojson.StringsValue(issues)).
+		Set("workplan", p.Summary()).
+		Set("planHash", ojson.StringValue(s.PlanHash)).
+		Set("stateHash", ojson.StringValue(s.StateHash)).
+		Set("checkpointFreshness", ojson.StringValue(cv.freshness)).
+		Set("dependenciesRecorded", ojson.BoolValue(dv.recorded)).
+		Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
+}
+
+// lockValue reports a lock owner without judging liveness from age.
+func (e *Engine) lockValue(name string) (ojson.Value, string) {
+	rel := snapshot.WorkplanDir + "/" + name
+	r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
+	a, err := r.ReadFile(rel)
+	b := ojson.NewObject(4).Set("path", ojson.StringValue(e.absRel(rel)))
+	if err != nil || !a.Exists {
+		b.Set("present", ojson.BoolValue(false)).Set("owner", ojson.NullValue()).Set("diagnostic", ojson.NullValue())
+		return b.Value(), ""
+	}
+	b.Set("present", ojson.BoolValue(true))
+	parsed, perr := ojson.Parse(a.Bytes)
+	if perr != nil {
+		diag := "Ambiguous lock owner: " + perr.Error()
+		b.Set("owner", ojson.NullValue()).Set("diagnostic", ojson.StringValue(diag))
+		return b.Value(), diag
+	}
+	lo, ok := model.DecodeLockOwner(parsed.Value)
+	if !ok {
+		diag := "Ambiguous lock owner: metadata does not match lock-owner-v1"
+		b.Set("owner", ojson.NullValue()).Set("diagnostic", ojson.StringValue(diag))
+		return b.Value(), diag
+	}
+	b.Set("owner", ojson.NewObject(4).
+		Set("hostname", ojson.StringValue(lo.Hostname)).
+		Set("pid", ojson.IntValue(lo.PID)).
+		Set("nonce", ojson.StringValue(lo.Nonce)).
+		Set("startedAt", ojson.StringValue(lo.StartedAt)).Value()).
+		Set("diagnostic", ojson.NullValue())
+	return b.Value(), ""
+}
+
+// runtimeFacts are host facts the core cannot prove; they stay unknown
+// until the adapter supplies them (spec 01 §8).
+func runtimeFacts() ojson.Value {
+	null := ojson.NullValue()
+	return ojson.NewObject(4).
+		Set("registrations", ojson.NewObject(2).Set("effective", null).Set("configured", null).Value()).
+		Set("plugin", ojson.NewObject(4).Set("id", null).Set("configured", null).Set("effective", null).Set("canonicalLocation", null).Value()).
+		Set("permission", ojson.NewObject(5).Set("status", ojson.StringValue("unknown")).Set("agent", null).Set("sessionID", null).Set("rules", null).Set("detail", null).Value()).
+		Set("builtinPlan", ojson.NewObject(2).Set("configured", null).Set("effective", null).Value()).Value()
+}

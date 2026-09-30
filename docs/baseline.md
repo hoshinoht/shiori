@@ -124,5 +124,96 @@ df0e796e1a42fa01f3e3cd42dbcf03f41000a33452cdd79ea28ddd30d1784b0a  perf-1m/.openc
 - Concurrent-process and cancellation stress.
 - Linux/amd64.
 
-Stage B should measure the Go read path on the same fixtures, fill in the rows
-that apply, and repeat this table on the same machine before any target is set.
+Stage B measured the Go read path on the same fixtures and machine; see below.
+No performance target is set yet (spec 03 §1: stage F sets targets from these
+two tables).
+
+## Go stage B results (same machine, 2026-09-30)
+
+| Item | Value |
+| --- | --- |
+| Machine / OS | As above (Apple M4 Pro, macOS 27.0.1, darwin/arm64, local APFS) |
+| Toolchain | Go 1.27.1, `CGO_ENABLED=0 go build -trimpath` |
+| Code | Working tree of stage B (uncommitted; the engine at the time of this run) |
+| Fixtures | The same three fixtures, verified against the sha256 list above before measuring |
+| Raw results | [`testdata/perf/go-baseline-results.json`](../testdata/perf/go-baseline-results.json) |
+| Harness | `SHIORI_BASELINE=<out.json> go test ./internal/engine -run '^TestBaselineMatrix$' -v` |
+
+Method, matched to the reference:
+
+- **Inputs.** The same operation inputs, with default options: `read {id}`
+  including the Markdown; `inspect {id}` at limit 100; `resume {id}` at 12000
+  and limit 20; `validate {id}`. The timed region includes serializing the
+  result text, which the reference also returns.
+- **Warm.** In one process, 2 unrecorded calls, then 100 recorded (30 for
+  perf-1m, 10 for perf-10m).
+- **Cold first call.** The in-process time of the first call in a fresh
+  process: 15 processes (5 for perf-10m).
+- **Cold process wall.** The wall time of the `shiori <op> perf-plan --json`
+  binary as a fresh process, including start-up and writing the output.
+- **Peak RSS.** The maximum resident set size of that CLI process, from
+  `/usr/bin/time -l`.
+- **Percentiles.** p95 is the nearest-rank value.
+
+"Output chars" is in UTF-16 code units. It includes the absolute root path,
+which differs in length from the reference's measurement root, so it differs
+from the reference by a few characters. `update` is not measured: writes are
+stage C.
+
+| Size | Op | Warm median | Warm p95 | Cold first call median / p95 | Cold process wall median / p95 | Peak RSS median (max) | Output chars |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 100 KiB | read | 0.79 | 0.89 | 0.90 / 3.45 | 6.6 / 432.7¹ | 9 MiB (9) | 293,557 |
+| 100 KiB | inspect | 0.43 | 0.63 | 0.61 / 0.73 | 5.6 / 5.8 | 7 MiB (7) | 34,702 |
+| 100 KiB | resume | 0.46 | 0.66 | 0.60 / 0.73 | 5.6 / 5.9 | 7 MiB (7) | 11,489 |
+| 100 KiB | validate | 0.38 | 0.59 | 0.53 / 0.59 | 5.7 / 6.6 | 6 MiB (6) | 913 |
+| 1 MiB | read | 7.26 | 7.83 | 8.09 / 8.65 | 14.3 / 15.1 | 25 MiB (28) | 3,004,245 |
+| 1 MiB | inspect | 3.91 | 4.13 | 4.17 / 4.47 | 9.5 / 9.7 | 12 MiB (12) | 34,703 |
+| 1 MiB | resume | 4.51 | 4.82 | 4.85 / 4.97 | 10.3 / 10.9 | 14 MiB (14) | 11,573 |
+| 1 MiB | validate | 3.93 | 4.25 | 4.13 / 4.27 | 9.5 / 9.8 | 12 MiB (12) | 912 |
+| 10 MiB | read | 81.82 | 95.74 | 86.90 / 94.95 | 101.3 / 105.1 | 176 MiB (178) | 30,066,219 |
+| 10 MiB | inspect | 36.15 | 36.74 | 37.20 / 37.42 | 42.8 / 43.0 | 52 MiB (52) | 34,710 |
+| 10 MiB | resume | 40.58 | 42.72 | 41.29 / 42.01 | 47.7 / 48.3 | 71 MiB (72) | 11,585 |
+| 10 MiB | validate | 35.51 | 36.54 | 36.47 / 38.13 | 42.9 / 43.3 | 52 MiB (60) | 917 |
+
+¹ This is the first execution of a freshly built binary. macOS checks a new
+executable on its first launch, so this one sample includes that check. Every
+other sample is 5–7 ms.
+
+### Comparison with the reference (median; ratio = TS / Go)
+
+| Size | Op | Warm TS → Go (ms) | Cold process TS → Go (ms) | Peak RSS TS → Go (MiB) |
+| --- | --- | --- | --- | --- |
+| 100 KiB | read | 2.12 → 0.79 (2.7×) | 34 → 6.6 (5.2×) | 49 → 9 |
+| 100 KiB | inspect | 1.64 → 0.43 (3.8×) | 34 → 5.6 (6.1×) | 47 → 7 |
+| 100 KiB | resume | 1.93 → 0.46 (4.2×) | 35 → 5.6 (6.3×) | 47 → 7 |
+| 100 KiB | validate | 2.02 → 0.38 (5.3×) | 35 → 5.7 (6.1×) | 48 → 6 |
+| 1 MiB | read | 7.10 → 7.26 (1.0×) | 42 → 14.3 (2.9×) | 84 → 25 |
+| 1 MiB | inspect | 4.30 → 3.91 (1.1×) | 39 → 9.5 (4.1×) | 62 → 12 |
+| 1 MiB | resume | 4.60 → 4.51 (1.0×) | 41 → 10.3 (4.0×) | 62 → 14 |
+| 1 MiB | validate | 4.99 → 3.93 (1.3×) | 40 → 9.5 (4.2×) | 64 → 12 |
+| 10 MiB | read | 58.43 → 81.82 (0.71×) | 101 → 101.3 (1.0×) | 319 → 176 |
+| 10 MiB | inspect | 24.80 → 36.15 (0.69×) | 68 → 42.8 (1.6×) | 178 → 52 |
+| 10 MiB | resume | 26.17 → 40.58 (0.64×) | 71 → 47.7 (1.5×) | 180 → 71 |
+| 10 MiB | validate | 29.07 → 35.51 (0.82×) | 77 → 42.9 (1.8×) | 226 → 52 |
+
+Observations (not targets):
+
+- Go wins every cold measurement, because there is no runtime or module start
+  (~5 ms against bun's ~28 ms), and it uses roughly 2–7× less memory at every size.
+- Warm, Go is faster at 100 KiB. It is about even at 1 MiB, and 1.2–1.6×
+  slower at 10 MiB. At 10 MiB the dominant costs are the kernel page faults
+  for the 10–30 MB buffers (`runtime.madvise`) and the single parse of the
+  10 MiB JSON. JavaScriptCore's JSON parser and warmed heap are strong on this
+  workload.
+- `resume`, `inspect` and `validate` still cost O(plan) in both engines:
+  every call reads, hashes and decodes the whole artifact set (spec 03 §3,
+  reuse and caching are stage F).
+- **First-implementation numbers.** The 10 MiB warm medians before the stage B
+  allocation fixes were: read 122.9, inspect 68.7, resume 72.3,
+  validate 71.2 ms. The fixes were a pre-sized file read, no per-object maps,
+  lazy field paths, zero-copy strings over the immutable artifact buffer and
+  slot-backed optional fields. They cut allocations about 7×. The before/after
+  profiles were taken on the same fixtures.
+
+The reference-table gaps listed above remain open for Go as well. Go also has
+no `update`, checkpoint or compaction numbers yet.
