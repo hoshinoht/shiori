@@ -30,6 +30,9 @@ Ordered by expected value for effort.
 | X5 | Cross-plan workspace graph | Portfolio view of related plans in one repo | X4 optional |
 | X6 | Critical path and slack | Surface the steps that block the most work | stage F ready queue |
 | X7 | Session ↔ step/lane links | Precise handoffs across sessions | X3 optional |
+| X8 | Warm snapshot cache (buffer pool) | Repeat reads skip parsing; near-zero cost when nothing changed | stage D serve process |
+| X9 | Derived plan index (materialized view) | Reads touch only the slices they need; ready queue and hashes precomputed | X8, X1 |
+| X10 | Structural index + slice parsing | Filtered read/inspect/resume parse only the selected byte ranges | X9 optional |
 | P2 | Compaction advisor | Keeps long-running plans small without manual bookkeeping | stage C compaction |
 | P3 | Note rollover | Keeps the plan roughly constant in size over hours of iteration | P2, stage C compaction |
 | P4 | Journal v2 by reference | About 3x fewer bytes written per mutation on large plans | stage C journal |
@@ -71,7 +74,11 @@ binding. `metric-loop` results can be imported as evidence.
 ### X4 — Hash-chained event log
 
 Append-only `<id>.history.jsonl`; each entry carries operation, actor source,
-before/after state hashes and the previous entry's hash. Compaction archives
+before/after state hashes and the previous entry's hash. Candidate scope
+extension (database LSM/WAL lesson): new notes may be appended here and
+rolled into the plan or archive by compaction (P3), so a note write is O(note)
+instead of rewriting the whole plan. This changes where notes live and needs
+its own compatibility decision before adoption. Compaction archives
 closed log segments instead of rewriting them. Undo is a separately reviewed
 follow-up, not part of X4.
 
@@ -108,6 +115,40 @@ so parse/hash cost is not the bottleneck at this size; X1 matters only at
 - The v1 journal stores base64 before/after content, so one status change on
   this plan writes on the order of 1 MB plus fsyncs, growing with every note.
 - Loose `.patch` files (~200 KB) sit in the workplan root unclassified.
+
+### Database-inspired read path (X8–X10)
+
+Databases avoid re-reading whole datasets: binary pages, persistent indexes,
+a buffer pool, and lazy reads of only what a query needs. Shiori cannot make
+its canonical files internal the way a database does, because plan JSON and
+Markdown must stay the human-, git- and agent-readable source of truth. The
+lessons that fit are the read-side ones; writes keep the stage C engine.
+
+- **X8 — Warm snapshot cache.** The `serve --stdio` process keeps parsed
+  plans and indexes in memory, keyed by `(device, inode, size, mtime_ns)` of
+  every artifact in the manifest, under a memory budget with LRU eviction.
+  A key mismatch reparses. The cache is never mutation authority: writes
+  reread and rehash under locks as today.
+- **X9 — Derived plan index.** A disposable, rebuildable index beside the
+  plan (candidate `<id>.index` sidecar, classified per 01 §4, or an internal
+  cache directory) holding byte offsets of phases/steps/notes/findings,
+  cached artifact hashes (X1), the dependency adjacency and ready queue
+  (D.2), and note summaries. It is bound to the plan's `stateHash`: any
+  mismatch discards and rebuilds it; correctness never depends on it; deleting
+  it is always safe. **Open choice:** SQLite (queryable, mature, adds a
+  dependency and cgo/pure-Go driver decision) versus a small custom binary
+  format (no dependency, narrower). Decide with measurements.
+- **X10 — Structural index + slice parsing.** A single structural pass finds
+  the byte ranges of top-level fields and array elements without building
+  objects; filtered read, inspect and resume then parse only the slices they
+  need with the order- and spelling-preserving parser. Byte fidelity is
+  unchanged because the canonical parse still runs for writes and full reads.
+  Minor add-ons: hash from a memory-mapped file for large artifacts; hash the
+  plan, Markdown and spec files concurrently.
+
+The write-side database technique (a write-ahead log with periodic
+checkpoints) is not adopted for the plan itself, because the JSON on disk
+would be stale between checkpoints. It fits only the notes history: see X4.
 
 ### P2 — Compaction advisor
 
@@ -162,6 +203,9 @@ stage it attaches to. Record decisions here with a date.
 | X5 | to-review | | |
 | X6 | accepted | 2026-09-30 | implemented in stage D.2 |
 | X7 | to-review | | |
+| X8 | to-review | | |
+| X9 | to-review | | |
+| X10 | to-review | | |
 | P2 | accepted | 2026-09-30 | stage D.4 |
 | P3 | accepted | 2026-09-30 | stage D.4 |
 | P4 | to-review | | |
