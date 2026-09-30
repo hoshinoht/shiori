@@ -224,12 +224,17 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 // strayArtifact is a workplan-root file that belongs to no plan (D.1).
 type strayArtifact struct {
 	name, kind, suggestion string
-	id                     string // orphaned sidecar's plan id
+	id                     string // orphaned sidecar's or stale copy's plan id
+	linked                 string // stale copy: the plan's current planFile
 }
 
 func (s strayArtifact) warning() string {
-	if s.kind == "orphaned-sidecar" {
+	switch s.kind {
+	case "orphaned-sidecar":
 		return "Orphaned sidecar " + snapshot.WorkplanDir + "/" + s.name + ": no primary plan " + s.id + ".json. " + s.suggestion
+	case "stale-markdown":
+		return "Stale Markdown copy " + snapshot.WorkplanDir + "/" + s.name + ": plan " + s.id + " now links " + s.linked +
+			" (left behind when its planFile moved). It is not part of the plan's hashes and no longer updated. " + s.suggestion
 	}
 	return "Unclassified file " + snapshot.WorkplanDir + "/" + s.name + " in the workplan root. " + s.suggestion
 }
@@ -262,15 +267,24 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 		}
 	}
 	var linked map[string]bool
+	var planFiles map[string]string
 	for _, name := range l.other {
 		if strings.HasSuffix(name, ".md") {
-			if primary[strings.TrimSuffix(name, ".md")] {
-				continue
-			}
 			if linked == nil {
-				linked = e.linkedMarkdown(l.primary)
+				linked, planFiles = e.linkedMarkdown(l.primary)
 			}
 			if linked[snapshot.WorkplanDir+"/"+name] {
+				continue
+			}
+			if id := strings.TrimSuffix(name, ".md"); primary[id] {
+				// D.3 (contracts §13 item 3): <id>.md of a readable plan that
+				// links another file is a stale copy left by a planFile move.
+				// When the plan cannot be read its link is unknown.
+				pf, readable := planFiles[id]
+				if e.noD3 || !readable {
+					continue
+				}
+				out = append(out, strayArtifact{name: name, kind: "stale-markdown", id: id, linked: pf, suggestion: straySuggestion})
 				continue
 			}
 		}
@@ -281,9 +295,11 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 }
 
 // linkedMarkdown is the set of planFile links of the readable primary
-// plans (read-only; unreadable plans contribute nothing).
-func (e *Engine) linkedMarkdown(names []string) map[string]bool {
+// plans, and each readable plan's link by id (read-only; unreadable plans
+// contribute nothing).
+func (e *Engine) linkedMarkdown(names []string) (map[string]bool, map[string]string) {
 	out := map[string]bool{}
+	byID := map[string]string{}
 	for _, n := range names {
 		id, err := model.NormalizeID(n)
 		if err != nil || id != n {
@@ -291,9 +307,10 @@ func (e *Engine) linkedMarkdown(names []string) map[string]bool {
 		}
 		if s, err := e.load(id); err == nil {
 			out[s.Plan.PlanFile] = true
+			byID[id] = s.Plan.PlanFile
 		}
 	}
-	return out
+	return out, byID
 }
 
 // doctorPlan diagnoses one primary plan by its listed file name.
@@ -311,11 +328,18 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 		s, err = e.load(id)
 	}
 	if err != nil {
-		return ojson.NewObject(4).
+		b := ojson.NewObject(6).
 			Set("id", ojson.StringValue(name)).
 			Set("valid", ojson.BoolValue(false)).
-			Set("issues", ojson.StringsValue([]string{err.Error()})).
-			Set("recoveryRequired", ojson.BoolValue(journalExists)).Value()
+			Set("issues", ojson.StringsValue([]string{err.Error()}))
+		// D.3 (contracts §13 item 2): raw-byte hashes for a repair.
+		if id != "" && id == name {
+			if u := e.unreadableFor(id, err); u != nil {
+				b.Set("planHash", ojson.StringValue(u.PlanHash)).
+					Set("stateHash", ojson.StringValue(u.StateHash))
+			}
+		}
+		return b.Set("recoveryRequired", ojson.BoolValue(journalExists)).Value()
 	}
 	p := s.Plan
 	issues := model.ValidateStructure(p, &name)
@@ -338,7 +362,11 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	}
 	cv := classifyCheckpoint(s)
 	if cv.issue != "" {
-		issues = append(issues, "checkpoint: "+cv.issue)
+		issue := "checkpoint: " + cv.issue
+		if cv.staleDetail != "" && !e.noD3 {
+			issue += ". " + cv.staleDetail // D.3 (contracts §13 item 5)
+		}
+		issues = append(issues, issue)
 	}
 	if s.Journal.Exists {
 		issues = append(issues, "Recovery required: "+s.Journal.Rel)
@@ -479,7 +507,7 @@ func runtimeFacts(facts *ojson.Value) ojson.Value {
 	if st := get(f, "permission", "status"); st.Kind() == ojson.String && st.Str() == "known" {
 		status = "known"
 	}
-	return ojson.NewObject(4).
+	out := ojson.NewObject(5).
 		Set("registrations", ojson.NewObject(2).
 			Set("effective", strList(get(f, "registrations", "effective"))).
 			Set("configured", strList(get(f, "registrations", "configured"))).Value()).
@@ -496,7 +524,23 @@ func runtimeFacts(facts *ojson.Value) ojson.Value {
 			Set("detail", str(get(f, "permission", "detail"), 500)).Value()).
 		Set("builtinPlan", ojson.NewObject(2).
 			Set("configured", boolean(get(f, "builtinPlan", "configured"))).
-			Set("effective", boolean(get(f, "builtinPlan", "effective"))).Value()).Value()
+			Set("effective", boolean(get(f, "builtinPlan", "effective"))).Value())
+	// D.3 (contracts §13 item 7): the host version the adapter runs on, the
+	// versions it was verified against and whether writes are enabled.
+	// Present only when the adapter supplies it.
+	if h := get(f, "host"); h.Kind() == ojson.Object {
+		writes := null
+		if w := get(h, "writes"); w.Kind() == ojson.String && (w.Str() == "enabled" || w.Str() == "disabled") {
+			writes = w
+		}
+		out.Set("host", ojson.NewObject(5).
+			Set("opencodeVersion", str(get(h, "opencodeVersion"), 60)).
+			Set("verified", boolean(get(h, "verified"))).
+			Set("verifiedVersions", strList(get(h, "verifiedVersions"))).
+			Set("writes", writes).
+			Set("detail", str(get(h, "detail"), 500)).Value())
+	}
+	return out.Value()
 }
 
 // sliceUTF16 keeps the first max UTF-16 code units of s (JavaScript

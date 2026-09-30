@@ -16,10 +16,29 @@ import registration from "./registration.json" with { type: "json" };
 
 /** Plugin identity kept from the reference plugin (one writer per root). */
 export const PLUGIN_ID = "workplan-tools";
-/** Verified hosts (contracts §5.6); other versions fail closed at registration. */
+/**
+ * Verified hosts (contracts §5.6). On any other version the read-only tools
+ * keep working and every mutating tool is refused (D.3, contracts §13
+ * item 7): writes stay fail-closed.
+ */
 export const SUPPORTED_HOST_VERSIONS = ["2.0.19", "2.0.20"] as const;
 
 export const TOOL_NAMES = registration.tools.map((tool) => tool.name);
+
+/** Tools that can write (schema x-shiori-mutating); refused on an unverified host. */
+export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "workplan_create", "workplan_update", "workplan_patch", "workplan_reset", "workplan_checkpoint", "workplan_compact",
+]);
+
+export function hostVerified(version: unknown): boolean {
+  return typeof version === "string" && (SUPPORTED_HOST_VERSIONS as readonly string[]).includes(version);
+}
+
+/** The refusal of a mutating tool on an unverified host (actionable, class unsupported_capability). */
+export function unverifiedWriteMessage(version: unknown): string {
+  return `Shiori adapter not verified for OpenCode ${String(version)}; writes disabled — update Shiori (verified: ${SUPPORTED_HOST_VERSIONS.join(", ")}). ` +
+    "Read-only workplan tools (read, list, inspect, validate, resume, doctor, compact_preview) still work; nothing was changed.";
+}
 
 const authoringTools = new Set(["workplan_create", "workplan_update", "workplan_patch", "workplan_reset"]);
 const authoringAgents = new Set(["plan", "orchestrator"]);
@@ -125,7 +144,7 @@ function permissionDecision(value: string): "allow" | "deny" | "ask" | "unknown"
   return value === "allow" || value === "deny" || value === "ask" ? value : "unknown";
 }
 
-async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, toolContext: ToolContext, bridge: NativePermissionBridge) {
+async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, toolContext: ToolContext, bridge: NativePermissionBridge | undefined, hostVersion: unknown) {
   let effectiveTools: string[] | null = null;
   let plugins: any[] | null = null;
   const notes: string[] = [];
@@ -162,8 +181,9 @@ async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, tool
   } catch {
     notes.push("Current session permission facts are unavailable.");
   }
-  const bridgeFacts = bridge.diagnostics();
+  const bridgeFacts = bridge?.diagnostics();
   notes.push("Effective permission remains unknown: public plugin APIs do not expose complete organization/hard-policy precedence.");
+  const verified = hostVerified(hostVersion);
   if (effectiveTools === null) notes.push("Configured-only tool names are unknown; only a successful effective tool catalog is authoritative.");
   return {
     registrations: { effective: effectiveTools, configured: null },
@@ -180,13 +200,24 @@ async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, tool
       rules,
       detail: [
         `Agent rules ${agentRead ? "read" : "unknown"}; session rules ${sessionRead ? "read" : "unknown"}.`,
-        `Bridge client ${bridgeFacts.clientVersion}, RPC ${bridgeFacts.rpcRegistration}, service ${bridgeFacts.serviceDiscovery}, host ${bridgeFacts.hostBinding}, event stream ${bridgeFacts.eventStream}, runtime ${bridgeFacts.runtimeVersion ?? "unknown"}, last failure ${bridgeFacts.lastFailure ?? "none"}.`,
+        bridgeFacts
+          ? `Bridge client ${bridgeFacts.clientVersion}, RPC ${bridgeFacts.rpcRegistration}, service ${bridgeFacts.serviceDiscovery}, host ${bridgeFacts.hostBinding}, event stream ${bridgeFacts.eventStream}, runtime ${bridgeFacts.runtimeVersion ?? "unknown"}, last failure ${bridgeFacts.lastFailure ?? "none"}.`
+          : "Permission bridge not started: the host version is not verified, so writes are disabled.",
         ...notes,
       ].join(" "),
     },
     builtinPlan: {
       configured: null,
       effective: plugins === null ? null : Boolean(builtinPlan && builtinPlan.state?.status === "active"),
+    },
+    host: {
+      opencodeVersion: typeof hostVersion === "string" ? hostVersion : null,
+      verified,
+      verifiedVersions: [...SUPPORTED_HOST_VERSIONS],
+      writes: verified ? "enabled" : "disabled",
+      detail: verified
+        ? "The Shiori adapter is verified for this OpenCode version; writes go through the host permission engine."
+        : unverifiedWriteMessage(hostVersion),
     },
   };
 }
@@ -223,17 +254,26 @@ export function createPlugin(deps: AdapterDeps = {}) {
     id: PLUGIN_ID,
     async setup(ctx: Plugin.Context) {
       const hostVersion = ctx.app?.version;
-      if (!(SUPPORTED_HOST_VERSIONS as readonly string[]).includes(hostVersion)) {
-        throw new Error(`Shiori workplan adapter supports OpenCode ${SUPPORTED_HOST_VERSIONS.join(" and ")} only (this host reports ${String(hostVersion)}); no workplan tools were registered.`);
-      }
+      // D.3 (contracts §13 item 7): an unverified host keeps the read-only
+      // tools and refuses every mutating tool before anything is sent to
+      // the core. The permission bridge (which depends on verified host
+      // internals) is not started, so no write can be authorized either.
+      const verified = hostVerified(hostVersion);
       const root = await realpath(ctx.location.project.directory);
       const env = deps.env ?? process.env;
       const bin = typeof ctx.options?.bin === "string" ? ctx.options.bin : env.SHIORI_BIN;
       const coreOptions: CoreClientOptions = { bin, env, clientName: "shiori-opencode" };
       const core = deps.core ? deps.core(coreOptions) : new CoreClient(coreOptions);
-      const bridge = await (deps.bridge ?? ((c) => registerNativePermissionBridge(c)))(ctx as unknown as NativePermissionBridgeContext);
+      const bridge = verified
+        ? await (deps.bridge ?? ((c) => registerNativePermissionBridge(c)))(ctx as unknown as NativePermissionBridgeContext)
+        : undefined;
 
       const execute = async (toolName: string, rawInput: unknown, toolContext: ToolContext): Promise<{ content: string }> => {
+        if (!verified && MUTATING_TOOLS.has(toolName)) {
+          const e = new Error(unverifiedWriteMessage(hostVersion)) as Error & { errorClass?: string };
+          e.errorClass = "unsupported_capability";
+          throw e;
+        }
         assertRole(toolName, rawInput, toolContext.agent);
         const signal = toolContext.signal;
         const hostContext: HostContext = {
@@ -243,7 +283,7 @@ export function createPlugin(deps: AdapterDeps = {}) {
           agent: toolContext.agent,
           messageID: toolContext.messageID,
           callID: toolContext.id,
-          ...(toolName === "workplan_doctor" ? { runtimeFacts: await collectDoctorRuntimeFacts(ctx, root, toolContext, bridge) } : {}),
+          ...(toolName === "workplan_doctor" ? { runtimeFacts: await collectDoctorRuntimeFacts(ctx, root, toolContext, bridge, hostVersion) } : {}),
         };
         const input = rawInput === undefined ? {} : rawInput;
         if (!isRecord(input)) {
@@ -264,6 +304,7 @@ export function createPlugin(deps: AdapterDeps = {}) {
         }
         const prepared = response.prepared;
         if (!prepared) throw new Error("The Shiori core returned neither a result nor a prepared intent; nothing was changed.");
+        if (!bridge) throw new Error(unverifiedWriteMessage(hostVersion)); // fail closed: no bridge, no write
         progress(toolContext, toolName);
         let committed = false;
         // An abort at any point expires the prepared intent in the core, so
@@ -322,7 +363,7 @@ export function createPlugin(deps: AdapterDeps = {}) {
         });
         disposeTools = () => handle.dispose();
       } catch (error) {
-        await bridge.dispose();
+        await bridge?.dispose();
         await core.dispose();
         throw error;
       }
@@ -331,7 +372,7 @@ export function createPlugin(deps: AdapterDeps = {}) {
           await disposeTools?.();
         } finally {
           try {
-            await bridge.dispose();
+            await bridge?.dispose();
           } finally {
             await core.dispose();
           }

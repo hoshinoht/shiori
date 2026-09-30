@@ -14,6 +14,11 @@ D.2 owner decision (contracts §12, 2026-09-30): the dependency graph drives
 work (resume readiness and ranking, warn-only order checks, cancelled
 prerequisites, phase replacement against the graph, dependency write and
 view fixes, critical path X6); order checks never refuse.
+D.3 owner decision (contracts §13, 2026-09-30): safety and robustness fixes
+(status-only draft reset and a previewed, archived wipe; repair of
+unreadable plans; stale Markdown copies; missing step markers; stale
+checkpoint detail, readable ids, spec existence, list issues, note limit,
+file modes; SIGKILL recovery; unverified-host degradation).
 Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
 configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
@@ -688,7 +693,7 @@ both with the `archive/` suggestion and changes nothing.
    give different resume, filtered-read and doctor output. Stage E's
    one-writer-per-root rule is unchanged.
 
-## Stage D.2 — dependency graph drives work: DONE (uncommitted, for owner review)
+## Stage D.2 — dependency graph drives work: DONE (committed `e47e667`)
 
 Base `5c94cdb`. Nothing was committed. The pinned `vendor/shiori` copy
 (`5c94cdb`) that the owner's OpenCode uses and everything under
@@ -847,13 +852,158 @@ error messages, not classes).
    differ in resume/inspect/doctor/validate output and in the error class
    of dependency refusals. Stage E's one-writer-per-root rule is unchanged.
 
+## Stage D.3 — safety and robustness: DONE (uncommitted, for owner review)
+
+Base `e47e667`. Nothing was committed. The pinned `vendor/shiori` copy
+(`e47e667`) that the owner's OpenCode uses and everything under
+`~/.config/opencode` were not touched. The decisions and exact behaviour
+are in [contracts §13](contracts.md#13-approved-design-changes-d3-approved-2026-09-30).
+D.1 resume budgeting and D.2 graph behaviour are unchanged (no resume or
+paging vector changed).
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| 1 reset | `draft` resets statuses only (plan/phases/steps → draft, checkpoint removed, content and dependency graph kept; handwritten Markdown kept unless `replaceMarkdown`). New `wipe`: read-only preview → exact `previewToken` + `confirmation: WIPE_PLAN_CONTENT`; archive of the complete originals first, then plan/Markdown, checkpoint and dependency sidecars deleted in the same transaction (`reset:wipe`). Schema, registration (`d3` key), CLI `--preview-token/--confirm` | `internal/engine/reset.go`, `mutinput.go`, `recovery.go`, `schema/v1/tools/workplan_reset.input.schema.json`, `adapter/opencode/src/registration.json`, `scripts/snapshot-registration.ts`, `internal/cli` |
+| 2 unreadable plans | raw-byte `planHash`/`stateHash` in doctor/validate/list; `create --overwrite` accepts that hash (Markdown kept unless `replaceMarkdown`); recovery handles the undecodable before-image | `internal/snapshot/snapshot.go` (`LoadUnreadable`), `create.go`, `validate.go`, `doctor.go`, `list.go`, `recovery.go` |
+| 3 stale Markdown | doctor stray kind `stale-markdown` for `<id>.md` of a plan that links elsewhere | `doctor.go` |
+| 4 markers | non-failing warning for steps whose marker is missing from handwritten Markdown | `validate.go` (`missingStepMarkers`) |
+| 5 polish | stale-checkpoint detail (doctor); title-slug ids with `-N` on collision; missing `specFiles` refused (`invalid_input`); list `issues` array on every entry; 16 KiB note limit; new plan/Markdown mode from existing plans (else 0644 minus umask), archives/sidecars 0600 | `engine.go` (`staleDetail`), `planedit.go`, `update.go`, `list.go`, `mutate.go` (`fileMode`), `umask_*.go`, `errclass.go` |
+| 6 recovery | separate-process SIGKILL test; recovery also deletes the interrupted transaction's staging files | `d3_test.go` (`TestD3KillRecovery`), `recovery.go` |
+| 7 host versions | unverified OpenCode: read-only tools work, mutating tools refused (`unsupported_capability`), bridge not started; doctor `runtimeFacts.host` | `adapter/opencode/src/plugin.ts`, `doctor.go` (`runtimeFacts`) |
+
+### Vector expectations
+
+The oracle corpus is unchanged. `testdata/d3/expectations.json` pins 24
+vectors: 20 tools vectors (items 2/4/5: raw-byte hashes, marker warnings,
+stale-checkpoint detail, list shape) and four mutation vectors. Read
+vectors are judged against the same engine with the D.3 additions off
+(`Engine.noD3`), which must pass every earlier check; removing the approved
+members must give that output byte-for-byte, and the additions are restated
+from raw fixture bytes. `SHIORI_D3_UPDATE=1` re-pins.
+
+| Category | Pass (oracle-exact) | Earlier approved | D.1 | D.2 | D.3 | Fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| tools (199) | 149 | 9 | 16 | 5 | 20 | 0 |
+| resume (87) | 77 | 0 | 4 | 6 | 0 | 0 |
+| paging (74) | 43 | 0 | 31 | 0 | 0 | 0 |
+| mutations (70) | 56 | 7 | 1 | 0 | 6 | 0 |
+| mutating input (39) | 37 | 1 (D2) | 0 | 0 | 1 | 0 |
+
+Six of the 20 D.3 tools vectors were earlier D.1 pins or D6 divergences;
+their D.3-off output still passes those checks. D.3 mutation vectors:
+`reset-draft`, `reset-draft-preserve-notes` (status-only reset restated
+from the stored plan), `create-generated-ids` (oracle files after
+substituting the ids), `create-new-full` (spec refused; with the spec
+present the files equal the oracle's), `update-recovery-resume/-rollback`
+(only extra change: the leftover staging file is removed; output
+unchanged, so not pinned). Input vector `reset--bad-mode` lists `"wipe"`.
+
+### New tests
+
+- `d3_test.go`: `TestD3DraftResetKeepsStructure`, `TestD3WipePreviewConfirm`,
+  `TestD3UnreadablePlanRepair` (truncated plan → doctor hash → create
+  overwrite), `TestD3StaleMarkdownCopy`, `TestD3StepMarkers`,
+  `TestD3StaleCheckpointDetail`, `TestD3GeneratedIDs`,
+  `TestD3SpecFilesMustExist`, `TestD3NoteLimit`, `TestD3FileModes`,
+  `TestD3KillRecovery` (6 child processes: wipe killed after the journal
+  and mid-publication, update mid-publication; each resumed and rolled
+  back).
+- `TestFaultInjection` adds `reset-wipe`, `reset-draft-checkpoint` and
+  `create-overwrite-unreadable`, and fault points `publish:3`/`publish:4`.
+- Protocol: `TestResetWipePreviewThenPreparedApply`; host facts in
+  `TestDoctorRuntimeFactsAreSanitized`.
+- Adapter: registration differs from the reference only by the `d1`/`d3`
+  changes; unverified host (2.1.0) degradation; verified host facts.
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1` per package: all pass (engine 108 s).
+- `bun test` in `adapter/opencode`: 49 pass, 1 skip (opt-in runtime smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+
+Owner-plan evidence ran on fresh `cp -Rp` copies of the read-only fixture
+(`chmod -R u+w` on the copy); nothing from it is in the repository. The
+pristine fixture's paths, modes, mtimes and bytes were identical before and
+after. Before is `e47e667`, after is the working tree.
+
+- **Draft reset** (after adding a 5-entry dependency graph and setting the
+  plan and `core-bot/context` in progress): `e47e667` refuses the
+  handwritten Markdown; with `--replace-markdown` it leaves 0 phases, 0
+  steps, 0 notes, 0 findings, overwrites the Markdown, keeps the checkpoint
+  and leaves 12 dangling dependency issues. D.3 without flags keeps 13
+  phases, 38 steps, 35 notes and 4 findings with every status `draft`,
+  removes the checkpoint, leaves the Markdown and the dependency sidecar
+  byte-identical, and validate is `valid: true` with no dependency issue.
+- **Wipe:** without `--replace-markdown` the preview is refused
+  (handwritten Markdown); a token without `--confirm` and a wrong
+  confirmation are input errors; a wrong token is refused. The preview
+  changed nothing and listed 13/38/4/35 removals and the two sidecar
+  deletions. Apply wrote
+  `archive/kanade-v5-roadmap/state-0947ec8328a2-51963ef4dab8.json` (0600)
+  holding the exact original JSON, Markdown, checkpoint and dependency
+  bytes, then left an empty draft plan with no sidecars.
+- **Truncated plan** (JSON cut in half): `e47e667` doctor/validate/list
+  give no hash and `create --overwrite` fails (`Invalid workplan JSON`). D.3
+  doctor, validate and list report the same raw `stateHash`
+  (`bbf72afd…`); a wrong hash is `stale_state`; `create --overwrite
+  --expected-hash bbf72afd…` succeeds and keeps the handwritten Markdown.
+  Doctor afterwards names the changed JSON and the three spec links the
+  new plan no longer has.
+- **SIGKILL** (engine test binary as the writer; update of status, a note
+  and the dependency sidecar; killed after the journal was published and
+  between the two publications): the copies held the journal, both locks
+  (dead PID) and the staging files. Doctor reported `recoveryRequired` and
+  a state hash. CLI recovery right away failed with `lock_unavailable`
+  (dead owner within the 5-minute grace). After 5 minutes, CLI `update
+  --recovery resume` put both targets at their after images (identical
+  state hash in both kill cases) and `rollback` restored the exact
+  original files; no lock, staging file or journal remained and validate
+  was `valid: true` in all four copies.
+- **Unverified host** (adapter with the test fakes of the host, OpenCode
+  version 2.1.0, on a copy): 13 tools registered, bridge not started;
+  read (filtered), list, inspect, validate, resume and compact_preview
+  answered; doctor reported `host {opencodeVersion 2.1.0, verified false,
+  writes disabled}`; update, reset and checkpoint were refused with
+  `unsupported_capability` and no permission request. On 2.0.20 the same
+  update reached the permission prompt and committed.
+
+### Owner decisions to review (D.3)
+
+1. The draft reset removes the checkpoint without archiving it (the brief
+   asks for archives only on wipe; the journal holds it until commit).
+2. The draft reset keeps handwritten Markdown by default (the earlier draft
+   reset refused it; regenerating would destroy it).
+3. `workplan_compact` is refused as a whole on an unverified host
+   (including its preview mode, which `compact_preview` covers).
+4. New sidecars (checkpoint, dependencies) stay 0600; only plan JSON and
+   Markdown follow the plan mode. A read-only plan mode (0444) gives
+   owner-writable new files (0644).
+5. The list entries lose the single `issue` string (replaced by `issues`).
+6. Recovery after a real crash waits out the 5-minute lock grace (S11,
+   unchanged); `TestD3KillRecovery` simulates the elapsed grace with the
+   lock clock.
+
+### Remaining issues (D.3)
+
+1. Resume keeps the D.1 stale-checkpoint text (its budget is unchanged);
+   the detail is in doctor only.
+2. The plan-wide step-id uniqueness applies to generated ids only;
+   explicit duplicate step ids across phases stay allowed (reference
+   behaviour), and the owner's roadmap has six `intake` steps.
+3. Mixed writers: the D.3 core and the reference TypeScript plugin now
+   also differ in reset semantics, list shape and doctor output. Stage E's
+   one-writer-per-root rule is unchanged.
+
 ## Resume after maintenance
 
 1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
    needed.
-2. Inspect `git status`. Stages A–D and D.1 are committed (`fdadfd4`,
-   `7a899e5`, `9f66518`, `4044539`, `5c94cdb`). D.2 exists only in the
-   working tree until the owner commits it. Preserve any user edits.
+2. Inspect `git status`. Stages A–D, D.1 and D.2 are committed (`fdadfd4`,
+   `7a899e5`, `9f66518`, `4044539`, `5c94cdb`, `e47e667`). D.3 exists only
+   in the working tree until the owner commits it. Preserve any user edits.
 3. If the oracle files change, the corpus is stale. Compare their sha256 against
    `testdata/MANIFEST.json` → `oracle.files`.
 

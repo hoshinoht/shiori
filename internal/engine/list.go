@@ -127,18 +127,12 @@ func (e *Engine) List(ListInput) (ojson.Value, error) {
 	for _, name := range l.primary {
 		canon, nerr := model.NormalizeID(name)
 		if nerr != nil || canon != name {
-			plans = append(plans, ojson.NewObject(3).
-				Set("id", ojson.StringValue(name)).
-				Set("valid", ojson.BoolValue(false)).
-				Set("issue", ojson.StringValue("Primary plan filename is not a canonical workplan id: "+name+".json")).Value())
+			plans = append(plans, e.listInvalid(name, "Primary plan filename is not a canonical workplan id: "+name+".json", nil))
 			continue
 		}
 		s, err := e.load(name)
 		if err != nil {
-			plans = append(plans, ojson.NewObject(3).
-				Set("id", ojson.StringValue(name)).
-				Set("valid", ojson.BoolValue(false)).
-				Set("issue", ojson.StringValue(err.Error())).Value())
+			plans = append(plans, e.listInvalid(name, err.Error(), e.unreadableFor(name, err)))
 			continue
 		}
 		issues := artifactIssues(s)
@@ -163,6 +157,29 @@ func (e *Engine) List(ListInput) (ojson.Value, error) {
 		Set("count", ojson.IntValue(int64(len(plans)))).
 		Set("workplans", ojson.ArrayValue(plans)).
 		Set("sidecars", ojson.ArrayValue(sidecars)).Value(), nil
+}
+
+// listInvalid is the entry of a plan that cannot be listed normally. D.3
+// (contracts §13 item 5): the same "issues" array as every other entry
+// (was a single "issue" string), and for an unreadable plan the raw-byte
+// hashes and the recovery flag (item 2).
+func (e *Engine) listInvalid(name, issue string, u *snapshot.Unreadable) ojson.Value {
+	if e.noD3 {
+		return ojson.NewObject(3).
+			Set("id", ojson.StringValue(name)).
+			Set("valid", ojson.BoolValue(false)).
+			Set("issue", ojson.StringValue(issue)).Value()
+	}
+	b := ojson.NewObject(6).
+		Set("id", ojson.StringValue(name)).
+		Set("valid", ojson.BoolValue(false)).
+		Set("issues", ojson.StringsValue([]string{issue}))
+	if u != nil {
+		b.Set("planHash", ojson.StringValue(u.PlanHash)).
+			Set("stateHash", ojson.StringValue(u.StateHash)).
+			Set("recoveryRequired", ojson.BoolValue(u.Journal.Exists))
+	}
+	return b.Value()
 }
 
 func sidecarValue(sc dirEntry) ojson.Value {

@@ -69,27 +69,92 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1 additions", () => {
+  it("differs from the reference registration only by the approved D.1 and D.3 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
     expect(reg.d1.additions).toEqual([{ tool: "workplan_read", property: "includeNotes" }]);
+    expect(reg.d3.additions).toEqual([{ tool: "workplan_reset", property: "previewToken" }, { tool: "workplan_reset", property: "confirmation" }]);
+    expect(reg.d3.changes.map((c: any) => c.path.join("."))).toEqual(["description", "input.properties.mode.description", "input.properties.mode.enum", "input.properties.preserveNotes.description"]);
     const read = reg.tools.find((t: any) => t.name === "workplan_read");
     expect(read.input.properties.includeNotes.type).toBe("boolean");
-    const { d1, ...rest } = reg;
-    for (const a of d1.additions) delete rest.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    const reset = reg.tools.find((t: any) => t.name === "workplan_reset");
+    expect(reset.input.properties.mode.enum).toEqual(["draft", "markdown-only", "wipe"]);
+    const { d1, d3, ...rest } = reg;
+    for (const a of [...d1.additions, ...d3.additions]) delete rest.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    for (const c of d3.changes) {
+      let cur = rest.tools.find((t: any) => t.name === c.tool);
+      for (const key of c.path.slice(0, -1)) cur = cur[key];
+      cur[c.path[c.path.length - 1]] = c.reference;
+    }
     const reference = JSON.stringify(rest, null, 2) + "\n";
     expect(createHash("sha256").update(reference).digest("hex")).toBe(d1.referenceSha256);
     expect(d1.referenceSha256).toBe("f4dd36c8a942cebbd26945e53ca580839c4eeee9ffaf4398a8b4397f477e6935");
   });
 
-  it("fails closed at registration on an unverified host version", async () => {
-    const root = tempRoot();
-    roots.push(root);
-    const host = createFakeHost(root, { hostVersion: "2.1.0" });
-    const plugin = createPlugin({ bridge: host.bridgeFactory(), env: {} });
-    await expect(plugin.setup(host.ctx as never)).rejects.toThrow(/supports OpenCode 2\.0\.19 and 2\.0\.20 only/);
-    expect(host.registered).toHaveLength(0);
-    expect(SUPPORTED_HOST_VERSIONS).toContain("2.0.20");
+  it("degrades on an unverified host version: read-only tools work, writes are refused (D.3 item 7)", async () => {
+    let bridgeStarted = false;
+    const probeRoot = tempRoot();
+    roots.push(probeRoot);
+    const probe = createFakeHost(probeRoot, { hostVersion: "2.1.0" });
+    const t = await setup({ hostVersion: "2.1.0" });
+    try {
+      // Every identity stays registered with the same text and shapes.
+      expect(t.host.registered.map((x) => x.name)).toHaveLength(13);
+      expect(SUPPORTED_HOST_VERSIONS).toContain("2.0.20");
+      const before = fingerprint(t.root);
+      const tester = toolContext("tester");
+      // Read-only tools (read, list, inspect, validate, resume, doctor, compact_preview).
+      const read = await t.read();
+      expect(read.workplan.id).toBe("native-demo");
+      expect(JSON.parse((await t.host.tool("workplan_list").execute({}, tester)).content).workplans[0].id).toBe("native-demo");
+      expect(JSON.parse((await t.host.tool("workplan_inspect").execute({ id: "native-demo" }, tester)).content).workplan.id).toBe("native-demo");
+      expect(JSON.parse((await t.host.tool("workplan_validate").execute({ id: "native-demo" }, tester)).content).valid).toBe(true);
+      expect(JSON.parse((await t.host.tool("workplan_resume").execute({ id: "native-demo" }, tester)).content).checkpoint.current.stepTitle).toBe("Do next thing");
+      expect(JSON.parse((await t.host.tool("workplan_compact_preview").execute({ id: "native-demo", archiveReason: "Preview only" }, tester)).content).mode).toBe("preview");
+      const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, tester)).content);
+      expect(doctor.runtimeFacts.host).toEqual({
+        opencodeVersion: "2.1.0",
+        verified: false,
+        verifiedVersions: ["2.0.19", "2.0.20"],
+        writes: "disabled",
+        detail: expect.stringContaining("Shiori adapter not verified for OpenCode 2.1.0; writes disabled — update Shiori"),
+      });
+      expect(doctor.runtimeFacts.permission.detail).toContain("Permission bridge not started");
+      // Every mutating tool is refused before any core request or host prompt.
+      const hash = read.stateHash;
+      const writes: Array<[string, Record<string, unknown>, string]> = [
+        ["workplan_create", { id: "other", goal: "g" }, "plan"],
+        ["workplan_update", { id: "native-demo", expectedHash: hash, title: "x" }, "plan"],
+        ["workplan_patch", { id: "native-demo", expectedHash: hash, patchText: "*** Begin Patch\n*** End Patch" }, "plan"],
+        ["workplan_reset", { id: "native-demo", expectedHash: hash, mode: "wipe" }, "plan"],
+        ["workplan_checkpoint", { id: "native-demo", expectedHash: hash, summary: "s", nextAction: "n" }, "orchestrator"],
+        ["workplan_compact", { id: "native-demo", archiveReason: "r" }, "orchestrator"],
+      ];
+      for (const [name, input, agent] of writes) {
+        const err = await t.host.tool(name).execute(input, toolContext(agent)).then(() => undefined, (e) => e);
+        expect(err?.message).toStartWith("Shiori adapter not verified for OpenCode 2.1.0; writes disabled — update Shiori");
+        expect(err?.errorClass).toBe("unsupported_capability");
+      }
+      expect(t.host.requests).toHaveLength(0);
+      expect(fingerprint(t.root)).toEqual(before);
+    } finally {
+      await t.cleanup();
+    }
+    // The bridge is never started on an unverified host.
+    const plugin = createPlugin({ bridge: async () => { bridgeStarted = true; throw new Error("must not start"); }, env: {} });
+    const dispose = await plugin.setup(probe.ctx as never);
+    expect(bridgeStarted).toBe(false);
+    await (dispose as () => Promise<void>)();
+  });
+
+  it("reports the verified host in doctor (D.3 item 7)", async () => {
+    const t = await setup();
+    try {
+      const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, toolContext("tester"))).content);
+      expect(doctor.runtimeFacts.host).toMatchObject({ opencodeVersion: "2.0.20", verified: true, verifiedVersions: ["2.0.19", "2.0.20"], writes: "enabled" });
+    } finally {
+      await t.cleanup();
+    }
   });
 });
 

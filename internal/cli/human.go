@@ -54,8 +54,14 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 	case "list":
 		fmt.Fprintf(w, "%s  (%s plans)\n", str(get(v, "directory")), str(get(v, "count")))
 		for _, p := range get(v, "workplans").Elems() {
-			if is, ok := p.Get("issue"); ok {
-				fmt.Fprintf(w, "  %-24s INVALID  %s\n", str(get(p, "id")), is.Str())
+			if _, summary := p.Get("kind"); !summary {
+				// D.3: an unlistable plan carries an issues array (and, when
+				// unreadable, the raw-byte stateHash for a repair).
+				fmt.Fprintf(w, "  %-24s INVALID\n", str(get(p, "id")))
+				issues(w, "      ", get(p, "issues"))
+				if h := get(p, "stateHash"); h.Kind() == ojson.String {
+					fmt.Fprintf(w, "      stateHash %s (repair with create --overwrite --expected-hash)\n", h.Str())
+				}
 				continue
 			}
 			state := "ok"

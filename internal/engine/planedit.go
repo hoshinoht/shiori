@@ -101,23 +101,99 @@ func randInt(n int64) int64 {
 // IDSource, when set (tests only), supplies generated ids.
 var IDSource func(prefix string) string
 
-// generateID returns "<prefix>-<word>-<word>-<6 digits>" unused in taken.
-// Only the format is contractual (MANIFEST generation notes).
-func generateID(prefix string, taken map[string]bool) string {
+// maxSlugUnits bounds a title slug so a disambiguating suffix still fits
+// the 80-unit id limit and ids stay readable.
+const maxSlugUnits = 48
+
+// titleSlug is the normalized id form of a title, cut at a word boundary
+// to maxSlugUnits ("" when the title has no [a-z0-9]).
+func titleSlug(title string) string {
+	slug, err := model.NormalizeID(title)
+	if err != nil {
+		return ""
+	}
+	if len(slug) > maxSlugUnits {
+		slug = slug[:maxSlugUnits]
+		if i := strings.LastIndexByte(slug, '-'); i >= maxSlugUnits/2 {
+			slug = slug[:i]
+		}
+		slug = strings.TrimRight(slug, "-")
+	}
+	return slug
+}
+
+// generateID returns a readable id for a new phase or step (D.3, contracts
+// §13 item 5): the slug of its title, with a short "-2", "-3", ... suffix
+// only when that id is already taken. A title without [a-z0-9] falls back
+// to the earlier "<prefix>-<word>-<word>-<6 digits>" form. Existing ids
+// never change.
+func generateID(prefix, title string, taken ...map[string]bool) string {
 	if IDSource != nil {
 		return IDSource(prefix)
 	}
+	used := func(id string) bool {
+		for _, t := range taken {
+			if t[id] {
+				return true
+			}
+		}
+		return false
+	}
+	if slug := titleSlug(title); slug != "" {
+		if !used(slug) {
+			return slug
+		}
+		for n := 2; ; n++ {
+			if id := slug + "-" + strconv.Itoa(n); !used(id) {
+				return id
+			}
+		}
+	}
 	for {
 		id := fmt.Sprintf("%s-%s-%s-%06d", prefix, idWords[randInt(int64(len(idWords)))], idWords[randInt(int64(len(idWords)))], randInt(1000000))
-		if !taken[id] {
+		if !used(id) {
 			return id
 		}
 	}
 }
 
+// idScope tracks the ids a generated id must avoid: those already taken
+// in its scope, explicit ids supplied in the same input (reserved) and,
+// for steps, every step id in the plan so a generated step id is also
+// unambiguous for stepId-only references and Markdown markers.
+type idScope struct {
+	taken    map[string]bool
+	reserved map[string]bool
+	plan     map[string]bool // plan-wide step ids (steps only; may be nil)
+}
+
+// explicitIDs collects the normalizable explicit ids of an input list.
+func explicitIDs(list []ojson.Value) map[string]bool {
+	out := map[string]bool{}
+	for _, v := range list {
+		if raw, ok := getStr(v, "id"); ok {
+			if id, err := model.NormalizeID(raw); err == nil {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
+// planStepIDs is the set of every step id in the plan.
+func planStepIDs(p *model.Plan) map[string]bool {
+	out := map[string]bool{}
+	for i := range p.Phases {
+		for j := range p.Phases[i].Steps {
+			out[p.Phases[i].Steps[j].ID] = true
+		}
+	}
+	return out
+}
+
 // stepFromInput builds a step; position is the 1-based number used in the
 // reference's missing-title message.
-func stepFromInput(v ojson.Value, position int, taken map[string]bool) (model.Step, error) {
+func stepFromInput(v ojson.Value, position int, sc idScope) (model.Step, error) {
 	var st model.Step
 	title := ""
 	if t, ok := getStr(v, "title"); ok {
@@ -133,12 +209,15 @@ func stepFromInput(v ojson.Value, position int, taken map[string]bool) (model.St
 		}
 		st.ID = id
 	} else {
-		st.ID = generateID("step", taken)
+		st.ID = generateID("step", title, sc.taken, sc.reserved, sc.plan)
 	}
-	if taken[st.ID] {
+	if sc.taken[st.ID] {
 		return st, fmt.Errorf("Duplicate step id: %s", st.ID)
 	}
-	taken[st.ID] = true
+	sc.taken[st.ID] = true
+	if sc.plan != nil {
+		sc.plan[st.ID] = true
+	}
 	st.Title = title
 	st.Target = optTrim(v, "target")
 	st.Action = optTrim(v, "action")
@@ -150,7 +229,7 @@ func stepFromInput(v ojson.Value, position int, taken map[string]bool) (model.St
 	return st, nil
 }
 
-func phaseFromInput(v ojson.Value, position int, taken map[string]bool) (model.Phase, error) {
+func phaseFromInput(v ojson.Value, position int, sc idScope, planSteps map[string]bool) (model.Phase, error) {
 	var ph model.Phase
 	title := ""
 	if t, ok := getStr(v, "title"); ok {
@@ -166,21 +245,22 @@ func phaseFromInput(v ojson.Value, position int, taken map[string]bool) (model.P
 		}
 		ph.ID = id
 	} else {
-		ph.ID = generateID("phase", taken)
+		ph.ID = generateID("phase", title, sc.taken, sc.reserved)
 	}
-	if taken[ph.ID] {
+	if sc.taken[ph.ID] {
 		return ph, fmt.Errorf("Duplicate phase id: %s", ph.ID)
 	}
-	taken[ph.ID] = true
+	sc.taken[ph.ID] = true
 	ph.Title = title
 	ph.Status = "draft"
 	if s, ok := getStr(v, "status"); ok {
 		ph.Status = s
 	}
-	stepTaken := map[string]bool{}
+	steps := getObjs(v, "steps")
+	stepScope := idScope{taken: map[string]bool{}, reserved: explicitIDs(steps), plan: planSteps}
 	ph.Steps = []model.Step{}
-	for i, sv := range getObjs(v, "steps") {
-		st, err := stepFromInput(sv, i+1, stepTaken)
+	for i, sv := range steps {
+		st, err := stepFromInput(sv, i+1, stepScope)
 		if err != nil {
 			return ph, err
 		}
@@ -189,11 +269,19 @@ func phaseFromInput(v ojson.Value, position int, taken map[string]bool) (model.P
 	return ph, nil
 }
 
+// phasesFromInput builds a complete phase list (create, or update
+// {phases} as a full replacement).
 func phasesFromInput(list []ojson.Value) ([]model.Phase, error) {
-	taken := map[string]bool{}
+	sc := idScope{taken: map[string]bool{}, reserved: explicitIDs(list)}
+	planSteps := map[string]bool{}
+	for _, pv := range list {
+		for id := range explicitIDs(getObjs(pv, "steps")) {
+			planSteps[id] = true
+		}
+	}
 	out := []model.Phase{}
 	for i, pv := range list {
-		ph, err := phaseFromInput(pv, i+1, taken)
+		ph, err := phaseFromInput(pv, i+1, sc, planSteps)
 		if err != nil {
 			return nil, err
 		}
@@ -257,9 +345,59 @@ func (e *Engine) normalizeSpecList(field string, list []string) ([]string, error
 			continue
 		}
 		seen[rel] = true
+		// D.3 (contracts §13 item 5): a new link must name an existing file,
+		// like the D.2 dependency checks, before anything is authorized.
+		if err := e.specExists(field+"."+strconv.Itoa(i), rel); err != nil {
+			return nil, err
+		}
 		out = append(out, rel)
 	}
 	return out, nil
+}
+
+// SpecFileMissingError refuses a specFiles link to a file that does not
+// exist (D.3).
+type SpecFileMissingError struct{ Field, Rel string }
+
+func (e *SpecFileMissingError) Error() string {
+	return e.Field + ": Linked spec file does not exist: " + e.Rel + ". Create the file first, or leave it out of the list."
+}
+
+func (e *Engine) specExists(field, rel string) error {
+	r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
+	a, err := r.ReadFile(rel)
+	if err != nil {
+		return err
+	}
+	if !a.Exists {
+		return &SpecFileMissingError{Field: field, Rel: rel}
+	}
+	return nil
+}
+
+// MaxNoteBytes is the per-note size limit for new notes (D.3, contracts
+// §13 item 5). Stored notes are never changed.
+const MaxNoteBytes = 16 << 10
+
+// NoteTooLargeError refuses a new note above MaxNoteBytes.
+type NoteTooLargeError struct {
+	Field string
+	Size  int
+}
+
+func (e *NoteTooLargeError) Error() string {
+	return e.Field + ": Note is " + strconv.Itoa(e.Size) + " bytes, above the " + strconv.Itoa(MaxNoteBytes) +
+		"-byte (16 KiB) per-note limit. Keep notes short; put long evidence in a file and reference its path."
+}
+
+// checkNotes applies the per-note limit to new (trimmed) notes.
+func checkNotes(field string, list []string) error {
+	for i, n := range list {
+		if t := model.TrimJS(n); len(t) > MaxNoteBytes {
+			return &NoteTooLargeError{Field: field + "." + strconv.Itoa(i), Size: len(t)}
+		}
+	}
+	return nil
 }
 
 // normalizePlanFileInput trims and applies the plan-file policy and D5.

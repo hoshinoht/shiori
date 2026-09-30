@@ -36,6 +36,11 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		dst *[]string
 	}{{"scope", &p.Scope}, {"nonGoals", &p.NonGoals}, {"constraints", &p.Constraints}, {"relevantFiles", &p.RelevantFiles}, {"notes", &p.Notes}} {
 		l, _ := getList(data, f.key)
+		if f.key == "notes" {
+			if err := checkNotes("notes", l); err != nil {
+				return nil, err
+			}
+		}
 		*f.dst = trimDedupe(l)
 	}
 	specs, _ := getList(data, "specFiles")
@@ -74,6 +79,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
 	var reads []storage.ReadEntry
 	var jsonBefore, mdBefore snapshot.Artifact
+	keepMD := false // D.3: an unreadable plan's existing Markdown is kept
 	op := "create"
 	if !overwrite {
 		if jsonBefore, err = r.ReadFile(jsonRel); err != nil {
@@ -112,30 +118,63 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		expected := optHash(data)
 		s, err := e.load(id)
 		if err != nil {
-			return nil, err
-		}
-		if !planFileSet {
-			p.PlanFile = s.Plan.PlanFile
-		} else if p.PlanFile != s.Plan.PlanFile {
-			return nil, fmt.Errorf("Overwrite target does not match the existing linked planFile %s; use workplan_update to move or update it", s.Plan.PlanFile)
-		}
-		if s, err = e.loadForMutation(id, expected); err != nil {
-			return nil, err
-		}
-		if s.Markdown.Exists && !replaceMD {
-			gen, err := e.generatedMarkdown(s)
-			if err != nil {
+			u := e.unreadable(id, err)
+			if u == nil {
 				return nil, err
 			}
-			if !gen {
-				return nil, errors.New(msgHandwrittenUpdate)
+			// D.3 (contracts §13 item 2): repair an unreadable plan. The
+			// expectedHash is the raw-byte state hash that doctor, validate
+			// and list report for it.
+			if u.Journal.Exists {
+				return nil, e.errPendingJournal(id)
 			}
+			if expected != nil && *expected != u.StateHash {
+				return nil, &StaleHashError{Current: u.StateHash}
+			}
+			if mdBefore, err = r.ReadFile(p.PlanFile); err != nil {
+				return nil, err
+			}
+			// Nothing proves the existing Markdown was generated, so it is
+			// kept unless replaceMarkdown=true.
+			if mdBefore.Exists && !replaceMD {
+				if hasMD {
+					return nil, errors.New(msgHandwrittenUpdate)
+				}
+				keepMD = true
+			}
+			jsonBefore = u.JSON
+			reads = readsOf(u.StateManifest)
+			mdRead := storage.ReadEntry{Rel: p.PlanFile, Missing: true}
+			if mdBefore.Exists {
+				mdRead = storage.ReadEntry{Rel: p.PlanFile, SHA256: sha256Hex(mdBefore.Bytes)}
+			}
+			reads = append(reads, mdRead)
+		} else {
+			if !planFileSet {
+				p.PlanFile = s.Plan.PlanFile
+			} else if p.PlanFile != s.Plan.PlanFile {
+				return nil, fmt.Errorf("Overwrite target does not match the existing linked planFile %s; use workplan_update to move or update it", s.Plan.PlanFile)
+			}
+			if s, err = e.loadForMutation(id, expected); err != nil {
+				return nil, err
+			}
+			if s.Markdown.Exists && !replaceMD {
+				gen, err := e.generatedMarkdown(s)
+				if err != nil {
+					return nil, err
+				}
+				if !gen {
+					return nil, errors.New(msgHandwrittenUpdate)
+				}
+			}
+			jsonBefore, mdBefore = s.JSON, s.Markdown
+			reads = readsOf(s.StateManifest)
 		}
-		jsonBefore, mdBefore = s.JSON, s.Markdown
-		reads = readsOf(s.StateManifest)
 	}
 	var md []byte
-	if hasMD {
+	if keepMD {
+		md = mdBefore.Bytes
+	} else if hasMD {
 		md = withNewline(explicitMD)
 	} else if md, err = model.RenderMarkdown(p); err != nil {
 		return nil, err
@@ -214,4 +253,28 @@ func (e *Engine) checkTargetPaths(in *storage.Intent) error {
 		}
 	}
 	return nil
+}
+
+// unreadable returns the raw-byte view of a plan whose primary JSON
+// exists but cannot be loaded (D.3, contracts §13 item 2), or nil when the
+// load error is not one a repair addresses (missing plan, limits).
+func (e *Engine) unreadable(id string, loadErr error) *snapshot.Unreadable {
+	var nf *snapshot.NotFoundError
+	if errors.As(loadErr, &nf) || IsUnsupported(loadErr) {
+		return nil
+	}
+	u, err := snapshot.LoadUnreadable(e.Root, id, e.Limits)
+	if err != nil {
+		return nil
+	}
+	return u
+}
+
+// unreadableFor is unreadable for the read-only reports; the D.3 members
+// are off in the test-only D.3-off engine.
+func (e *Engine) unreadableFor(id string, loadErr error) *snapshot.Unreadable {
+	if e.noD3 {
+		return nil
+	}
+	return e.unreadable(id, loadErr)
 }

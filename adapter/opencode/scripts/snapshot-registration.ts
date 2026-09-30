@@ -1,7 +1,8 @@
 // Regenerates src/registration.json from the reference TypeScript workplan
 // plugin so that the adapter registers byte-identical tool descriptions and
 // input schemas (same identities, argument shapes and model-facing text),
-// plus the approved D.1 addition (workplan_read includeNotes).
+// plus the approved D.1 addition (workplan_read includeNotes) and the D.3
+// reset changes (wipe mode, previewToken, confirmation, accurate text).
 //
 //   bun scripts/snapshot-registration.ts /path/to/workplan-tools/src/core > src/registration.json
 //
@@ -40,6 +41,24 @@ read.properties.includeNotes = {
   description: "Only with phaseId/stepId: also return reviewFindings and notes (default false). A filtered read returns the plan header, hashes and the selected phase/step; linked Markdown only with includeMarkdown=true",
   type: "boolean",
 };
+// Approved design change D.3 (docs/contracts.md §13 item 1, 2026-09-30):
+// the reset wipe mode with its preview token and confirmation, and
+// reset text that describes the status-only draft reset. Each changed
+// value is recorded with its reference value so the test can restore it.
+const reset = tools.find((tool) => tool.name === "workplan_reset")! as { description: string; input: any };
+const changes: Array<{ tool: string; path: string[]; reference: unknown }> = [];
+const change = (path: string[], value: unknown) => {
+  let cur: any = reset;
+  for (const key of path.slice(0, -1)) cur = cur[key];
+  changes.push({ tool: "workplan_reset", path, reference: cur[path[path.length - 1]] });
+  cur[path[path.length - 1]] = value;
+};
+change(["description"], "Reset a workplan: draft resets every status (plan, phases, steps) to draft and removes the checkpoint, keeping phases, steps, notes, findings and dependencies; wipe clears phases, findings and notes after a preview and an exact confirmation, archiving the originals first; markdown-only only regenerates the linked Markdown from the JSON.");
+change(["input", "properties", "mode", "description"], "draft resets statuses only and keeps the plan content; wipe clears phases, findings and (unless preserveNotes) notes: call it first without previewToken/confirmation for a read-only preview, then again with that previewToken and confirmation=WIPE_PLAN_CONTENT; markdown-only only regenerates the Markdown");
+change(["input", "properties", "mode", "enum"], ["draft", "markdown-only", "wipe"]);
+change(["input", "properties", "preserveNotes", "description"], "Keep notes during a wipe (a draft reset always keeps notes)");
+reset.input.properties.previewToken = { description: "mode=wipe only: the previewToken returned by the wipe preview", type: "string" };
+reset.input.properties.confirmation = { description: "mode=wipe only: must be WIPE_PLAN_CONTENT to apply the previewed wipe", type: "string" };
 console.log(JSON.stringify({
   source: "reference workplan-tools native registration (generated; do not edit)",
   tools,
@@ -47,5 +66,10 @@ console.log(JSON.stringify({
     note: "Approved design change D.1 (docs/contracts.md §11 item B, 2026-09-30). Removing this key and every listed addition reproduces the reference snapshot byte-for-byte (sha256 below).",
     referenceSha256: createHash("sha256").update(reference).digest("hex"),
     additions: [{ tool: "workplan_read", property: "includeNotes" }],
+  },
+  d3: {
+    note: "Approved design change D.3 (docs/contracts.md §13 item 1, 2026-09-30). Removing this key and the d1 key, every listed addition, and restoring each listed change to its reference value reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    additions: [{ tool: "workplan_reset", property: "previewToken" }, { tool: "workplan_reset", property: "confirmation" }],
+    changes,
   },
 }, null, 2));

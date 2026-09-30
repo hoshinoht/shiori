@@ -8,11 +8,12 @@ This repository contains the specifications, the approved stage A contract
 (machine schemas, a golden fixture corpus and a measured TypeScript baseline),
 the stage B read-only Go core, the stage C transactional core with its
 `shiori` CLI, the stage D native OpenCode adapter (`shiori serve --stdio`
-plus `adapter/opencode/`), and the D.1 and D.2 approved design changes
+plus `adapter/opencode/`), and the D.1, D.2 and D.3 approved design changes
 ([contracts §11](docs/contracts.md#11-approved-design-changes-d1-approved-2026-09-30),
-[§12](docs/contracts.md#12-approved-design-changes-d2-approved-2026-09-30)).
+[§12](docs/contracts.md#12-approved-design-changes-d2-approved-2026-09-30),
+[§13](docs/contracts.md#13-approved-design-changes-d3-approved-2026-09-30)).
 The architecture is a Go core and CLI with a thin OpenCode JS/TS adapter.
-Stages A–D, D.1 and D.2 are authorized. Automatic artifact migration, commits
+Stages A–D, D.1, D.2 and D.3 are authorized. Automatic artifact migration, commits
 and remote publication are not.
 
 ## Specifications
@@ -28,7 +29,7 @@ Read in this order:
 Stage A contract:
 
 - [Frozen contract v1 (APPROVED 2026-09-30)](docs/contracts.md), including the
-  approved D.1 and D.2 design changes (§11, §12)
+  approved D.1, D.2 and D.3 design changes (§11–§13)
 - [Machine schemas](schema/index.json) and [golden corpus](testdata/MANIFEST.json)
 - [TypeScript reference baseline and Go stage B results](docs/baseline.md)
 
@@ -99,6 +100,17 @@ without one, output is the same as D.1):
   steps). The compaction preview lists steps that archived prerequisites
   still block.
 
+D.3 behaviour of the read operations (contracts §13):
+
+- A plan whose JSON cannot be loaded gets `planHash`/`stateHash` computed
+  from its raw bytes in `doctor`, `validate` and `list`; pass that
+  `stateHash` to `create --overwrite --expected-hash` to repair it.
+- Every `list` entry has an `issues` array.
+- `doctor` flags `<id>.md` left behind after a `planFile` move
+  (`stale-markdown`) and names what changed since a stale checkpoint.
+- `validate`/`doctor` warn when handwritten Markdown lacks a step's
+  `<!-- workplan-step-id: ... -->` marker (it is never rewritten).
+
 ```sh
 shiori list     --root /path/to/project
 shiori read     <id> [--phase ID] [--step ID] [--no-markdown | --markdown] [--notes]
@@ -126,7 +138,9 @@ shiori create     my-plan --goal "Ship it" [--title T] [--plan-file .opencode/wo
 shiori update     my-plan --expected-hash "$H" --status in_progress --append-note "started"
 shiori update     my-plan --expected-hash "$H" --input '{"updateSteps":[{"phaseId":"p","stepId":"s","status":"completed"}]}'
 shiori patch      my-plan --expected-hash "$H" --patch-file change.patch [--validate]
-shiori reset      my-plan --expected-hash "$H" [--mode draft|markdown-only] [--preserve-notes] [--replace-markdown]
+shiori reset      my-plan --expected-hash "$H" [--mode draft|markdown-only] [--replace-markdown]
+shiori reset      my-plan --expected-hash "$H" --mode wipe [--preserve-notes]                 # preview: prints previewToken
+shiori reset      my-plan --expected-hash "$H" --mode wipe --preview-token TOKEN --confirm WIPE_PLAN_CONTENT
 shiori checkpoint my-plan --expected-hash "$H" --summary S --next-action A [--phase ID --step ID] [--blocker B]...
 shiori compact    my-plan --reason tidy --archive-phase done-phase                 # preview: prints previewToken
 shiori compact    my-plan --reason tidy --archive-phase done-phase --apply \
@@ -146,6 +160,14 @@ shiori update     my-plan --recovery resume|rollback --expected-hash "$H"       
   `completed` while the executable-structure rules fail. The error lists
   every field path. `draft`, `blocked` and `cancelled` are always allowed.
   `patch --validate` returns the full issue list (D.1).
+- `reset` (draft) only resets statuses to draft and removes the checkpoint;
+  phases, steps, notes, findings and dependencies are kept. `--mode wipe`
+  clears the content after a preview and the exact token and confirmation,
+  archiving the originals under `.opencode/workplan/archive/<id>/` first
+  (D.3).
+- New `specFiles` must exist, a new note is at most 16 KiB, generated ids
+  are title slugs (`-2`... on collision), and new plan/Markdown files take
+  the mode of the existing plans (else 0644 minus the umask) (D.3).
 
 ### Common
 
@@ -183,8 +205,11 @@ and `schema/v1/protocol-envelope-v1.schema.json`.
 ## OpenCode adapter
 
 `adapter/opencode/` is an OpenCode V2 plugin package (verified on OpenCode
-2.0.19/2.0.20 with plugin API 2.0.20; other host versions fail closed at
-registration). It registers the existing thirteen `workplan_*` tools with the
+2.0.19/2.0.20 with plugin API 2.0.20). On another host version (D.3) the
+read-only tools keep working, every mutating tool is refused with
+`Shiori adapter not verified for OpenCode <v>; writes disabled — update
+Shiori`, and `workplan_doctor` reports the host version and the verified
+list. It registers the existing thirteen `workplan_*` tools with the
 same descriptions, argument shapes, result text and role matrix as the
 reference TypeScript plugin, and runs them through a lazily started
 `shiori serve --stdio` child. It has no dependencies: it imports only `node:`
@@ -257,7 +282,10 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
   purpose are pinned in `testdata/d1/expectations.json`, and each one also
   passes a comparator against the unchanged oracle vector. Re-pin them
   after review with `SHIORI_D1_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
-  Vectors that D.2 changes are pinned in `testdata/d2/expectations.json`.
+  Vectors that D.2 changes are pinned in `testdata/d2/expectations.json`,
+  and those D.3 changes in `testdata/d3/expectations.json`
+  (`SHIORI_D3_UPDATE=1` re-pins; the D.3-off output must still pass every
+  earlier check).
   The same engine with the graph additions off must still pass the
   earlier check, and the D.2 output must differ from it only by the
   approved members (`SHIORI_D2_UPDATE=1` re-pins).
@@ -276,7 +304,7 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit D.2 (see [STATUS](docs/STATUS.md)). Updating the pinned
+Review and commit D.3 (see [STATUS](docs/STATUS.md)). Updating the pinned
 copy the owner's OpenCode uses is a separate step for the owner. Worktree
 orchestration and alternative storage remain later, explicitly gated
 stages.

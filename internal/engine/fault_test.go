@@ -123,7 +123,7 @@ func TestFaultInjection(t *testing.T) {
 	freezeClock(t)
 	points := []string{storage.FaultDirs, storage.FaultLocked, storage.FaultStage + ":0", storage.FaultStage + ":1",
 		storage.FaultJournalStage, storage.FaultJournalLink, storage.FaultJournalSync,
-		storage.FaultPublish + ":0", storage.FaultPublish + ":1", storage.FaultPublish + ":2",
+		storage.FaultPublish + ":0", storage.FaultPublish + ":1", storage.FaultPublish + ":2", storage.FaultPublish + ":3", storage.FaultPublish + ":4",
 		storage.FaultDirSync, storage.FaultCleanup}
 	durable := map[string]bool{storage.FaultJournalLink: true, storage.FaultJournalSync: true, storage.FaultDirSync: true, storage.FaultCleanup: true}
 	injected := errors.New("injected fault")

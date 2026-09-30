@@ -168,13 +168,22 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		}
 	}
 	afterCount := map[string]int{}
+	var addedPhases []ojson.Value
+	for _, ap := range getObjs(data, "addPhases") {
+		pv, _ := ap.Get("phase")
+		addedPhases = append(addedPhases, pv)
+	}
 	for _, ap := range getObjs(data, "addPhases") {
 		taken := map[string]bool{}
 		for i := range p.Phases {
 			taken[p.Phases[i].ID] = true
 		}
 		pv, _ := ap.Get("phase")
-		ph, err := phaseFromInput(pv, len(p.Phases)+1, taken)
+		planSteps := planStepIDs(p)
+		for id := range explicitIDs(getObjs(pv, "steps")) {
+			planSteps[id] = true
+		}
+		ph, err := phaseFromInput(pv, len(p.Phases)+1, idScope{taken: taken, reserved: explicitIDs(addedPhases)}, planSteps)
 		if err != nil {
 			return nil, err
 		}
@@ -220,6 +229,11 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		}
 	}
 	stepAfter := map[string]int{}
+	var addedSteps []ojson.Value
+	for _, as := range getObjs(data, "addSteps") {
+		sv, _ := as.Get("step")
+		addedSteps = append(addedSteps, sv)
+	}
 	for _, as := range getObjs(data, "addSteps") {
 		pid, _ := getStr(as, "phaseId")
 		pi, err := findPhase(pid)
@@ -232,7 +246,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			taken[ph.Steps[j].ID] = true
 		}
 		sv, _ := as.Get("step")
-		st, err := stepFromInput(sv, len(ph.Steps)+1, taken)
+		st, err := stepFromInput(sv, len(ph.Steps)+1, idScope{taken: taken, reserved: explicitIDs(addedSteps), plan: planStepIDs(p)})
 		if err != nil {
 			return nil, err
 		}
@@ -258,6 +272,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		p.Findings = append(p.Findings, add...)
 	}
 	if l, ok := getList(data, "appendNotes"); ok {
+		if err := checkNotes("appendNotes", l); err != nil {
+			return nil, err
+		}
 		p.Notes = appendDedupe(p.Notes, l)
 	}
 

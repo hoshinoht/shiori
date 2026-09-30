@@ -41,7 +41,7 @@
         "agent": { "type": "string" },
         "messageID": { "type": "string" },
         "callID": { "type": "string" },
-        "runtimeFacts": { "type": "object", "description": "Stage D: host facts the adapter gathered from its trusted plugin context (effective registrations, plugin state, permission rules, bridge diagnostics). Accepted only for workplan_doctor; the core type-checks and bounds every field and renders anything else as unknown." }
+        "runtimeFacts": { "type": "object", "description": "Stage D: host facts the adapter gathered from its trusted plugin context (effective registrations, plugin state, permission rules, bridge diagnostics). Accepted only for workplan_doctor; the core type-checks and bounds every field and renders anything else as unknown. D.3: an optional host object {opencodeVersion, verified, verifiedVersions, writes: enabled|disabled, detail} is rendered as runtimeFacts.host only when supplied." }
       },
       "required": ["mode", "canonicalRoot"],
       "additionalProperties": false

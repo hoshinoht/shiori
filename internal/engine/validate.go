@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -62,6 +63,9 @@ func (e *Engine) validationWarnings(s *snapshot.Snapshot, dv depView) []string {
 	if s.Markdown.Exists && !model.Blank(string(s.Markdown.Bytes)) {
 		if out, err := model.RenderMarkdown(s.Plan); err == nil && string(out) != string(s.Markdown.Bytes) {
 			w = append(w, fmt.Sprintf(msgMarkdownDrift, s.Markdown.Rel))
+			if m := e.missingStepMarkers(s); m != "" {
+				w = append(w, m)
+			}
 		}
 	}
 	if dv.deps != nil && len(dv.issues) == 0 {
@@ -82,10 +86,17 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 		if IsUnsupported(err) {
 			return ojson.Value{}, err
 		}
-		return ojson.NewObject(3).
+		b := ojson.NewObject(5).
 			Set("valid", ojson.BoolValue(false)).
 			Set("issueCount", ojson.IntValue(1)).
-			Set("issues", ojson.StringsValue([]string{err.Error()})).Value(), nil
+			Set("issues", ojson.StringsValue([]string{err.Error()}))
+		// D.3 (contracts §13 item 2): the raw-byte hashes of an unreadable
+		// plan, so workplan_create overwrite can repair it.
+		if u := e.unreadableFor(id, err); u != nil {
+			b.Set("planHash", ojson.StringValue(u.PlanHash)).
+				Set("stateHash", ojson.StringValue(u.StateHash))
+		}
+		return b.Value(), nil
 	}
 	issues, dv := e.validationIssues(s, in.ID)
 	b := ojson.NewObject(11).
@@ -105,4 +116,43 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 		Set("stateHash", ojson.StringValue(s.StateHash)).
 		Set("planFresh", ojson.BoolValue(len(s.MissingPlanArtifacts) == 0)).
 		Set("dependenciesRecorded", ojson.BoolValue(dv.recorded)).Value(), nil
+}
+
+// maxMarkerList bounds the steps named in the missing-marker warning.
+const maxMarkerList = 10
+
+// missingStepMarkers is the D.3 non-failing warning (contracts §13 item
+// 4) for handwritten Markdown that lacks a step's
+// "<!-- workplan-step-id: <id> -->" marker. Generated Markdown always has
+// them. Shiori never rewrites handwritten Markdown to add them.
+func (e *Engine) missingStepMarkers(s *snapshot.Snapshot) string {
+	if e.noD3 {
+		return ""
+	}
+	md := string(s.Markdown.Bytes)
+	var missing []string
+	total := 0
+	for i := range s.Plan.Phases {
+		ph := &s.Plan.Phases[i]
+		for j := range ph.Steps {
+			total++
+			marker, err := model.StepMarker(ph.Steps[j].ID)
+			if err != nil || strings.Contains(md, marker) {
+				continue
+			}
+			missing = append(missing, ph.ID+"/"+ph.Steps[j].ID)
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	listed := missing
+	more := ""
+	if len(listed) > maxMarkerList {
+		listed = listed[:maxMarkerList]
+		more = fmt.Sprintf(" and %d more", len(missing)-maxMarkerList)
+	}
+	return fmt.Sprintf("planFile: Linked Markdown %s has no step marker (<!-- workplan-step-id: <stepId> -->) for %d of %d steps: %s%s. "+
+		"Tools and readers that locate a step's section by its marker cannot find these steps. Add the markers by hand; Shiori never rewrites handwritten Markdown.",
+		s.Markdown.Rel, len(missing), total, strings.Join(listed, ", "), more)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/model"
@@ -45,7 +46,8 @@ var operationKinds = map[string]map[string]bool{
 	"create:overwrite":    {"plan": true, "markdown": true},
 	"update":              {"plan": true, "markdown": true, "dependencies": true},
 	"patch":               {"markdown": true},
-	"reset:draft":         {"plan": true, "markdown": true},
+	"reset:draft":         {"plan": true, "markdown": true, "checkpoint": true},
+	"reset:wipe":          {"plan": true, "markdown": true, "checkpoint": true, "dependencies": true, "archive": true},
 	"reset:markdown-only": {"markdown": true},
 	"checkpoint":          {"checkpoint": true},
 	"compact:apply":       {"plan": true, "markdown": true, "checkpoint": true, "dependencies": true, "archive": true},
@@ -149,6 +151,11 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 				continue
 			}
 			pid, pf, err := planFileOf(e.Root, img.data)
+			if err != nil && j.Operation == "create:overwrite" && img.dst == &beforePF {
+				// D.3 item 2: overwrite repairs an unreadable plan, so its
+				// before image need not decode (no link is derived from it).
+				continue
+			}
 			if err != nil {
 				return bad("primary plan image is invalid: %v", err)
 			}
@@ -211,6 +218,10 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 	return nil
 }
 
+// safeTxID limits staging cleanup to the transaction id shapes Shiori
+// writes (UUIDs, hex), so a journal cannot name an arbitrary path.
+var safeTxID = regexp.MustCompile(`^[0-9a-f-]{1,64}$`)
+
 func hashOf(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 // preflight checks every target is at its before or after image.
@@ -246,7 +257,17 @@ func (e *Engine) recoveryHashes(id string, j *model.Journal, ov map[string][]byt
 		return s.PlanHash, s.StateHash, nil
 	}
 	if _, nf := err.(*snapshot.NotFoundError); !nf {
-		return "", "", err
+		// D.3 item 2: an unreadable primary (for example the before image
+		// of an overwrite that repairs it) has the raw-byte hashes doctor
+		// reports for it.
+		if IsUnsupported(err) {
+			return "", "", err
+		}
+		u, uerr := snapshot.LoadUnreadableOverlay(e.Root, id, e.Limits, ov)
+		if uerr != nil {
+			return "", "", err
+		}
+		return u.PlanHash, u.StateHash, nil
 	}
 	var targets []string
 	for _, t := range j.Targets {
@@ -321,6 +342,30 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 		}
 		in.Targets = append(in.Targets, tg)
 		rels = append(rels, t.Path)
+	}
+	// D.3 item 6: an interrupted writer (for example a killed process)
+	// can leave its same-directory staging files behind. Their names are
+	// derived from the journal's transaction id and target index, so no
+	// other writer owns them; recovery removes the ones present.
+	var stages []string
+	if safeTxID.MatchString(j.TransactionID) {
+		stages = append(stages, storage.JournalStagePath(snapshot.WorkplanDir, id, j.TransactionID))
+	}
+	for i, t := range j.Targets {
+		if t.AfterHash != nil && safeTxID.MatchString(j.TransactionID) {
+			stages = append(stages, storage.StagePath(t.Path, j.TransactionID, i))
+		}
+	}
+	for _, stage := range stages {
+		if snapshot.CheckWritable(e.Root, stage) != nil {
+			continue
+		}
+		data, err := os.ReadFile(e.absRel(stage))
+		if err != nil {
+			continue
+		}
+		in.Targets = append(in.Targets, storage.Target{Rel: stage, Kind: "staging", Before: data, BeforeExists: true})
+		rels = append(rels, stage)
 	}
 	in.Dirs = storage.ParentDirs(append(rels, snapshot.WorkplanDir+"/x")...)
 	prep := &Prepared{Tool: "workplan_update", Intent: in}

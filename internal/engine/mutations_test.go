@@ -125,6 +125,7 @@ func TestMutationVectors(t *testing.T) {
 	for _, n := range notes {
 		t.Log(n)
 	}
+	d3Write(t, "mutations/")
 }
 
 func checkMutationVector(t *testing.T, v *mutationVector, root testutil.Root, e *Engine) {

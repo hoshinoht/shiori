@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("SHIORI_BARRIER_CHILD") == "1" {
 		os.Exit(barrierChild())
 	}
+	if os.Getenv("SHIORI_KILL_CHILD") == "1" {
+		os.Exit(killChild()) // D.3 item 6 (d3_test.go)
+	}
 	os.Exit(m.Run())
 }
 

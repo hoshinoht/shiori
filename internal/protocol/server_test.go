@@ -618,6 +618,28 @@ func TestDoctorRuntimeFactsAreSanitized(t *testing.T) {
 	if rf.obj("builtinPlan")["configured"] != nil {
 		t.Fatalf("builtinPlan: %v", rf.obj("builtinPlan"))
 	}
+	if _, ok := rf["host"]; ok {
+		t.Fatalf("host facts rendered without being supplied: %v", rf["host"])
+	}
+
+	// D.3 (contracts §13 item 7): host facts are rendered only when
+	// supplied, type-checked and bounded.
+	hc["runtimeFacts"] = map[string]any{"host": map[string]any{
+		"opencodeVersion": strings.Repeat("9", 100), "verified": "no", "verifiedVersions": []any{"2.0.19", 3, "2.0.20"},
+		"writes": "maybe", "detail": "Shiori adapter not verified",
+	}}
+	h.sendJSON(map[string]any{"type": "request", "protocolVersion": 1, "requestId": "d2", "operation": "workplan_doctor", "input": map[string]any{}, "hostContext": hc})
+	r = h.recv()
+	if !r.ok() {
+		t.Fatalf("got %v", r)
+	}
+	out = nil
+	json.Unmarshal([]byte(r.text()), &out)
+	hf := resp(out["runtimeFacts"].(map[string]any)).obj("host")
+	vv, _ := hf["verifiedVersions"].([]any)
+	if len(hf.str("opencodeVersion")) != 60 || hf["verified"] != nil || len(vv) != 2 || hf["writes"] != nil || hf.str("detail") != "Shiori adapter not verified" {
+		t.Fatalf("host: %v", hf)
+	}
 }
 
 // ---- prepare -> authorize -> commit -----------------------------------------
@@ -878,6 +900,48 @@ func TestUnchangedMutationNeedsNoIntent(t *testing.T) {
 	r := h.call("m", "workplan_reset", root, map[string]any{"id": "minimal", "expectedHash": hash, "mode": "markdown-only"})
 	if !r.ok() || r.obj("prepared") != nil || r.text() == "" {
 		t.Fatalf("got %v", r)
+	}
+}
+
+// D.3 (contracts §13 item 1): the wipe preview is a result without an
+// intent; the apply is a prepared intent whose resources list the archive
+// and the sidecar deletions, and commit performs exactly that.
+func TestResetWipePreviewThenPreparedApply(t *testing.T) {
+	root := fixtureRoot(t, "full-valid")
+	h := start(t, Options{})
+	h.handshake()
+	hash := readHash(t, h, root, "full-plan")
+	before := fingerprint(t, root)
+	r := h.call("pv", "workplan_reset", root, map[string]any{"id": "full-plan", "expectedHash": hash, "mode": "wipe"})
+	if !r.ok() || r.obj("prepared") != nil {
+		t.Fatalf("preview: %v", r)
+	}
+	var pv map[string]any
+	json.Unmarshal([]byte(r.text()), &pv)
+	tok, _ := pv["previewToken"].(string)
+	sameFingerprint(t, before, fingerprint(t, root))
+	r = h.call("ap", "workplan_reset", root, map[string]any{"id": "full-plan", "expectedHash": hash, "mode": "wipe", "previewToken": tok, "confirmation": "WIPE_PLAN_CONTENT"})
+	p := r.obj("prepared")
+	if p == nil {
+		t.Fatalf("apply: %v", r)
+	}
+	res := p.obj("resources")
+	arch, _ := res["archivePaths"].([]any)
+	dels, _ := res["deletePaths"].([]any)
+	if len(arch) != 1 || len(dels) != 2 || !strings.HasSuffix(dels[0].(string), "full-plan.checkpoint.json") || !strings.HasSuffix(dels[1].(string), "full-plan.dependencies.json") {
+		t.Fatalf("resources: %v", res)
+	}
+	sameFingerprint(t, before, fingerprint(t, root))
+	if c := h.call("c", "shiori.commit", root, commitInput(p)); !c.ok() {
+		t.Fatalf("commit: %v", c)
+	}
+	for _, n := range []string{"full-plan.checkpoint.json", "full-plan.dependencies.json"} {
+		if _, err := os.Stat(filepath.Join(root, ".opencode/workplan", n)); !os.IsNotExist(err) {
+			t.Fatalf("%s not removed", n)
+		}
+	}
+	if _, err := os.Stat(arch[0].(string)); err != nil {
+		t.Fatalf("archive: %v", err)
 	}
 }
 

@@ -150,7 +150,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 		"create":     {"title", "goal", "kind", "status", "plan-file", "markdown-file", "overwrite", "replace-markdown", "append-note"},
 		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery"},
 		"patch":      {"patch-file", "validate"},
-		"reset":      {"mode", "preserve-notes", "replace-markdown"},
+		"reset":      {"mode", "preserve-notes", "replace-markdown", "preview-token", "confirm"},
 		"checkpoint": {"summary", "next-action", "phase", "step", "blocker", "guardrail", "reference", "validation"},
 		"compact":    {"reason", "archive-phase", "archive-note", "archive-finding", "apply", "preview-token", "confirm"},
 	}

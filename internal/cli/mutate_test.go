@@ -76,9 +76,17 @@ func TestMutationJSONMatchesVector(t *testing.T) {
 	root := testutil.NewRoot(t, "empty-workspace")
 	withPrompt(t, false, "")
 	in := `{"id":"New Plan!","kind":"  ","title":"  New  ","goal":" g ","scope":["a"," a ","","b"],"specFiles":["docs/x.md","./docs/x.md"],"phases":[{"id":"Phase One","title":" P1 ","steps":[{"id":"S 1","title":" s1 ","target":" ","action":" act ","validation":"val"}]}],"reviewFindings":[{"severity":"note","title":" f ","detail":" ","source":"src"}],"notes":["n","n"]}`
+	// D.3 (contracts §13 item 5): a link to a missing spec is refused
+	// before the prompt, with class invalid_input.
+	code, out, _ := run("create", "--input", in, "--yes", "--json", "--root", root.Path)
+	if code != 1 || !strings.Contains(out, `"class": "invalid_input"`) || !strings.Contains(out, "Linked spec file does not exist: docs/x.md") {
+		t.Fatalf("missing spec: code %d, %s", code, out)
+	}
+	os.MkdirAll(filepath.Join(root.Path, "docs"), 0o755)
+	os.WriteFile(filepath.Join(root.Path, "docs", "x.md"), []byte("# x\n"), 0o644)
 	code, out, errOut := run("create", "--input", in, "--yes", "--json", "--root", root.Path)
 	if code != 0 {
-		t.Fatal(errOut)
+		t.Fatal(out, errOut)
 	}
 	// The clock is real here, so compare everything but timestamps/hashes
 	// structurally and require the vector's file set.

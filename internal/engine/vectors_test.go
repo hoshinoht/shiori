@@ -206,6 +206,8 @@ func TestCorpusParity(t *testing.T) {
 	t.Logf("D.1 listed vectors: %s", d1Summary(d1Expectations(t)))
 	d2Write(t, "tools/", "resume/", "paging/")
 	t.Logf("D.2 listed vectors: %s", d1Summary(d2Expectations(t)))
+	d3Write(t, "tools/", "resume/", "paging/")
+	t.Logf("D.3 listed vectors: %s", d1Summary(d3Expectations(t)))
 }
 
 func runVector(t *testing.T, v *vector) (outcome, string) {
@@ -237,6 +239,34 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 		}
 		os.WriteFile(filepath.Join(dir, name+".out"), []byte(body), 0o644)
 	}
+	// D.3 (contracts §13): a vector whose output changes with the D.3
+	// read-path additions is judged in two steps, like D.2. The D.3-off
+	// output must pass every earlier check (oracle, D.1/D.2 pins,
+	// divergences) unchanged, and the D.3 output must differ from it only
+	// by the approved change.
+	if runErr == nil {
+		off3 := *e
+		off3.noD3 = true
+		off3Text, off3Err := runTool(t, &off3, v.Call.Tool, input.Value)
+		if off3Err != nil {
+			t.Fatalf("D.3-off run failed: %v", off3Err)
+		}
+		if d3Candidate(t, v, text, off3Text) {
+			_, note := judgeGraph(t, v, root, &off3, input.Value, off3Text, nil)
+			d3note := checkD3(t, v, root, text, off3Text)
+			if note != "" {
+				d3note += " (D.3-off: " + note + ")"
+			}
+			return outDivergence, d3note
+		}
+	}
+	return judgeGraph(t, v, root, e, input.Value, text, runErr)
+}
+
+// judgeGraph is the D.2 split followed by the oracle/D.1/divergence
+// checks, for an engine that may have the D.3 additions turned off.
+func judgeGraph(t *testing.T, v *vector, root testutil.Root, e *Engine, input ojson.Value, text string, runErr error) (outcome, string) {
+	t.Helper()
 	// D.2 (contracts §12): a vector whose output changes with the graph
 	// additions is judged in two steps. The D.2-off output must pass the
 	// earlier checks (oracle, D.1 pins, divergences) unchanged, and the
@@ -244,7 +274,7 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 	if runErr == nil {
 		off := *e
 		off.noGraph = true
-		offText, offErr := runTool(t, &off, v.Call.Tool, input.Value)
+		offText, offErr := runTool(t, &off, v.Call.Tool, input)
 		if offErr != nil {
 			t.Fatalf("D.2-off run failed: %v", offErr)
 		}

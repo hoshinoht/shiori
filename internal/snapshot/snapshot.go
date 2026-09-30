@@ -352,3 +352,56 @@ func DirExists(root string) bool {
 	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(WorkplanDir)))
 	return err == nil && st.IsDir()
 }
+
+// Unreadable is the raw-byte view of a plan whose primary JSON exists but
+// cannot be loaded (unparseable, wrong shape or an invalid link). Its
+// hashes cover the exact primary bytes and the id's sidecars, so a
+// read-only report can hand out an expectedHash for an explicit repair
+// (D.3, contracts §13 item 2). The linked Markdown and specs are unknown
+// and not part of the manifest.
+type Unreadable struct {
+	JSON          Artifact
+	Checkpoint    Artifact
+	Dependencies  Artifact
+	Journal       Artifact
+	StateManifest []Entry
+	PlanHash      string
+	StateHash     string
+}
+
+// LoadUnreadable reads the raw artifacts of an unreadable plan. It fails
+// when the primary JSON is absent.
+func LoadUnreadable(root, id string, limits Limits) (*Unreadable, error) {
+	return LoadUnreadableOverlay(root, id, limits, nil)
+}
+
+// LoadUnreadableOverlay is LoadUnreadable over prospective contents (see
+// Reader.Overlay).
+func LoadUnreadableOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Unreadable, error) {
+	r := &Reader{Root: root, Limits: limits, Overlay: overlay}
+	u := &Unreadable{}
+	var err error
+	if u.JSON, err = r.read(PlanRel(id)); err != nil {
+		return nil, err
+	}
+	if !u.JSON.Exists {
+		return nil, &NotFoundError{Path: u.JSON.Path}
+	}
+	for _, sc := range []struct {
+		dst    *Artifact
+		suffix string
+	}{{&u.Checkpoint, ".checkpoint.json"}, {&u.Dependencies, ".dependencies.json"}, {&u.Journal, ".transaction.json"}} {
+		if *sc.dst, err = r.read(SidecarRel(id, sc.suffix)); err != nil {
+			return nil, err
+		}
+	}
+	planEntries := []Entry{EntryFor(ManifestPath(u.JSON.Rel), u.JSON.Bytes, true)}
+	state := append([]Entry{}, planEntries...)
+	for _, a := range []Artifact{u.Checkpoint, u.Dependencies, u.Journal} {
+		state = append(state, EntryFor(a.Rel, a.Bytes, a.Exists))
+	}
+	u.StateManifest = SortEntries(state)
+	u.PlanHash = ManifestHash(PlanHashVersion, planEntries)
+	u.StateHash = ManifestHash(StateHashVersion, state)
+	return u, nil
+}

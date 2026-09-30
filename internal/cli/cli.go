@@ -40,7 +40,10 @@ Mutating commands (print the prepared intent, then require confirmation):
   update <id>                [--title --goal --status --plan-file --markdown-file F
                              --append-note N --replace-markdown] | --recovery resume|rollback
   patch <id>                 --patch-file F [--validate]
-  reset <id>                 [--mode draft|markdown-only --preserve-notes --replace-markdown]
+  reset <id>                 [--mode draft|markdown-only|wipe --replace-markdown]
+                             draft: statuses to draft, checkpoint removed, content kept;
+                             wipe [--preserve-notes]: preview (read-only), then apply with
+                             --preview-token T --confirm WIPE_PLAN_CONTENT (archives first)
   checkpoint <id>            --summary S --next-action A [--phase --step --blocker
                              --guardrail --reference --validation]
   compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I]

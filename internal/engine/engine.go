@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -29,6 +30,10 @@ type Engine struct {
 	// §12). Test-only: the corpus comparators prove that a D.2 output
 	// differs from the D.2-off output only by the approved change.
 	noGraph bool
+	// noD3 turns off the D.3 read-path additions (contracts §13). Test-
+	// only, like noGraph: the corpus comparators prove that a D.3 output
+	// differs from the D.3-off output only by the approved change.
+	noD3 bool
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.
@@ -193,6 +198,9 @@ type cpView struct {
 	// resume diagnostic for an invalid checkpoint.
 	issue      string
 	diagnostic string
+	// staleDetail names what differs from a stale v2 checkpoint's
+	// manifest (D.3, contracts §13 item 5); doctor appends it.
+	staleDetail string
 }
 
 func classifyCheckpoint(s *snapshot.Snapshot) cpView {
@@ -224,8 +232,61 @@ func classifyCheckpoint(s *snapshot.Snapshot) cpView {
 	default:
 		v.freshness = FreshnessStale
 		v.issue = msgStale
+		v.staleDetail = staleDetail(cp, s)
 	}
 	return v
+}
+
+// maxStaleEntries bounds the artifacts named by staleDetail.
+const maxStaleEntries = 5
+
+func short(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
+}
+
+// staleDetail compares a stale v2 checkpoint's manifest with the current
+// plan manifest and names each artifact whose bytes changed, appeared,
+// disappeared or entered/left the manifest.
+func staleDetail(cp *model.Checkpoint, s *snapshot.Snapshot) string {
+	state := func(sha string, missing bool) string {
+		if missing {
+			return "missing"
+		}
+		return "sha256 " + short(sha)
+	}
+	then := map[string]model.ManifestEntry{}
+	for _, en := range cp.Manifest {
+		then[en.Path] = en
+	}
+	var parts []string
+	now := map[string]bool{}
+	for _, en := range s.PlanManifest {
+		now[en.Path] = true
+		old, ok := then[en.Path]
+		switch {
+		case !ok:
+			parts = append(parts, en.Path+" was added to the plan's links since the checkpoint (now "+state(en.SHA256, en.Missing)+")")
+		case old.Missing != en.Missing || old.SHA256 != en.SHA256:
+			parts = append(parts, en.Path+" changed (checkpoint "+state(old.SHA256, old.Missing)+", now "+state(en.SHA256, en.Missing)+")")
+		}
+	}
+	for _, en := range cp.Manifest {
+		if !now[en.Path] {
+			parts = append(parts, en.Path+" is no longer linked (checkpoint "+state(en.SHA256, en.Missing)+")")
+		}
+	}
+	if len(parts) == 0 {
+		return "Every manifest entry matches, but the recorded planHash differs (checkpoint " + short(cp.PlanHash) + ", now " + short(s.PlanHash) + ")"
+	}
+	more := ""
+	if len(parts) > maxStaleEntries {
+		more = fmt.Sprintf("; and %d more", len(parts)-maxStaleEntries)
+		parts = parts[:maxStaleEntries]
+	}
+	return "Changed since the checkpoint: " + strings.Join(parts, "; ") + more + ". Write a new checkpoint after reviewing the change."
 }
 
 // journalRel is the pending journal path for an id.

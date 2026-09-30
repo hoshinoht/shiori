@@ -9,8 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Sections 11 and 12 record the approved D.1 and D.2 design
-changes, which deliberately depart from the reference.
+spell out). Sections 11, 12 and 13 record the approved D.1, D.2 and D.3
+design changes, which deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -245,7 +245,9 @@ The CLI acts under OS/local operator authority, not OpenCode policy (spec 02 §7
 | Windows, network/FUSE filesystems | no | no | Separate atomicity/locking design (spec 01 §6) |
 
 - The minimum host is OpenCode runtime 2.0.19 with plugin/client 2.0.20. This is
-  the verified baseline; other versions fail closed at registration.
+  the verified baseline. Other versions failed closed at registration until
+  D.3; since D.3 (§13 item 7) they keep the read-only tools and refuse every
+  mutating tool.
 - Handshake `durability` reports observed capabilities, never intent.
 - On a system that is not a supported write target, the handshake reports
   `writeSupported: false`, and mutations fail with `unsupported_capability`.
@@ -717,7 +719,9 @@ Each entry suggests moving the file under `.opencode/workplan/archive/`.
 Doctor never moves or deletes anything. The new members
 `strayArtifacts[{name, kind, suggestion}]` (bounded by `limit`),
 `strayArtifactCount`, `omittedStrayArtifacts` and `warnings` appear only
-when there is at least one stray. `workplan_list` is unchanged.
+when there is at least one stray. `workplan_list` is unchanged. *D.3
+(§13 items 3 and 5) adds the `stale-markdown` kind and gives every list
+entry an `issues` array.*
 
 ## 12. Approved design changes D.2 (APPROVED 2026-09-30)
 
@@ -797,7 +801,8 @@ these dependency links dangling. Replace the dependencies in the same
 update.` Issues the sidecar already had do not block the update. An update
 that also supplies `dependencies` is validated against the result as
 before. `workplan_reset` (draft) is not covered; it is revisited in D.3
-(owner decision).
+(owner decision). *Resolved by D.3 (§13 item 1): the draft reset keeps the
+structure, and the wipe removes the sidecar in the same transaction.*
 
 **G5. Dependency writes and views.**
 
@@ -849,3 +854,195 @@ compaction apply over an invalid sidecar) now has the protocol and CLI
 decision, 2026-09-30). The message text is unchanged, so the oracle
 mutation vectors (which record messages only) still pass unchanged; the
 class is pinned by `TestD2PhaseReplacement` and `TestD2DependencyWrites`.
+
+## 13. Approved design changes D.3 (APPROVED 2026-09-30)
+
+Safety and robustness fixes from a live testing round against a copy of the
+owner's roadmap. The owner approved the brief on 2026-09-30 (items 1–7).
+Everything not listed here stays as in sections 1–12: the V2
+plan/checkpoint/dependencies/journal formats, the `.opencode/workplan/`
+layout, the thirteen `workplan_*` identities, the hash algorithm and the
+generated Markdown bytes. D.1's resume budgeting and D.2's graph behaviour
+are unchanged; resume output is not touched by D.3.
+
+The oracle corpus is not edited. Vectors whose output changes on purpose
+are pinned in [`testdata/d3/expectations.json`](../testdata/d3/expectations.json)
+(SHA-256 and UTF-16 length of the root-normalized Go output; for a refusal,
+of the error text). Read vectors are judged like D.2
+(`internal/engine/d3_vectors_test.go`): the same engine with the D.3
+additions off (`Engine.noD3`, test-only) must pass every earlier check
+(oracle, D.1/D.2 pins, declared divergences) unchanged, the D.3 output
+minus the approved members must equal that output byte-for-byte, and the
+additions are restated independently from the fixture's raw bytes
+(raw-byte hashes from the hash contract, stale-checkpoint paths, missing
+markers). There are 20 such tool vectors. Six mutation vectors have
+dedicated comparators (below), and one input vector
+(`validation/input/reset--bad-mode`) now lists `"wipe"` in its enum
+message. Resume and paging vectors are unchanged.
+
+**1. Reset.** `workplan_reset`:
+
+- `mode: "draft"` (the default) resets **status only**: the plan, every
+  phase and every step become `draft` and the checkpoint sidecar
+  (execution state) is removed. Phases, steps, notes, review findings,
+  scope, constraints and the dependency graph are kept, so the dependency
+  sidecar stays consistent (D.2 G4 left this open). Generated or missing
+  Markdown is regenerated; handwritten Markdown is kept unless
+  `replaceMarkdown=true` (the earlier draft reset refused it). The result
+  adds `checkpointRemoved: true` when a checkpoint was removed. The journal
+  operation stays `reset:draft`; it may now also delete the checkpoint.
+  The inherited draft reset wiped phases, steps, findings and notes with no
+  archive and left a dangling dependency sidecar.
+- `mode: "wipe"` (new) clears phases, findings and, unless
+  `preserveNotes`, notes, and sets the status to `draft`. It is a
+  preview → confirm flow like compaction. A call without `previewToken`
+  and `confirmation` is a read-only preview (no intent, no authorization,
+  nothing written) that returns `previewToken`, the exact removal counts
+  and digest, the archive path and the write intent (write and delete
+  paths). The apply call needs that exact token and
+  `confirmation: "WIPE_PLAN_CONTENT"`. The token is
+  `"v1-" + SHA256("workplan-reset-wipe-token-v1\n" + compact JSON
+  {workplanId, stateHash, preserveNotes, removalsDigest,
+  linkedMarkdownTreatment} + "\n")`, with `removalsDigest` =
+  `SHA256("workplan-reset-wipe-removals-v1\n" + compact JSON {phases,
+  reviewFindings, notes} + "\n")`; it is root-independent and is not
+  authority. Apply is one transaction (journal operation `reset:wipe`):
+  the archive `archive/<id>/state-<stateHash:12>-<token:12>.json` (mode
+  0600, compaction archive layout with `archiveVersion: 1`,
+  `operation: "reset:wipe"`, the removed content and the complete original
+  JSON, Markdown, checkpoint and dependency bytes) is published first, then
+  the plan and Markdown, then the checkpoint and dependency sidecars are
+  deleted. Handwritten Markdown needs `replaceMarkdown=true` (its original
+  is in the archive).
+- `mode: "markdown-only"` is unchanged.
+- `previewToken` and `confirmation` are refused outside `mode: "wipe"`
+  (`previewToken and confirmation apply only to mode=wipe`); with either
+  present, `confirmation` must be `WIPE_PLAN_CONTENT` and `previewToken`
+  must be present (input errors on both surfaces), and a token that does
+  not match the current state, removals, `preserveNotes` or Markdown
+  treatment is refused before authorization.
+
+Schema: `schema/v1/tools/workplan_reset.input.schema.json` adds `"wipe"`
+to the `mode` enum and the `previewToken` and `confirmation` string
+properties (with `x-shiori-rules`); the journal schema documents
+`reset:wipe`. The adapter registration snapshot
+(`adapter/opencode/src/registration.json`, key `d3`) lists these additions
+and the four reset texts it changes (tool description, `mode`
+description and enum, `preserveNotes` description), each with its
+reference value. Removing the `d1` and `d3` keys and their additions and
+restoring the reference values reproduces the reference snapshot
+byte-for-byte (`d1.referenceSha256`, checked by `plugin.test.ts`).
+Vectors: `mutations/reset-draft` and `reset-draft-preserve-notes` (the
+comparator restates the expected JSON from the stored plan with every
+status set to draft, checks the kept counts, the regenerated Markdown, the
+removed checkpoint and that nothing else changed), and the input vector
+above. Recovery validation (`validateJournal`) accepts `reset:wipe` with
+plan, Markdown, archive, checkpoint and dependency targets and
+`reset:draft` with a checkpoint target.
+
+**2. Unreadable plans are repairable through the tools.** When a primary
+plan JSON exists but cannot be loaded (unparseable, wrong shape, invalid
+link), `workplan_doctor` (plan entry), `workplan_validate` and
+`workplan_list` report `planHash`/`stateHash` computed from the raw bytes:
+the plan manifest is the primary JSON alone, the state manifest adds the
+checkpoint, dependency and journal sidecars (`workplan-plan-v1` /
+`workplan-state-v1`, unchanged algorithm; the linked Markdown and specs are
+unknown). `workplan_create {overwrite: true, expectedHash}` accepts that
+state hash and rewrites the plan. The existing Markdown is kept unless
+`replaceMarkdown=true` (nothing proves it was generated); an explicit
+`planMarkdown` without `replaceMarkdown` is refused. A pending journal is
+still refused. Recovery of such an overwrite accepts an undecodable
+before-image of the primary (only for `create:overwrite`) and uses the
+raw-byte hashes, so rollback restores the exact corrupt bytes. Pinned by
+the `tools/invalid-schema/*` and `tools/list-mixed/*` doctor/validate/list
+vectors, `TestD3UnreadablePlanRepair` (truncated plan → doctor hash →
+create overwrite) and the fault-injection scenario
+`create-overwrite-unreadable`.
+
+**3. Stale Markdown copy.** `workplan_doctor` reports a root-level
+`<id>.md` whose readable plan `<id>` now links another file (left behind
+when the `planFile` moved) as a stray of kind `stale-markdown`, with the
+warning `Stale Markdown copy .opencode/workplan/<id>.md: plan <id> now
+links <planFile> ...` and the D.1 archive suggestion. Other unlinked
+`*.md` files in the workplan root stay `unclassified` (D.1 item F). When
+the plan cannot be read, its `<id>.md` is not classified. Doctor never
+moves or deletes anything.
+
+**4. Missing step markers.** When the linked Markdown is handwritten (the
+D.1 drift warning applies), `workplan_validate`, each `workplan_doctor`
+plan entry and `workplan_patch {validate:true}` add a non-failing warning
+naming the steps whose `<!-- workplan-step-id: <id> -->` marker is absent
+(`planFile: Linked Markdown <path> has no step marker (...) for N of M
+steps: <p>/<s>, ...`, at most ten listed, then `and N more`). Generated
+Markdown always has the markers. Handwritten Markdown is never rewritten.
+
+**5. Polish.**
+
+- *Stale checkpoint detail.* The doctor issue for a stale v2 checkpoint
+  appends which manifest entries differ: `<path> changed (checkpoint
+  sha256 <12>, now sha256 <12>|missing)`, `<path> was added to the plan's
+  links ...`, `<path> is no longer linked ...` (at most five, then `and N
+  more`), or, when every entry matches, that only the recorded planHash
+  differs. Resume keeps the D.1 text so its budget is unchanged.
+- *Readable generated ids.* A phase or step without an id gets the slug
+  of its title (the id normalization, cut at a word boundary to 48 units),
+  with `-2`, `-3`, ... only when that id is taken. Generated step ids also
+  avoid every other step id in the plan and explicit ids in the same
+  input, so stepId-only references and Markdown markers stay unambiguous.
+  A title without `[a-z0-9]` falls back to the earlier
+  `<prefix>-<word>-<word>-<6 digits>` form. Existing ids never change.
+  Vector `mutations/create-generated-ids`: the plan and Markdown equal the
+  oracle's after substituting the two ids.
+- *Spec files must exist.* A `specFiles` or `addSpecFiles` entry that
+  names a missing file is refused during preparation, before
+  authorization, like the D.2 dependency checks: `<field>.<i>: Linked spec
+  file does not exist: <path>. Create the file first, or leave it out of
+  the list.` (class `invalid_input`). Links already stored are not
+  re-checked by unrelated writes. Vector `mutations/create-new-full` (its
+  spec is absent in the fixture): refused with no prompt and no write; with
+  the file present every changed file equals the oracle's.
+- *List entries.* Every `workplan_list` entry has an `issues` array
+  (empty when valid). An entry that cannot be listed (non-canonical file
+  name, parse or schema error) is `{id, valid: false, issues: [message]}`
+  plus, for an unreadable plan, `planHash`, `stateHash` and
+  `recoveryRequired` (item 2). The single `issue` string of those entries
+  is gone.
+- *Note size.* A new note (`notes` on create, `appendNotes` on update)
+  above 16384 UTF-8 bytes after trimming is refused before authorization:
+  `<field>.<i>: Note is <n> bytes, above the 16384-byte (16 KiB) per-note
+  limit. ...` (class `invalid_input`). Stored notes are never changed.
+- *File modes.* A new plan JSON or linked Markdown takes the permission
+  bits of the first existing primary plan in the workplan root (UTF-16
+  order) with owner read/write added, or `0644` minus the process umask
+  when there is none. Replaced files keep their mode. New sidecars,
+  journals, staging files and archives stay `0600`.
+
+**6. Interrupted-write recovery.** `TestD3KillRecovery` runs a mutation in
+a separate process and SIGKILLs it at deterministic commit points (journal
+published; mid-publication). Doctor then reports `recoveryRequired` with a
+state hash. Recovery inside the 5-minute abandonment grace fails with
+`lock_unavailable` (a proven-dead owner is still not reclaimed by age
+alone, S11); past the grace it reclaims the dead owner's locks, and
+`update {recovery: "resume"|"rollback"}` restores every journal target to
+its exact after/before image with no lock or staging file left. Recovery
+now also deletes the interrupted transaction's own staging files (names
+derived from the journal's transaction id and target index, only for
+transaction ids of the UUID/hex shape Shiori writes); they are listed as
+delete resources of the recovery intent. Vectors
+`mutations/update-recovery-resume` and `-rollback` (whose fixture contains
+such a staging file): the only extra change is that file's removal.
+
+**7. Unverified OpenCode versions.** On a host version outside
+`SUPPORTED_HOST_VERSIONS` (2.0.19, 2.0.20) the adapter still registers all
+thirteen tools. `workplan_read`, `list`, `inspect`, `validate`, `resume`,
+`doctor` and `compact_preview` work. `workplan_create`, `update`, `patch`,
+`reset`, `checkpoint` and `compact` (the schema's mutating tools, including
+the compact preview mode, which `compact_preview` covers) are refused
+before any core request with class `unsupported_capability`: `Shiori
+adapter not verified for OpenCode <v>; writes disabled — update Shiori
+(verified: 2.0.19, 2.0.20). ...`. The permission bridge is not started, so
+no write can be authorized either. `workplan_doctor` reports
+`runtimeFacts.host {opencodeVersion, verified, verifiedVersions, writes:
+"enabled"|"disabled", detail}`; the core renders `host` only when the
+adapter supplies it (type-checked and bounded like the other facts), so
+CLI and corpus doctor output are unchanged.

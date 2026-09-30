@@ -196,12 +196,32 @@ func readsOf(entries []snapshot.Entry) []storage.ReadEntry {
 	return out
 }
 
-// fileMode returns the existing permission bits, or 0600 for new files.
-func (e *Engine) fileMode(rel string) fs.FileMode {
+// fileMode returns the existing permission bits of a file. A new plan
+// JSON or linked Markdown takes the mode of the existing primary plans in
+// the workplan root, with owner read/write added, or 0644 minus the
+// process umask when there is none (D.3, contracts §13 item 5). Every
+// other new file (sidecars, archives) stays 0600.
+func (e *Engine) fileMode(rel, kind string) fs.FileMode {
 	if st, err := os.Stat(e.absRel(rel)); err == nil {
 		return st.Mode().Perm()
 	}
-	return 0o600
+	if kind != "plan" && kind != "markdown" {
+		return 0o600
+	}
+	return e.newArtifactMode()
+}
+
+// newArtifactMode is the mode for a new plan JSON or linked Markdown.
+func (e *Engine) newArtifactMode() fs.FileMode {
+	if l, err := e.scanDir(); err == nil {
+		for _, name := range l.primary {
+			st, err := os.Lstat(filepath.Join(e.dir(), name+".json"))
+			if err == nil && st.Mode().IsRegular() {
+				return st.Mode().Perm() | 0o600
+			}
+		}
+	}
+	return fs.FileMode(0o644 &^ processUmask)
 }
 
 // targetSpec is one prospective artifact change.
@@ -233,7 +253,7 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		if !t.forceWrite && t.beforeOK == t.afterOK && string(t.before) == string(t.after) {
 			continue
 		}
-		tg := storage.Target{Rel: t.rel, Kind: t.kind, Before: t.before, BeforeExists: t.beforeOK, After: t.after, AfterExists: t.afterOK, Mode: e.fileMode(t.rel)}
+		tg := storage.Target{Rel: t.rel, Kind: t.kind, Before: t.before, BeforeExists: t.beforeOK, After: t.after, AfterExists: t.afterOK, Mode: e.fileMode(t.rel, t.kind)}
 		if t.afterOK {
 			tg.Stage = storage.StagePath(t.rel, tx, len(in.Targets))
 		}

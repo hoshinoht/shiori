@@ -246,6 +246,16 @@ func TestMutationInputVectors(t *testing.T) {
 					continue
 				}
 				ok, _ := exp.Get("ok")
+				if id.Str() == "validation/input/reset--bad-mode" {
+					// D.3 (contracts §13 item 1): the enum lists the new
+					// "wipe" mode; the message is otherwise the oracle's.
+					msg, _ := exp.Get("message")
+					want := strings.Replace(msg.Str(), `"markdown-only"`, `"markdown-only"|"wipe"`, 1)
+					if want == msg.Str() || err == nil || err.Error() != want {
+						t.Fatalf("%s: D.3 error %v, want %q", sf.name, err, want)
+					}
+					continue
+				}
 				if !ok.Bool() {
 					msg, _ := exp.Get("message")
 					if err == nil || err.Error() != msg.Str() {
@@ -262,11 +272,11 @@ func TestMutationInputVectors(t *testing.T) {
 				}
 			}
 		})
-		if id.Str() == "validation/input/create--unknown-nested-phase-key" {
+		if id.Str() == "validation/input/create--unknown-nested-phase-key" || id.Str() == "validation/input/reset--bad-mode" {
 			diverged++
 		}
 	}
-	if ran != 39 || diverged != 1 {
-		t.Fatalf("ran %d mutating input vectors (want 39), %d divergences (want 1)", ran, diverged)
+	if ran != 39 || diverged != 2 {
+		t.Fatalf("ran %d mutating input vectors (want 39), %d divergences (want 2: D2, D.3)", ran, diverged)
 	}
 }

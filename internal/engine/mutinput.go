@@ -98,9 +98,10 @@ var toolSpecs = map[string]*ospec{
 	"patch": {fields: []fspec{{key: "id", kind: kID, required: true}, reqStr("patchText"), boolean("validate"), hash("expectedHash")}},
 	"reset": {fields: []fspec{
 		{key: "id", kind: kID, required: true},
-		withDefault(enum("mode", []string{"draft", "markdown-only"}), ojson.StringValue("draft")),
+		withDefault(enum("mode", []string{"draft", "markdown-only", "wipe"}), ojson.StringValue("draft")),
 		withDefault(boolean("preserveNotes"), ojson.BoolValue(false)),
 		boolean("replaceMarkdown"), hash("expectedHash"),
+		str("previewToken"), str("confirmation"), // D.3: mode=wipe apply
 	}},
 	"checkpoint": {fields: []fspec{
 		{key: "id", kind: kID, required: true}, reqStr("summary"), reqStr("nextAction"),
@@ -405,6 +406,23 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 	case "patch", "reset", "checkpoint":
 		if native && !has("expectedHash") {
 			l.add([]string{"expectedHash"}, msgNativeHash)
+		}
+		if tool == "reset" {
+			// D.3 (contracts §13 item 1): the wipe apply fields.
+			mode, _ := data.Get("mode")
+			for _, k := range []string{"previewToken", "confirmation"} {
+				if has(k) && mode.Str() != "wipe" {
+					l.add([]string{k}, msgWipeOnlyOptions)
+				}
+			}
+			if mode.Str() == "wipe" && (has("previewToken") || has("confirmation")) {
+				if c, _ := data.Get("confirmation"); c.Str() != ConfirmWipe {
+					l.add([]string{"confirmation"}, msgWipeConfirm)
+				}
+				if !has("previewToken") {
+					l.add([]string{"previewToken"}, msgWipeToken)
+				}
+			}
 		}
 	case "compact":
 		if mode, _ := data.Get("mode"); mode.Str() == "apply" {
