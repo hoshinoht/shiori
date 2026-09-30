@@ -414,6 +414,15 @@ The owner approved, on 2026-09-30:
 6. The native OpenCode host authorizer is stage D; stage C provides the
    `Authorizer` interface and the standalone CLI implementation (§5.5).
 
+### Stage D owner decision (2026-09-30)
+
+7. **Accepted divergence — resume display-cap residual.** For plans with
+   very many truncated strings (the `resume-stress` fixture), the Go resume
+   packet chooses a different display-string cap than the reference on some
+   budgets (88 of 154 sampled; §10a item 1). Every packet still fits its
+   budget and keeps all machine ids, hashes, counts and retrieval pointers
+   (R01/R02). This is accepted as-is; resume behaviour is not changed.
+
 ## 10. Stage B findings (OBSERVED, pinned by the corpus)
 
 These reference behaviours were not written down at stage A. The Go core
@@ -482,8 +491,8 @@ box on copies of the corpus fixtures; its source was not read.
    strings (resume-stress) the reference chooses display caps that are not
    a fixed ladder (3, 7, 8, 16 observed); 88 of 154 sampled budgets pick a
    different display cap. Every packet still fits its budget with all
-   machine ids, hashes, counts and pointers intact (R01/R02 hold). Open for
-   stage F or an owner decision.
+   machine ids, hashes, counts and pointers intact (R01/R02 hold).
+   **Accepted as a divergence by the owner on 2026-09-30 (§9 item 7).**
 2. *Resume cannot fit (very long machine ids).* Kept as a fail-closed error:
    machine ids are never truncated. Writers cannot create such ids (every
    create/update id is normalized to at most 80 code units), so the case is

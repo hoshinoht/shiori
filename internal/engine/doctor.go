@@ -191,7 +191,7 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 		Set("pendingTransactions", ojson.ArrayValue(pendingValues)).
 		Set("pendingTransactionCount", ojson.IntValue(int64(len(journals)))).
 		Set("omittedPendingTransactions", ojson.IntValue(int64(len(journals)-len(pendingValues)))).
-		Set("runtimeFacts", runtimeFacts()).
+		Set("runtimeFacts", runtimeFacts(in.RuntimeFacts)).
 		Set("issues", ojson.StringsValue(topIssues)).
 		Set("readOnly", ojson.BoolValue(true)).Value(), nil
 }
@@ -291,12 +291,118 @@ func (e *Engine) lockValue(name string) (ojson.Value, string) {
 }
 
 // runtimeFacts are host facts the core cannot prove; they stay unknown
-// until the adapter supplies them (spec 01 §8).
-func runtimeFacts() ojson.Value {
+// until the adapter supplies them (spec 01 §8). Supplied facts are
+// sanitized exactly as the reference does: every field is type-checked,
+// lists and strings are bounded (UTF-16 code units), and anything else
+// becomes null/unknown.
+func runtimeFacts(facts *ojson.Value) ojson.Value {
+	var f ojson.Value
+	if facts != nil && facts.Kind() == ojson.Object {
+		f = *facts
+	}
+	get := func(v ojson.Value, keys ...string) ojson.Value {
+		for _, k := range keys {
+			if v.Kind() != ojson.Object {
+				return ojson.Value{}
+			}
+			v, _ = v.Get(k)
+		}
+		return v
+	}
 	null := ojson.NullValue()
+	str := func(v ojson.Value, max int) ojson.Value {
+		if v.Kind() != ojson.String {
+			return null
+		}
+		return ojson.StringValue(sliceUTF16(v.Str(), max))
+	}
+	boolean := func(v ojson.Value) ojson.Value {
+		if v.Kind() != ojson.Bool {
+			return null
+		}
+		return v
+	}
+	strList := func(v ojson.Value) ojson.Value {
+		if v.Kind() != ojson.Array {
+			return null
+		}
+		out := []ojson.Value{}
+		for _, el := range v.Elems() {
+			if el.Kind() == ojson.String && len(out) < 100 {
+				out = append(out, ojson.StringValue(sliceUTF16(el.Str(), 300)))
+			}
+		}
+		return ojson.ArrayValue(out)
+	}
+	rules := null
+	if rv := get(f, "permission", "rules"); rv.Kind() == ojson.Array {
+		out := []ojson.Value{}
+		elems := rv.Elems()
+		if len(elems) > 100 {
+			elems = elems[:100]
+		}
+		for _, el := range elems {
+			if el.Kind() != ojson.Object {
+				continue
+			}
+			res, _ := el.Get("resource")
+			if res.Kind() != ojson.String {
+				continue
+			}
+			dec := "unknown"
+			if d, _ := el.Get("decision"); d.Kind() == ojson.String {
+				switch d.Str() {
+				case "allow", "deny", "ask", "unknown":
+					dec = d.Str()
+				}
+			}
+			b := ojson.NewObject(3).Set("resource", ojson.StringValue(sliceUTF16(res.Str(), 500))).Set("decision", ojson.StringValue(dec))
+			if src, _ := el.Get("source"); src.Kind() == ojson.String {
+				b.Set("source", ojson.StringValue(sliceUTF16(src.Str(), 200)))
+			}
+			out = append(out, b.Value())
+		}
+		rules = ojson.ArrayValue(out)
+	}
+	status := "unknown"
+	if st := get(f, "permission", "status"); st.Kind() == ojson.String && st.Str() == "known" {
+		status = "known"
+	}
 	return ojson.NewObject(4).
-		Set("registrations", ojson.NewObject(2).Set("effective", null).Set("configured", null).Value()).
-		Set("plugin", ojson.NewObject(4).Set("id", null).Set("configured", null).Set("effective", null).Set("canonicalLocation", null).Value()).
-		Set("permission", ojson.NewObject(5).Set("status", ojson.StringValue("unknown")).Set("agent", null).Set("sessionID", null).Set("rules", null).Set("detail", null).Value()).
-		Set("builtinPlan", ojson.NewObject(2).Set("configured", null).Set("effective", null).Value()).Value()
+		Set("registrations", ojson.NewObject(2).
+			Set("effective", strList(get(f, "registrations", "effective"))).
+			Set("configured", strList(get(f, "registrations", "configured"))).Value()).
+		Set("plugin", ojson.NewObject(4).
+			Set("id", str(get(f, "plugin", "id"), 120)).
+			Set("configured", boolean(get(f, "plugin", "configured"))).
+			Set("effective", boolean(get(f, "plugin", "effective"))).
+			Set("canonicalLocation", str(get(f, "plugin", "canonicalLocation"), 500)).Value()).
+		Set("permission", ojson.NewObject(5).
+			Set("status", ojson.StringValue(status)).
+			Set("agent", str(get(f, "permission", "agent"), 120)).
+			Set("sessionID", str(get(f, "permission", "sessionID"), 120)).
+			Set("rules", rules).
+			Set("detail", str(get(f, "permission", "detail"), 500)).Value()).
+		Set("builtinPlan", ojson.NewObject(2).
+			Set("configured", boolean(get(f, "builtinPlan", "configured"))).
+			Set("effective", boolean(get(f, "builtinPlan", "effective"))).Value()).Value()
+}
+
+// sliceUTF16 keeps the first max UTF-16 code units of s (JavaScript
+// String.prototype.slice(0, max)). A surrogate pair cut in half is
+// dropped entirely, because a lone surrogate is not representable in
+// UTF-8 (declared presentation difference for host strings only).
+func sliceUTF16(s string, max int) string {
+	n := 0
+	for i, r := range s {
+		w := 1
+		if r >= 0x10000 {
+			w = 2
+		}
+		if n+w > max {
+			return s[:i]
+		}
+		n += w
+	}
+	return s
 }

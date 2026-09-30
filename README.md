@@ -6,10 +6,12 @@ reliable action across workers and sessions.
 
 This repository contains the specifications, the approved stage A contract
 (machine schemas, a golden fixture corpus and a measured TypeScript baseline),
-the stage B read-only Go core, and the stage C transactional core with its
-`shiori` CLI. The architecture is a Go core and CLI with a thin OpenCode
-JS/TS adapter (stage D). Stages A–D are authorized; automatic artifact
-migration, commits and remote publication are not.
+the stage B read-only Go core, the stage C transactional core with its
+`shiori` CLI, and the stage D native OpenCode adapter (`shiori serve --stdio`
+plus `adapter/opencode/`). The architecture is a Go core and CLI with a thin
+OpenCode JS/TS adapter. Stages A–D are authorized; enabling the adapter in a
+real OpenCode configuration (stage E), automatic artifact migration, commits
+and remote publication are not.
 
 ## Specifications
 
@@ -35,8 +37,9 @@ OpenCode preset. Shiori should retain its tested behavior and existing
 `.opencode/workplan/` V2 artifacts and `workplan_*` tool identities during
 migration, rather than rewriting plans or changing agent names automatically.
 
-Go module: `github.com/hoshinoht/shiori`. Binary: `shiori`. Stages B and C were
-built and validated with Go 1.27.1 on darwin/arm64 only. That is not evidence of
+Go module: `github.com/hoshinoht/shiori`. Binary: `shiori`. Stages B–D were
+built and validated with Go 1.27.1 (and bun 1.4.0, OpenCode 2.0.20 for the
+adapter) on darwin/arm64 only. That is not evidence of
 cross-platform validation (contracts §5.6).
 
 ## Build and run
@@ -46,6 +49,10 @@ Requires Go 1.27.1 or newer. The binary has no runtime dependencies.
 ```sh
 CGO_ENABLED=0 go build -trimpath -o shiori ./cmd/shiori
 ```
+
+On macOS the binary still links the system `libSystem` (every Go binary
+does); it has no other runtime dependency. On Linux `CGO_ENABLED=0` gives a
+fully static binary.
 
 ### Read operations
 
@@ -107,6 +114,64 @@ shiori update     my-plan --recovery resume|rollback --expected-hash "$H"       
 - Exit status: 0 success; 1 operation error, refusal, or an invalid plan for
   `validate`; 2 usage error.
 
+### Native adapter protocol
+
+```sh
+shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes 16777216]
+```
+
+One private JSON-lines connection on stdin/stdout, started by the OpenCode
+adapter (never a network listener or a daemon). stdout carries protocol frames
+only; stderr carries redacted one-line diagnostics. The first request must be
+`shiori.handshake`; it reports the core/protocol/contract versions, the
+thirteen tool operations plus `shiori.commit`/`shiori.discard`, the platform
+and write gate, observed durability facts and the frame limits. A mutating tool
+request returns a `prepared` intent (exact resources, before/after digests,
+expected state, a single-use capability) and touches nothing; only
+`shiori.commit` of that unchanged intent, on the same connection and for the
+same trusted invocation identity, writes. Cancel frames, disconnects and a
+second commit expire it; nothing is replayed after a reconnect. The child exits
+on stdin EOF, SIGTERM or after 10 minutes with no request and no prepared
+intent. See [STATUS](docs/STATUS.md#stage-d--native-adapter-done-uncommitted-for-owner-review)
+and `schema/v1/protocol-envelope-v1.schema.json`.
+
+## OpenCode adapter
+
+`adapter/opencode/` is an OpenCode V2 plugin package (verified on OpenCode
+2.0.19/2.0.20 with plugin API 2.0.20; other host versions fail closed at
+registration). It registers the existing thirteen `workplan_*` tools with the
+same descriptions, argument shapes, result text and role matrix as the
+reference TypeScript plugin, and runs them through a lazily started
+`shiori serve --stdio` child. It has no dependencies: it imports only `node:`
+built-ins and types from `@opencode/plugin` (a peer; nothing is installed), and
+there is no `node_modules`.
+
+Install (not done automatically; enabling it in a real configuration is the
+separately decided stage E):
+
+1. Build the core: `CGO_ENABLED=0 go build -trimpath -o /abs/path/shiori ./cmd/shiori`.
+2. Add the package to the OpenCode `plugins` list in place of the reference
+   workplan plugin (never both: they register the same tools and plugin id):
+
+   ```jsonc
+   { "package": "/abs/path/to/shiori/adapter/opencode", "options": { "bin": "/abs/path/shiori" } }
+   ```
+
+   Instead of the `bin` option, `SHIORI_BIN=/abs/path/shiori` may be set in the
+   environment OpenCode runs in. The path must be absolute; `PATH` is never
+   searched and nothing is downloaded.
+3. Optional single-file build: `cd adapter/opencode && bun build ./index.ts
+   --target=bun --format=esm --outfile /abs/path/shiori-opencode.js` (only
+   `node:` imports remain).
+
+Writes are authorized by the executing host's permission engine: the adapter
+proves the host instance (HMAC challenge through its own RPC and the public
+event stream), asks `edit` for the exact canonical resources of the prepared
+intent with the trusted session/agent/message/tool-call from the native
+`ToolContext`, and commits only after a definitive allow or a matching genuine
+user reply. It never replies to permissions or edits rules, and the
+invocation's `AbortSignal` cancels the protocol request and expires the intent.
+
 ## Test
 
 ```sh
@@ -117,7 +182,29 @@ go test ./internal/ojson -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s   # also Fu
                                                                         # snapshot FuzzManifestJSON, engine FuzzCursorDecode
 go test ./internal/engine -run '^$' -bench Ops -benchmem                 # perf fixtures, 100 KiB–10 MiB
 SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBaselineMatrix$' -v
+(cd adapter/opencode && bun test)                                       # builds shiori unless SHIORI_BIN is set
 ```
+
+- `internal/protocol` covers framing limits, malformed/duplicate/unknown
+  keys, handshake and version refusal, cancellation before and during commit
+  (before and after the journal), disconnect expiry, replay rejection, binding
+  rejections, the write gate and idle exit; `internal/schematest` validates
+  every frame of a real session against the envelope schema.
+- The adapter tests run the real core with fakes of the OpenCode context and
+  public API (P01–P07 as far as possible without a model). The opt-in runtime
+  smoke starts a private OpenCode server with isolated `HOME`/XDG directories
+  and its own port and never calls a model:
+
+  ```sh
+  cd adapter/opencode
+  SHIORI_RUNTIME_SMOKE=1 SHIORI_SMOKE_FIXTURE=/path/to/a/project/to/copy \
+    [SHIORI_REFERENCE_PLUGIN=/path/to/reference/workplan-tools] \
+    [SHIORI_SMOKE_EVIDENCE=/tmp/evidence.json] bun test test/runtime-smoke.test.ts
+  ```
+
+  The fixture is copied (`cp -Rp` semantics) and verified unchanged; with
+  `SHIORI_REFERENCE_PLUGIN` the same script also runs the reference plugin on
+  its own server and records a parity report.
 
 - `TestCorpusParity` runs every `tools/`, `resume/` and `paging/` vector at a
   root of the generation root's length, under `/private/tmp`, and fails on
@@ -137,7 +224,8 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit stage C (see [STATUS](docs/STATUS.md)). The next stage is
-D, the native adapter: the existing thirteen `workplan_*` identities over the
-Go protocol with the actual host's permission engine. Worktree orchestration
-and alternative storage remain later, explicitly gated stages.
+Review and commit stage D (see [STATUS](docs/STATUS.md)). The next stage is
+E, the opt-in switch of one real OpenCode configuration from the reference
+plugin to this adapter, with rollback; its exact change and prerequisites are
+in STATUS. Worktree orchestration and alternative storage remain later,
+explicitly gated stages.

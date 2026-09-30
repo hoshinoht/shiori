@@ -4,8 +4,10 @@
 
 The owner has authorized implementation of stages A–D (spec 05 §2).
 Stage C owner decisions (contracts §9): D1 recovery accepted; D10 changed
-to a root-independent preview token. Stages E–G
-are still unauthorized. So are commits, pushes, automatic migration,
+to a root-independent preview token. Stage D owner decision (contracts §9
+item 7): the resume display-cap residual is accepted as a divergence.
+Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
+configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
 
 Approved 2026-09-30 (recorded in [contracts.md §9](contracts.md)): every
@@ -203,10 +205,7 @@ scripts live outside this repository, and only their fingerprints are recorded.
    table before optimizing further. Profiling shows large-buffer page
    faulting and the parse as the dominant costs.
 
-## Stage C — transactional Go core: DONE (uncommitted, for owner review)
-
-Nothing was committed. All stage C changes are in the working tree (new
-`internal/storage/`, new engine/cli files, and edits listed by `git status`).
+## Stage C — transactional Go core: DONE (committed `9f66518`)
 
 ### What exists
 
@@ -311,15 +310,12 @@ Compaction preview is read-only (checked by the corpus read-only gate).
 | D10 | Done (owner change): root-independent token and archive name |
 | D12 | Done: unchanged Markdown-only reset (and any byte-identical mutation) prepares no intent and asks for no authorization |
 
-### Remaining issues for stage D (and owner decisions)
+### Remaining issues after stage C (disposition at stage D)
 
-1. The native OpenCode authorizer (actual-host permission requests for the
-   intent's exact resources, identity/signal binding, P01–P07) and the
-   `shiori serve --stdio` protocol are stage D. The intent's `Resources()`
-   and `Digest()` are the inputs it needs.
+1. Native authorizer and `shiori serve --stdio`: done at stage D (below).
 2. Resume display-cap selection for plans with very many truncated strings
-   (contracts §10a item 1) differs from the reference on some budgets; the
-   packet invariants hold. Needs an owner decision or stage F work.
+   (contracts §10a item 1): **accepted by the owner as a divergence**
+   (contracts §9 item 7); resume behaviour is unchanged.
 3. The compaction removals digest and token are Shiori-defined (D10 and
    §10a item 5); a token from the TypeScript engine is not accepted by Go
    and vice versa.
@@ -331,13 +327,223 @@ Compaction preview is read-only (checked by the corpus read-only gate).
    there.
 6. `schema/index.json` still says "PROPOSED — frozen for review" (unchanged).
 
+## Stage D — native adapter: DONE (uncommitted, for owner review)
+
+Nothing was committed. Stage D is in the working tree: new
+`internal/protocol/`, `internal/cli/serve.go`, `internal/engine/errclass.go`
+(the error-class mapping moved from the CLI so the CLI and the protocol share
+it), `adapter/opencode/`, and small edits (doctor runtime-fact injection,
+`serve` in the CLI usage, protocol-envelope schema additions). The owner's
+`~/.config/opencode` was not modified; registration there is stage E.
+
+### Protocol surface (`shiori serve --stdio`)
+
+| Aspect | Behaviour |
+| --- | --- |
+| Transport | JSON lines on stdin/stdout of a child started by the adapter; stdout carries frames only; stderr one-line diagnostics with redaction (issued capabilities, `Basic`/`Bearer` credentials, `password=`/`token=`-style values). No listener, no daemon |
+| Framing | Request frames above 16 MiB are rejected before they are buffered or decoded; nesting above 128, duplicate member names anywhere in a frame, unknown envelope or `hostContext` keys, an unknown operation, a bad `requestId`, a request before the handshake or a second handshake are `invalid_frame`/`unsupported_protocol`; the error is answered (with requestId `_` when it cannot be correlated) and the connection closes, expiring every prepared intent. Unknown keys inside `input` are ordinary `invalid_input` errors (native surface, every nesting level) and the connection continues. Response frames above 64 MiB become `unsupported_capability` |
+| Handshake | `shiori.handshake {protocolVersions}` → core/protocol/contract versions, the 13 tool operations plus `shiori.commit`/`shiori.discard`, hash algorithms, platform and `writeSupported` (darwin/arm64, linux/amd64 per contracts §5.6), durability facts observed by a probe in a private temporary directory (never the project), limits and idle timeout |
+| Requests | Multiplexed by `requestId`; each runs concurrently. `hostContext` (mode `native`, canonical root, sessionID, agent, messageID, callID; `runtimeFacts` only for `workplan_doctor`) is required; the connection binds to the first canonical root and rejects symlinked or different roots |
+| Results | `result.text` is the exact native tool result text (the adapter returns it unchanged; patch is `{output, metadata}`); `hashes` carries planHash/stateHash when present |
+| Prepare → commit | A mutating tool returns `prepared` {intentId, intentDigest, 64-hex capability, operation, tool, workplanId, canonicalRoot, expectedStateHash, resources, targets} and touches nothing. `shiori.commit {intentId, intentDigest, capability}` commits that unchanged intent only if the digest, capability and the trusted invocation identity match; any mismatch is `permission_rejected` and burns the intent. Single use; `shiori.discard` releases it. A mutation that would change no byte (D12) returns its result without an intent |
+| Expiry | Cancel of the preparing request, stdin EOF/transport loss, SIGTERM, process exit, a mismatched commit, or a commit (used). State changes are rejected by the locked recheck (`stale_state`/`external_edit_conflict`). Nothing is persisted, so a reconnect cannot replay |
+| Cancellation | A cancel frame answers an in-flight read or prepare with `cancelled` at once; a cancelled commit reports its own truthful outcome: `cancelled` before the journal, `outcome_uncertain` with `recoveryJournal` and `retrieval` after it |
+| Errors | `{class, message, issues?, currentStateHash?, recoveryJournal?, retrieval?}` with the envelope classes; `message` is the reference text |
+| Lifecycle | Exits on stdin EOF, SIGTERM/SIGINT (in-flight commits are cancelled and reach a truthful outcome first), a fatal frame error, or after 10 minutes with no live request and no prepared intent (`--idle-timeout`) |
+
+Schema: `schema/v1/protocol-envelope-v1.schema.json` gained only optional,
+documented stage D members (`hostContext.runtimeFacts`,
+`prepared.capability/tool/canonicalRoot`, `limits.maxResponseBytes/idleTimeoutMs`,
+`durability.observedAt`, `toolResult`, `discardInput`) and requires the commit
+capability. `internal/schematest` validates every frame of a real session
+against it.
+
+### Adapter design (`adapter/opencode/`)
+
+- **Package**: `index.ts` → `src/plugin.ts`; plugin id `workplan-tools` (the
+  reference id, so only one of the two can be active); no dependencies, no
+  `node_modules` — runtime imports are `node:` built-ins only, and
+  `@opencode/plugin` 2.0.20 is a type-only peer. The runtime smoke confirmed
+  OpenCode loads it from source without installing anything. OpenCode loads a
+  package plugin from its root entry file, hence `index.ts` at the package
+  root. A single-file bundle builds with `bun build` (README).
+- **Registration**: the thirteen tools in the reference order with the
+  reference descriptions and input JSON Schemas (`src/registration.json`,
+  generated from the reference plugin by `scripts/snapshot-registration.ts`),
+  `options: {codemode: true}`. A test checks the property sets against
+  `schema/v1/tools`. Input validation and its error text stay in Go.
+- **Trust**: sessionID/agent/messageID/tool-call ID and the AbortSignal come
+  only from the native `ToolContext`; the root is `realpath` of the plugin
+  location. Model input carrying `workspaceRoot`, identity or approval fields
+  is rejected by the core's strict native parser. The role matrix (spec 02
+  §5) runs first with the reference messages.
+- **Host authorization**: the reference permission bridge, ported to a
+  dependency-free public client (`src/host-client.ts`: service discovery by
+  registration file only, `/api/info`, the SSE event stream, session lookup,
+  `permission.create`, the bridge's own RPC). Fresh HMAC instance proof via
+  the bridge RPC plus the correlated event-stream echo, session-location
+  check, `edit` request for the exact canonical resources (every write,
+  delete, lock, lock-protocol, staging, archive and journal path of the
+  intent, plus their parent directories inside the project — the same class
+  of resources the reference requested), filtered ask/reply waiters, receipt
+  verification. Deny, rejection, ambiguity, lost stream, unknown results and
+  abort fail closed. No reply/rule API is called (checked statically).
+- **Scope check** before asking: the prepared intent must be bound to this
+  root and tool; every write-class resource must be an exact absolute path
+  under `<root>/.opencode`, every read path inside the project.
+- **Core client** (`src/core-client.ts`): binary from plugin option `bin`,
+  else `SHIORI_BIN`; absolute path required, never `PATH`. Lazy spawn on the
+  first call, handshake validated (protocol 1, contract v1, all operations,
+  capability facts) or the child is terminated. Frames above the negotiated
+  limit or nested deeper than 128 are refused locally. AbortSignal → cancel
+  frame; an abort after preparation also cancels the preparing request so the
+  intent expires. Transport loss fails every in-flight request (`cancelled`,
+  or `outcome_uncertain` for a commit with a pointer to `workplan_doctor`); the
+  next call respawns and handshakes. Unload: cancel in-flight requests, close
+  stdin, 2 s, SIGTERM to the owned PID, 2 s, SIGKILL.
+- **Doctor**: the adapter gathers the same host facts as the reference
+  (effective tools, plugin state, agent/session rules, bridge diagnostics)
+  and passes them as `hostContext.runtimeFacts`; Go sanitizes them exactly as
+  the reference does.
+
+### P01–P07 coverage
+
+| ID | Where proven |
+| --- | --- |
+| P01 | `plugin.test.ts`: forged `workspaceRoot`/`sessionID`/`agent`/`messageID`/`callID`/`approved` rejected; role checks use the trusted agent; the permission request carries the ToolContext session/agent/message/call; a write without an AbortSignal is refused with no change. `core-client.test.ts`: the same through the core. Runtime smoke: `err-root-override` on a real host |
+| P02 | `permission-bridge.test.ts` (ported reference cases): proof precedes any request; altered RPC proof, wrong-location echo, missing echo, closed stream and missing RPC fail before any `permission.create`. Runtime smoke: every mutation passed the real host proof (`host verified, event stream ready` in doctor) |
+| P03 | Runtime smoke on OpenCode 2.0.20: absolute agent deny → denied; absolute session deny → denied; a relative session deny does not match the absolute resources and the host default (allow) applies — disclosed, not translated. Aliased roots/resources and nested sessions fail closed (unit) |
+| P04 | Runtime smoke: allow (default policy), ask → genuine user reply once (7 mutations), ask → reject (no change), deny, session override, cancel then late "once" reply (no change, tool never continued). Unit: the same plus unrelated replies |
+| P05 | Unit: unrelated proof events, asks with other source/marker/resources/action/location, and unrelated replies neither authorize nor consume the request; a correlated ask with a different request ID is rejected |
+| P06 | Static test: no reply/rule/saved-permission/`Service.ensure` call and no `@opencode/client` import in `src/`; core: single-use intents, replay after reconnect rejected, burned intents; no permission grant is cached or journaled |
+| P07 | Missing/relative/non-executable binary and unsupported handshakes (contract, protocol, operations, facts) fail with actionable messages; unverified host versions register nothing; child crash mid-authorization and mid-commit fail closed without replay; lost event stream fails closed; malformed core frames close the connection |
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0, OpenCode 2.0.20)
+
+- `go vet ./...` (darwin and `GOOS=linux`): clean. `go test -race -count=1`
+  per package with timeouts: every package passes (protocol ×3 under race).
+- `bun test` in `adapter/opencode`: 47 pass, 1 skipped (the opt-in runtime
+  smoke). Typecheck against the real `@opencode/plugin` 2.0.20 declarations
+  (read-only, via a scratch tsconfig): clean.
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+- Runtime smoke (`test/runtime-smoke.test.ts`, opt-in): a private
+  `opencode serve --service` (OpenCode 2.0.20) with its own HOME and
+  XDG_CONFIG/DATA/STATE/CACHE directories and TMPDIR in a scratch directory,
+  its own loopback port, a project that is a copy of the pristine owner-plan
+  fixture (13 phases, 38 steps, 3 specs; kept outside the repository), the
+  adapter package copied from the working tree, a test-only relay plugin, and
+  no model call. Results: all 13 tools registered and effective; 13 read
+  calls (list, read ±Markdown, inspect ±limit, validate, resume
+  4096/12000/64000, doctor ±id, compact preview both ways) changed no file
+  and asked nothing; 6 error cases returned the reference messages; one
+  authorized mutation of the real plan (`workplan_update` appendNotes) went
+  through the real host proof and a real `permission.asked` event with 22
+  exact canonical resources, was granted by a user reply through the public
+  API, and changed exactly `<plan>.json`; create, update, patch, checkpoint,
+  compact apply and reset each went through a real ask and grant; a user
+  rejection, an absolute agent deny and an absolute session deny changed
+  nothing; a relative session deny did not match (default allow applied;
+  disclosed); a cancel followed by a late "once" reply changed nothing and
+  the tool never continued; doctor reported `host verified, event stream
+  ready`. OpenCode created nothing in the adapter package directory. The
+  pristine fixture's tree hash was identical before and after; the owner's
+  `~/.config/opencode` git status was identical before and after; only the
+  servers the test started were stopped (SIGTERM).
+- Parity (reference plugin vs adapter, same scripted inputs on two private
+  servers, fresh copies of the same fixture at equal-length roots, no model):
+  36 calls covering all 13 tools (every mutating tool through the real host
+  permission path):
+  - 19 byte-identical after substituting the root: list, read ±Markdown,
+    inspect ±limit, validate, resume at 4096/12000/64000 on the owner-plan
+    fixture, the 6 error messages, the rejected, denied, session-denied and
+    cancelled mutations.
+  - 11 identical after also normalizing timestamps and the hashes/tokens
+    derived from them (update of the real plan, create, update, patch,
+    checkpoint, resume after checkpoint, compact apply, read, reset, the
+    relative-deny create, read before cancel).
+  - 6 different, all expected: 3 doctor results differ only in the session
+    ID and the per-server scratch HOME paths inside host permission rules,
+    plus (final doctor) D6 sidecar order; 3 compact previews differ only in
+    the lock-protocol auxiliary paths of `writeIntent.resources` (§10a,
+    known since stage C).
+  - The resulting `.opencode` trees (9 files, including the archive) are
+    identical after the same normalization.
+
+### Stage E prerequisites (not done; separately decided)
+
+1. Build the core at a fixed absolute path, e.g.
+   `CGO_ENABLED=0 go build -trimpath -o /Users/cantabile/projects/personal/shiori/shiori ./cmd/shiori`.
+2. With no OpenCode session active and no pending workplan transaction (run
+   `workplan_doctor`; resolve any journal first), replace in
+   `~/.config/opencode/opencode.json` the entry
+
+   ```jsonc
+   { "package": "./packages/workplan-tools" }
+   ```
+
+   with
+
+   ```jsonc
+   { "package": "/Users/cantabile/projects/personal/shiori/adapter/opencode", "options": { "bin": "/Users/cantabile/projects/personal/shiori/shiori" } }
+   ```
+
+   (or keep `options` out and export `SHIORI_BIN` with the same absolute path
+   in the environment OpenCode starts in). Never list both entries: they
+   register the same tools and the same plugin id.
+3. Restart the OpenCode service so the plugin reloads; check with
+   `workplan_doctor` that `runtimeFacts.plugin.effective` is true and the
+   registrations list the thirteen tools.
+4. Rollback: stop admissions (no session running), run `workplan_doctor` and
+   resolve any pending journal, restore the original
+   `{ "package": "./packages/workplan-tools" }` entry, restart OpenCode. The
+   artifacts are format-compatible (V2 plans, checkpoints, dependencies,
+   journals); lock auxiliary paths differ, so never run both writers on one
+   root at the same time (contracts §10a).
+5. Open for the owner before stage E: the items below.
+
+### Remaining issues (stage D)
+
+1. **Registration schemas.** Contracts §5.1.3 says the adapter registers
+   `schema/v1/tools` unchanged; the adapter instead registers the reference
+   plugin's own generated schemas and descriptions, so the model-facing tool
+   surface is byte-identical to today's (design rule). `schema/v1/tools`
+   (with the D3 fixes) remains the validation contract in Go; a test keeps the
+   property sets equal. Needs owner confirmation.
+2. **Read authority for linked files.** Like the reference, only mutations
+   ask the host; reads of linked Markdown/specs do not request read
+   permission (spec 02 §3 last paragraph).
+3. **Go read cancellation.** A cancelled read is answered immediately, but
+   the engine's read functions do not observe the context internally; the
+   abandoned goroutine finishes its (side-effect-free) work.
+4. **Doctor strings from the host.** Go bounds host-supplied strings by
+   UTF-16 code units like the reference, but drops a surrogate pair cut at
+   the boundary where JavaScript would keep a lone surrogate.
+5. **Durability facts** are probed in a private temporary directory, which
+   may be a different filesystem from the project; per-commit
+   `directorySync` remains the project-filesystem fact.
+6. **Linux**: `writeSupported` is true on linux/amd64 per the approved matrix,
+   but the stage C/D suites have only run on darwin/arm64 (contracts §5.6).
+7. **Host versions**: the adapter allow-lists OpenCode 2.0.19 and 2.0.20
+   (contracts §5.6); a host upgrade disables the workplan tools until the
+   list is extended after re-verification.
+8. **Adapter layout.** Contracts §5.3 names a single committed
+   `adapter/shiori-opencode.js`; stage D ships the TypeScript package
+   `adapter/opencode/` (loaded from source by OpenCode) and documents a
+   `bun build` single-file bundle instead of committing generated code.
+   `adapter/opencode/tsconfig.json` is for editor/typecheck use only; the
+   typecheck in this stage mapped `@opencode/plugin` to the read-only
+   2.0.20 declarations through a scratch tsconfig.
+9. The compact-preview `writeIntent.resources` lock-protocol paths differ
+   from the reference (known since stage C, §10a); the adapter's permission
+   request therefore names Shiori's lock auxiliary paths.
+
 ## Resume after maintenance
 
 1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
    needed.
-2. Inspect `git status`. Stages A and B are committed (`fdadfd4`, `7a899e5`).
-   Stage C exists only in the working tree until the owner commits it.
-   Preserve any user edits.
+2. Inspect `git status`. Stages A–C are committed (`fdadfd4`, `7a899e5`,
+   `9f66518`). Stage D exists only in the working tree until the owner
+   commits it. Preserve any user edits.
 3. If the oracle files change, the corpus is stale. Compare their sha256 against
    `testdata/MANIFEST.json` → `oracle.files`.
 

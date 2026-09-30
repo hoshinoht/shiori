@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://shiori.invalid/schema/v1/protocol-envelope-v1.schema.json",
   "title": "Shiori local protocol frame, protocolVersion 1",
-  "description": "PROPOSED (docs/contracts.md). One JSON object per line (JSON-lines) on a private stdio connection; stdout carries frames only, diagnostics go to stderr. Frames larger than the negotiated maxFrameBytes, or nested deeper than maxNesting, are rejected before allocation of the decoded value. Duplicate object keys in a frame are a protocol error (invalid_frame). Unknown keys in a frame envelope reject; unknown keys inside 'input' reject (strict native inputs); unknown keys inside stored artifacts are preserved.",
+  "description": "PROPOSED (docs/contracts.md). One JSON object per line (JSON-lines) on a private stdio connection; stdout carries frames only, diagnostics go to stderr. Frames larger than the negotiated maxFrameBytes, or nested deeper than maxNesting, are rejected before allocation of the decoded value. Duplicate object keys in a frame are a protocol error (invalid_frame). Unknown keys in a frame envelope reject; unknown keys inside 'input' reject (strict native inputs); unknown keys inside stored artifacts are preserved. Stage D (docs/STATUS.md): an invalid frame is answered with requestId \"_\" when it cannot be correlated, and the connection then closes (every prepared intent expires). Cancel frames are not answered; a cancelled read or prepare is answered with class cancelled, a cancelled commit reports its own truthful outcome.",
   "x-shiori-status": "PROPOSED",
   "oneOf": [
     { "$ref": "#/$defs/request" },
@@ -40,7 +40,8 @@
         "sessionID": { "type": "string" },
         "agent": { "type": "string" },
         "messageID": { "type": "string" },
-        "callID": { "type": "string" }
+        "callID": { "type": "string" },
+        "runtimeFacts": { "type": "object", "description": "Stage D: host facts the adapter gathered from its trusted plugin context (effective registrations, plugin state, permission rules, bridge diagnostics). Accepted only for workplan_doctor; the core type-checks and bounds every field and renders anything else as unknown." }
       },
       "required": ["mode", "canonicalRoot"],
       "additionalProperties": false
@@ -100,7 +101,8 @@
           "properties": {
             "atomicRename": { "enum": ["supported", "unsupported", "unknown"] },
             "fileSync": { "enum": ["supported", "unsupported", "unknown"] },
-            "directorySync": { "enum": ["supported", "unsupported", "unknown"] }
+            "directorySync": { "enum": ["supported", "unsupported", "unknown"] },
+            "observedAt": { "type": "string", "description": "Stage D: where the probe ran (a private temporary directory, never the project root). Directory sync of the project filesystem is reported per commit (directorySync in mutation results)." }
           },
           "required": ["atomicRename", "fileSync", "directorySync"]
         },
@@ -111,6 +113,8 @@
             "maxFrameBytes": { "type": "integer" },
             "maxArtifactBytes": { "type": "integer" },
             "maxNesting": { "type": "integer" },
+            "maxResponseBytes": { "type": "integer" },
+            "idleTimeoutMs": { "type": "integer", "description": "Stage D: the child exits after this long with no live request and no prepared intent." },
             "resumeMaxChars": { "type": "object", "properties": { "min": { "const": 4096 }, "max": { "const": 64000 }, "default": { "const": 12000 } } }
           },
           "required": ["maxFrameBytes", "maxArtifactBytes", "maxNesting"]
@@ -125,6 +129,9 @@
       "properties": {
         "intentId": { "type": "string", "minLength": 1, "description": "Single-use handle, valid only on this connection until commit, discard, cancel, disconnect or state change." },
         "intentDigest": { "$ref": "common.schema.json#/$defs/hash", "description": "SHA-256 over the canonical intent (operation, root, resources, before/after digests, expected state)." },
+        "capability": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Stage D: broker-held single-use capability for shiori.commit, returned only on this private connection. The adapter presents it only after a definitive host approval of exactly these resources; it is never logged, journaled or shown to the model." },
+        "tool": { "type": "string", "description": "Stage D: the native tool identity that prepared the intent." },
+        "canonicalRoot": { "type": "string", "description": "Stage D: absolute canonical project root the intent is bound to." },
         "operation": { "type": "string" },
         "workplanId": { "type": "string" },
         "expectedStateHash": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hash" }, { "type": "null" }], "description": "null only for fresh create (must-be-absent preconditions)." },
@@ -154,7 +161,7 @@
           }
         }
       },
-      "required": ["intentId", "intentDigest", "operation", "workplanId", "expectedStateHash", "resources", "targets"]
+      "required": ["intentId", "intentDigest", "capability", "operation", "workplanId", "expectedStateHash", "resources", "targets"]
     },
     "commitInput": {
       "type": "object",
@@ -163,7 +170,22 @@
         "intentDigest": { "$ref": "common.schema.json#/$defs/hash" },
         "capability": { "type": "string", "minLength": 16, "description": "Opaque broker-held capability issued on the private transport after definitive host approval. Never serialized to journals or logs. Not accepted from model input." }
       },
+      "required": ["intentId", "intentDigest", "capability"],
+      "additionalProperties": false
+    },
+    "discardInput": {
+      "type": "object",
+      "properties": {
+        "intentId": { "type": "string", "minLength": 1 },
+        "intentDigest": { "$ref": "common.schema.json#/$defs/hash" }
+      },
       "required": ["intentId", "intentDigest"],
+      "additionalProperties": false
+    },
+    "toolResult": {
+      "description": "Stage D: the result of a tool operation or commit. 'text' is the exact native tool result text (JSON.stringify(result, null, 2), or the resume packet's own format); the adapter returns it unchanged. shiori.discard returns {discarded}.",
+      "type": "object",
+      "properties": { "text": { "type": "string" }, "discarded": { "type": "boolean" } },
       "additionalProperties": false
     },
     "errorClass": {

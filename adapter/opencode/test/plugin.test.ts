@@ -1,0 +1,486 @@
+import { afterAll, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+
+import { CoreClient } from "../src/core-client";
+import { createPlugin, editResources, SUPPORTED_HOST_VERSIONS, TOOL_NAMES } from "../src/plugin";
+import registration from "../src/registration.json";
+import { createFakeHost, toolContext, type FakeHostOptions } from "./fake-host";
+import { fingerprint, pause, REPO_ROOT, seedPlan, shioriBin, tempRoot } from "./helpers";
+
+const roots: string[] = [];
+afterAll(() => {
+  for (const r of roots) rmSync(r, { recursive: true, force: true });
+});
+
+async function setup(options: FakeHostOptions & { bin?: string | null; seed?: boolean } = {}) {
+  const root = tempRoot("shiori-plugin-");
+  roots.push(root);
+  const seeded = options.seed === false ? undefined : seedPlan(root);
+  const host = createFakeHost(root, options);
+  let core: CoreClient | undefined;
+  host.ctx.options = options.bin === null ? {} : { bin: options.bin ?? shioriBin() };
+  const plugin = createPlugin({
+    bridge: host.bridgeFactory(),
+    env: {},
+    core: (o) => (core = new CoreClient(o)),
+  });
+  const cleanup = await plugin.setup(host.ctx as never);
+  return {
+    root, host, seeded, cleanup: cleanup as () => Promise<void>,
+    core: () => core!,
+    async read(id = "native-demo") {
+      return JSON.parse((await host.tool("workplan_read").execute({ id, includeMarkdown: false }, toolContext("tester"))).content);
+    },
+  };
+}
+
+const wp = (root: string, name: string) => join(root, ".opencode", "workplan", name);
+
+describe("registration (identities, shapes, model-facing text)", () => {
+  it("registers exactly the thirteen workplan identities with the reference descriptions and schemas", async () => {
+    const t = await setup();
+    try {
+      expect(t.host.registered.map((x) => x.name)).toEqual([
+        "workplan_create", "workplan_update", "workplan_inspect", "workplan_validate", "workplan_read", "workplan_list",
+        "workplan_patch", "workplan_reset", "workplan_resume", "workplan_checkpoint", "workplan_compact", "workplan_doctor",
+        "workplan_compact_preview",
+      ]);
+      expect(TOOL_NAMES).toHaveLength(13);
+      for (const tool of t.host.registered) {
+        const ref = registration.tools.find((x) => x.name === tool.name)!;
+        expect(tool.description).toBe(ref.description);
+        expect(tool.input).toEqual(ref.input);
+        expect(tool.options).toEqual({ codemode: true });
+        expect(tool.input.properties?.workspaceRoot).toBeUndefined();
+      }
+      expect(t.host.tool("workplan_compact_preview").input.properties.mode).toBeUndefined();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("keeps the argument shapes of the frozen v1 tool contracts", () => {
+    for (const tool of registration.tools) {
+      const v1 = JSON.parse(readFileSync(join(REPO_ROOT, "schema", "v1", "tools", `${tool.name}.input.schema.json`), "utf8"));
+      expect(Object.keys((tool.input as any).properties ?? {}).sort()).toEqual(Object.keys(v1.properties ?? {}).sort());
+      for (const key of (tool.input as any).required ?? []) expect(v1.required ?? []).toContain(key);
+    }
+  });
+
+  it("fails closed at registration on an unverified host version", async () => {
+    const root = tempRoot();
+    roots.push(root);
+    const host = createFakeHost(root, { hostVersion: "2.1.0" });
+    const plugin = createPlugin({ bridge: host.bridgeFactory(), env: {} });
+    await expect(plugin.setup(host.ctx as never)).rejects.toThrow(/supports OpenCode 2\.0\.19 and 2\.0\.20 only/);
+    expect(host.registered).toHaveLength(0);
+    expect(SUPPORTED_HOST_VERSIONS).toContain("2.0.20");
+  });
+});
+
+describe("P01 trusted identity, root and signal come only from ToolContext", () => {
+  it("rejects model-supplied root/identity/authorization fields and uses the native caller", async () => {
+    const t = await setup();
+    try {
+      const read = t.host.tool("workplan_read");
+      for (const forged of [{ workspaceRoot: "/" }, { sessionID: "ses_forged" }, { agent: "orchestrator" }, { messageID: "m" }, { callID: "c" }, { approved: true }]) {
+        await expect(read.execute({ id: "native-demo", ...forged }, toolContext("tester"))).rejects.toThrow(/^Invalid read input: \$: Unrecognized key/);
+      }
+      // The role check uses the trusted agent, never an input field.
+      await expect(t.host.tool("workplan_checkpoint").execute({ id: "native-demo", agent: "orchestrator" }, toolContext("plan")))
+        .rejects.toThrow(/Only the orchestrator may update a workplan checkpoint/);
+      const hash = (await t.read()).stateHash;
+      const ctx = toolContext("plan", new AbortController().signal, "p01");
+      const done = t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "P01" }, ctx);
+      await done;
+      expect(t.host.requests).toHaveLength(1);
+      expect(t.host.requests[0]).toMatchObject({
+        sessionID: "ses_test", agent: "plan", action: "edit",
+        source: { type: "tool", messageID: "msg_test_p01", id: "call_test_p01" },
+      });
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("refuses a write without the native invocation AbortSignal and changes nothing", async () => {
+    const t = await setup();
+    try {
+      const before = fingerprint(t.root);
+      const hash = (await t.read()).stateHash;
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "x" }, toolContext("plan", null)))
+        .rejects.toThrow(/AbortSignal/);
+      await pause(50);
+      expect(fingerprint(t.root)).toEqual(before);
+      expect(t.host.requests).toHaveLength(0);
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+describe("role matrix (spec 02 §5)", () => {
+  it("keeps the reference role checks and messages", async () => {
+    const t = await setup();
+    try {
+      await expect(t.host.tool("workplan_create").execute({}, toolContext("build"))).rejects.toThrow(/plan agent or orchestrator/);
+      await expect(t.host.tool("workplan_checkpoint").execute({}, toolContext("plan"))).rejects.toThrow(/Only the orchestrator/);
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", recovery: "resume" }, toolContext("plan")))
+        .rejects.toThrow(/Only the orchestrator may recover/);
+      await expect(t.host.tool("workplan_compact").execute({ id: "native-demo", mode: "apply" }, toolContext("plan")))
+        .rejects.toThrow(/Only the orchestrator may apply/);
+      await expect(t.host.tool("workplan_compact_preview").execute({ id: "native-demo", archiveReason: "p", mode: "apply" }, toolContext("plan")))
+        .rejects.toThrow(/compact_preview input/);
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", appendNotes: ["missing hash"] }, toolContext("orchestrator")))
+        .rejects.toThrow(/expectedHash/);
+      expect(t.host.requests).toHaveLength(0);
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+describe("read tools", () => {
+  it("are pure, request no permission, and report host runtime facts in doctor", async () => {
+    const t = await setup();
+    try {
+      const before = fingerprint(t.root);
+      const tester = toolContext("tester");
+      expect((await t.read()).workplan.id).toBe("native-demo");
+      const resumed = JSON.parse((await t.host.tool("workplan_resume").execute({ id: "native-demo" }, tester)).content);
+      expect(resumed.checkpoint.current.stepTitle).toBe("Do next thing");
+      expect(JSON.stringify(resumed)).not.toContain("historical-note-must-not-be-returned");
+      expect(JSON.parse((await t.host.tool("workplan_validate").execute({ id: "native-demo" }, tester)).content).valid).toBe(true);
+      expect(JSON.parse((await t.host.tool("workplan_list").execute({}, tester)).content).workplans[0].id).toBe("native-demo");
+      expect(JSON.parse((await t.host.tool("workplan_inspect").execute({ id: "native-demo" }, tester)).content).workplan.id).toBe("native-demo");
+      expect(JSON.parse((await t.host.tool("workplan_compact_preview").execute({ id: "native-demo", archiveReason: "Preview only" }, tester)).content).mode).toBe("preview");
+      expect(JSON.parse((await t.host.tool("workplan_compact").execute({ id: "native-demo", archiveReason: "Preview only" }, tester)).content).mode).toBe("preview");
+      const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, tester)).content);
+      expect(doctor.readOnly).toBe(true);
+      expect(doctor.runtimeFacts.permission.status).toBe("unknown");
+      expect(doctor.runtimeFacts.permission.agent).toBe("tester");
+      expect(doctor.runtimeFacts.registrations.effective).toContain("workplan_compact_preview");
+      expect(doctor.runtimeFacts.plugin).toMatchObject({ id: "workplan-tools", configured: true, effective: true, canonicalLocation: t.root });
+      expect(doctor.runtimeFacts.builtinPlan).toEqual({ configured: null, effective: false });
+      // Same detail format as the reference plugin (no adapter-only text).
+      expect(doctor.runtimeFacts.permission.detail).toStartWith("Agent rules read; session rules read. Bridge client 2.0.20, RPC available");
+      expect(doctor.runtimeFacts.permission.detail).not.toContain("Shiori");
+      expect(fingerprint(t.root)).toEqual(before);
+      expect(t.host.requests).toHaveLength(0);
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+describe("P02–P06 prepare → host authorization → commit", () => {
+  it("asks the host for the exact canonical resources of the prepared intent, then commits it (allow)", async () => {
+    const t = await setup();
+    try {
+      const hash = (await t.read()).stateHash;
+      const out = JSON.parse((await t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, appendNotes: ["allowed"] }, toolContext("plan"))).content);
+      expect(out.stateHash).not.toBe(hash);
+      expect(readFileSync(t.seeded!.jsonPath, "utf8")).toContain("allowed");
+      const [req] = t.host.requests;
+      expect(req.resources).toEqual([...req.resources].sort());
+      expect(new Set(req.resources).size).toBe(req.resources.length);
+      const rel = req.resources.map((r) => relative(t.root, r));
+      expect(rel).toContain(".opencode/workplan/native-demo.json");
+      expect(rel).toContain(".opencode/workplan/native-demo.transaction.json");
+      expect(rel).toContain(".opencode/workplan/.native-demo.lock");
+      expect(rel).toContain(".opencode/workplan/.workspace-mutation.lock");
+      expect(rel).toContain(".opencode/workplan");
+      expect(rel).toContain(".opencode");
+      for (const r of rel) expect(r.startsWith(".opencode")).toBe(true);
+      for (const r of req.resources) expect(r).not.toMatch(/[*?[\]]/);
+      expect(req.metadata).toMatchObject({ workplanToolsBridge: { version: 1, agent: "plan" } });
+      expect(existsSync(wp(t.root, "native-demo.transaction.json"))).toBe(false);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("commits after a genuine user grant and changes nothing on a rejection", async () => {
+    const t = await setup({ effect: "ask" });
+    try {
+      const hash = (await t.read()).stateHash;
+      const op = t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "granted" }, toolContext("plan", new AbortController().signal, "g"));
+      await t.host.nextAsk();
+      await pause(20);
+      t.host.reply("per_1", "once");
+      expect(JSON.parse((await op).content).stateHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(readFileSync(t.seeded!.jsonPath, "utf8")).toContain("granted");
+
+      const hash2 = (await t.read()).stateHash;
+      const before = fingerprint(t.root);
+      const rejected = t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash2, title: "rejected" }, toolContext("plan", new AbortController().signal, "r"));
+      await t.host.nextAsk();
+      await pause(20);
+      t.host.reply("per_2", "reject");
+      await expect(rejected).rejects.toThrow(/user rejected this exact workplan edit/);
+      await pause(50);
+      expect(fingerprint(t.root)).toEqual(before);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("changes nothing on a host deny", async () => {
+    const t = await setup({ effect: "deny" });
+    try {
+      const hash = (await t.read()).stateHash;
+      const before = fingerprint(t.root);
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "denied" }, toolContext("plan")))
+        .rejects.toThrow(/denied this exact edit intent/);
+      await pause(50);
+      expect(fingerprint(t.root)).toEqual(before);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("cannot be revived by a late approval after cancellation", async () => {
+    const t = await setup({ effect: "ask" });
+    try {
+      const hash = (await t.read()).stateHash;
+      const before = fingerprint(t.root);
+      const controller = new AbortController();
+      let continued = false;
+      const op = t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "late" }, toolContext("orchestrator", controller.signal, "late"))
+        .then((r) => { continued = true; return r; });
+      await t.host.nextAsk();
+      controller.abort();
+      await expect(op).rejects.toThrow(/cancelled/);
+      t.host.reply("per_1", "once");
+      await pause(150);
+      expect(continued).toBe(false);
+      expect(fingerprint(t.root)).toEqual(before);
+      // The core expired the intent: nothing to commit, nothing to discard.
+      expect(t.core().stderrTail()).toMatch(/cancelled: prepared intent expired|shiori\.discard/);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("ignores unrelated asks and replies, and fails closed when only those arrive", async () => {
+    const unrelated: FakeHostOptions["unrelatedAsks"] = [
+      { source: { type: "tool", messageID: "msg_other", id: "call_other" } },
+      { metadata: { workplanToolsBridge: { version: 1, authorizationID: "foreign", agent: "plan" } } },
+      { resources: ["/private/tmp/broader"] },
+      { action: "read" },
+      { location: "/private/tmp/other-project" },
+    ];
+    const t = await setup({ effect: "ask", unrelatedAsks: unrelated });
+    try {
+      const hash = (await t.read()).stateHash;
+      const op = t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "correlated" }, toolContext("plan", new AbortController().signal, "c"));
+      await t.host.nextAsk();
+      await pause(20);
+      t.host.reply("per_other", "once"); // unrelated reply: must not authorize
+      await pause(30);
+      expect(readFileSync(t.seeded!.jsonPath, "utf8")).not.toContain("correlated");
+      t.host.reply("per_1", "once");
+      await op;
+      expect(readFileSync(t.seeded!.jsonPath, "utf8")).toContain("correlated");
+    } finally {
+      await t.cleanup();
+    }
+    for (const askOverride of unrelated) {
+      const u = await setup({ effect: "ask", askOverride });
+      try {
+        const hash = (await u.read()).stateHash;
+        const before = fingerprint(u.root);
+        const controller = new AbortController();
+        const op = u.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "x" }, toolContext("plan", controller.signal, "u"));
+        await u.host.nextAsk();
+        await pause(30);
+        controller.abort();
+        await expect(op).rejects.toThrow(/cancelled/);
+        await pause(50);
+        expect(fingerprint(u.root)).toEqual(before);
+      } finally {
+        await u.cleanup();
+      }
+    }
+  });
+
+  it("fails closed when the event stream is lost during authorization (P07)", async () => {
+    const t = await setup({ effect: "ask", closeStreamOnAsk: true });
+    try {
+      const hash = (await t.read()).stateHash;
+      const before = fingerprint(t.root);
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "lost" }, toolContext("plan")))
+        .rejects.toThrow(/event stream disconnected|could not be correlated|not received/);
+      await pause(50);
+      expect(fingerprint(t.root)).toEqual(before);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("fails closed for a session outside the canonical project (P03 location)", async () => {
+    const other = tempRoot("shiori-other-");
+    roots.push(other);
+    const t = await setup({ sessionDirectory: other });
+    try {
+      const hash = (await t.read()).stateHash;
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "x" }, toolContext("plan")))
+        .rejects.toThrow(/not owned by this canonical project/);
+      expect(t.host.requests).toHaveLength(0);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("rejects a receipt that does not match the exact intent", async () => {
+    const root = tempRoot();
+    roots.push(root);
+    seedPlan(root);
+    const host = createFakeHost(root);
+    host.ctx.options = { bin: shioriBin() };
+    const seen: string[][] = [];
+    const plugin = createPlugin({
+      env: {},
+      bridge: async () => ({
+        async authorizeEdit(intent: any) {
+          seen.push([...intent.resources]);
+          return { decision: "allow", via: "runtime-policy", authorizationID: "a", requestID: "r", sessionID: intent.sessionID, agent: intent.agent, source: { type: "tool", messageID: intent.messageID, id: intent.toolCallID }, resources: intent.resources.slice(1) } as any;
+        },
+        diagnostics: () => ({ clientVersion: "2.0.20", rpcRegistration: "available", serviceDiscovery: "unknown", hostBinding: "unknown", eventStream: "unknown", permissionDecision: "unknown" }) as any,
+        async dispose() {},
+      }),
+    });
+    const cleanup = await plugin.setup(host.ctx as never) as () => Promise<void>;
+    try {
+      const hash = JSON.parse((await host.tool("workplan_read").execute({ id: "native-demo" }, toolContext("t"))).content).stateHash;
+      const before = fingerprint(root);
+      await expect(host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "x" }, toolContext("plan")))
+        .rejects.toThrow(/receipt no longer matches/);
+      await pause(50);
+      expect(fingerprint(root)).toEqual(before);
+      expect(seen).toHaveLength(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("covers create, patch, reset, checkpoint, compact apply and recovery through the host", async () => {
+    const t = await setup({ seed: false });
+    try {
+      const plan = toolContext("plan", new AbortController().signal, "c1");
+      const created = JSON.parse((await t.host.tool("workplan_create").execute({
+        id: "life", goal: "Lifecycle goal", status: "in_progress", notes: ["archive me"],
+        phases: [
+          { id: "done", title: "Done", status: "completed", steps: [{ id: "s", title: "S", action: "A", validation: "V", status: "completed" }] },
+          { id: "active", title: "Active", status: "in_progress", steps: [{ id: "next", title: "Next", action: "Act", validation: "Check", status: "in_progress" }] },
+        ],
+      }, plan)).content);
+      expect(created.stateHash).toMatch(/^[0-9a-f]{64}$/);
+      const patchText = ["*** Begin Patch", "*** Update File: .opencode/workplan/life.md", "@@", "-Lifecycle goal", "+Lifecycle goal after patch", "*** End Patch"].join("\n");
+      const patched = JSON.parse((await t.host.tool("workplan_patch").execute({ id: "life", expectedHash: created.stateHash, patchText }, toolContext("plan", new AbortController().signal, "c2"))).content);
+      expect(typeof patched.output).toBe("string");
+      expect(patched.metadata.stateHash).toMatch(/^[0-9a-f]{64}$/);
+      const cp = JSON.parse((await t.host.tool("workplan_checkpoint").execute({ id: "life", expectedHash: patched.metadata.stateHash, summary: "Ready", nextAction: "Compact", phaseId: "active", stepId: "next" }, toolContext("orchestrator", new AbortController().signal, "c3"))).content);
+      const preview = JSON.parse((await t.host.tool("workplan_compact_preview").execute({ id: "life", archiveReason: "tidy", completedPhaseIds: ["done"], noteIndexes: [0] }, toolContext("tester"))).content);
+      expect(preview.stateHash).toBe(cp.stateHash);
+      const applied = JSON.parse((await t.host.tool("workplan_compact").execute({ id: "life", mode: "apply", archiveReason: "tidy", completedPhaseIds: ["done"], noteIndexes: [0], confirmation: "ARCHIVE_SELECTED_HISTORY", previewToken: preview.previewToken, expectedHash: preview.stateHash }, toolContext("orchestrator", new AbortController().signal, "c4"))).content);
+      expect(applied.compacted).toBe(true);
+      expect(existsSync(applied.archivePath)).toBe(true);
+      const beforeReset = JSON.parse((await t.host.tool("workplan_read").execute({ id: "life", includeMarkdown: false }, toolContext("t"))).content).stateHash;
+      const reset = JSON.parse((await t.host.tool("workplan_reset").execute({ id: "life", expectedHash: beforeReset, mode: "draft", replaceMarkdown: true }, toolContext("plan", new AbortController().signal, "c5"))).content);
+      expect(reset.reset).toBe(true);
+
+      // Recovery of a journal left by an interrupted transaction.
+      const jsonPath = wp(t.root, "life.json");
+      const beforeBytes = readFileSync(jsonPath);
+      const doc = JSON.parse(beforeBytes.toString("utf8"));
+      doc.title = "Recovered journal title";
+      const after = Buffer.from(`${JSON.stringify(doc, null, 2)}\n`);
+      const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+      writeFileSync(wp(t.root, "life.transaction.json"), `${JSON.stringify({
+        schemaVersion: 1, transactionId: "fixture-tx", workplanId: "life", operation: "update", createdAt: "2026-09-30T00:00:00.000Z",
+        targets: [{ path: ".opencode/workplan/life.json", beforeHash: sha(beforeBytes), afterHash: sha(after), beforeContent: beforeBytes.toString("base64"), afterContent: after.toString("base64"), mode: statSync(jsonPath).mode & 0o777 }],
+      }, null, 2)}\n`);
+      const pending = JSON.parse((await t.host.tool("workplan_read").execute({ id: "life" }, toolContext("t"))).content);
+      expect(pending.recoveryRequired).toBe(true);
+      await expect(t.host.tool("workplan_update").execute({ id: "life", recovery: "resume", expectedHash: pending.stateHash }, toolContext("plan"))).rejects.toThrow(/Only the orchestrator may recover/);
+      const recovered = JSON.parse((await t.host.tool("workplan_update").execute({ id: "life", recovery: "resume", expectedHash: pending.stateHash }, toolContext("orchestrator", new AbortController().signal, "c6"))).content);
+      expect(recovered.recovered).toBe(true);
+      const recoveryAsk = t.host.requests.at(-1)!;
+      expect(recoveryAsk.resources).toContain(wp(t.root, "life.transaction.json"));
+      expect(JSON.parse(readFileSync(jsonPath, "utf8")).title).toBe("Recovered journal title");
+      expect(existsSync(wp(t.root, "life.transaction.json"))).toBe(false);
+      // No stage, lock or journal debris.
+      expect(readdirSync(wp(t.root, "")).filter((n) => n.endsWith(".stage") || n.endsWith(".lock") || n.endsWith(".transaction.json"))).toEqual([]);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("asks for nothing when a mutation would not change any byte (D12)", async () => {
+    const t = await setup({ seed: false });
+    try {
+      const created = JSON.parse((await t.host.tool("workplan_create").execute({ id: "same", goal: "g" }, toolContext("plan", new AbortController().signal, "s1"))).content);
+      const asks = t.host.requests.length;
+      const out = JSON.parse((await t.host.tool("workplan_reset").execute({ id: "same", expectedHash: created.stateHash, mode: "markdown-only" }, toolContext("plan", new AbortController().signal, "s2"))).content);
+      expect(out.stateHash).toBe(created.stateHash);
+      expect(t.host.requests.length).toBe(asks);
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+describe("P07 unsupported capability, transport loss and unload", () => {
+  it("reports a missing core binary actionably and registers tools that fail closed", async () => {
+    const t = await setup({ bin: null });
+    try {
+      await expect(t.host.tool("workplan_list").execute({}, toolContext("t"))).rejects.toThrow(/plugin option "bin" or the SHIORI_BIN/);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("fails a mutation closed when the core dies before commit and never replays it", async () => {
+    const t = await setup({ effect: "ask" });
+    try {
+      const hash = (await t.read()).stateHash;
+      const before = fingerprint(t.root);
+      const op = t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "crash" }, toolContext("plan", new AbortController().signal, "x"));
+      await t.host.nextAsk();
+      process.kill(t.core().pid!, "SIGKILL");
+      await pause(100);
+      t.host.reply("per_1", "once");
+      const error = await op.catch((e) => e);
+      expect(error.message).toMatch(/not live on this connection|prepare the mutation again/);
+      expect(fingerprint(t.root)).toEqual(before);
+      // The next call runs on a new core.
+      expect((await t.read()).stateHash).toBe(hash);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("terminates only its own child on unload", async () => {
+    const t = await setup();
+    await t.read();
+    const pid = t.core().pid!;
+    await t.cleanup();
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+  });
+
+  it("computes edit resources with parents inside the project only", () => {
+    const res = editResources("/r", {
+      resources: { readPaths: ["/r/a.md"], writePaths: ["/r/.opencode/workplan/x.json"], deletePaths: [], lockPaths: ["/r/.opencode/workplan/.x.lock"], stagingPaths: [], archivePaths: [] },
+    } as any);
+    expect(res).toEqual(["/r/.opencode", "/r/.opencode/workplan", "/r/.opencode/workplan/.x.lock", "/r/.opencode/workplan/x.json"]);
+  });
+});

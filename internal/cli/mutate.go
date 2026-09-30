@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -344,53 +343,4 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	fmt.Fprintln(stdout, out.String())
 	return 0
-}
-
-// mutationErrorClass maps stage C errors to protocol error classes.
-func mutationErrorClass(err error) (string, bool) {
-	var stale *engine.StaleHashError
-	var sstale *storage.StaleError
-	var lock *storage.LockUnavailableError
-	var repl *storage.LockReplacedError
-	var rec *storage.RecoveryRequiredError
-	var ext *engine.ExternalEditError
-	var canc *storage.CancelledError
-	var dup *engine.DuplicateMembersError
-	var d7 *engine.D7Error
-	var jinv *engine.JournalInvalidError
-	msg := err.Error()
-	switch {
-	case errors.As(err, &stale), errors.As(err, &sstale):
-		if strings.Contains(msg, "requires explicit recovery") {
-			return "recovery_required", true
-		}
-		if strings.HasPrefix(msg, "Refusing to overwrite") {
-			return "ownership_conflict", true
-		}
-		return "stale_state", true
-	case errors.As(err, &lock), errors.As(err, &repl):
-		return "lock_unavailable", true
-	case errors.As(err, &ext):
-		return "external_edit_conflict", true
-	case errors.As(err, &rec):
-		return "recovery_required", true
-	case errors.As(err, &canc):
-		return "cancelled", true
-	case errors.Is(err, engine.ErrDenied):
-		return "permission_denied", true
-	case errors.As(err, &dup), errors.As(err, &d7), errors.As(err, &jinv):
-		return "invalid_structure", true
-	case strings.HasPrefix(msg, "Workplan transaction pending requires explicit recovery"):
-		return "recovery_required", true
-	case strings.HasPrefix(msg, "Refusing to overwrite"), strings.HasPrefix(msg, "Workplan already exists"),
-		strings.HasPrefix(msg, "Plan file already exists"), strings.HasPrefix(msg, "Plan file destination is already owned"),
-		strings.HasPrefix(msg, "Workplan destination is claimed"), strings.HasPrefix(msg, "Ambiguous pending workplan"):
-		return "ownership_conflict", true
-	case strings.HasPrefix(msg, "Refusing to replace handwritten"):
-		return "invalid_input", true
-	case strings.HasPrefix(msg, "Cannot move workplan link"), strings.HasPrefix(msg, "Cannot overwrite missing"),
-		strings.HasPrefix(msg, "No pending transaction"), strings.HasPrefix(msg, "Plan file not found"):
-		return "missing_artifact", true
-	}
-	return "", false
 }

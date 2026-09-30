@@ -1,4 +1,5 @@
-// Command shiori is the standalone read-only workplan CLI (stage B).
+// Command shiori is the workplan core CLI and the `shiori serve --stdio`
+// native adapter protocol (stage D).
 package main
 
 import (

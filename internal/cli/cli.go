@@ -11,18 +11,16 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/hoshinoht/shiori/internal/engine"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
-	"github.com/hoshinoht/shiori/internal/snapshot"
 )
 
 // Version is the CLI version (set with -ldflags at build time).
-var Version = "0.0.0-stage-c"
+var Version = "0.0.0-stage-d"
 
-const usage = `shiori — workplan core (stage C)
+const usage = `shiori — workplan core (stage D)
 
 Usage:
   shiori <command> [flags] [id]
@@ -47,6 +45,8 @@ Mutating commands (print the prepared intent, then require confirmation):
                              --guardrail --reference --validation]
   compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I]
                              --preview-token T --confirm ARCHIVE_SELECTED_HISTORY
+  serve --stdio              Native adapter protocol on stdin/stdout (JSON lines;
+                             prepare -> host authorization -> commit; idle exit)
   version                    Print the version
 
 Common flags:
@@ -86,6 +86,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version":
 		fmt.Fprintln(stdout, "shiori", Version)
 		return 0
+	case "serve":
+		return runServe(rest, os.Stdin, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {
@@ -288,35 +290,8 @@ func dispatch(e *engine.Engine, cmd string, input ojson.Value) (ojson.Value, str
 }
 
 // ErrorClass maps an error to a protocol error class
-// (protocol-envelope-v1 errorClass).
-func ErrorClass(err error) string {
-	if c, ok := mutationErrorClass(err); ok {
-		return c
-	}
-	var ie *engine.InputError
-	var de *model.DecodeError
-	var nf *snapshot.NotFoundError
-	var ij *snapshot.InvalidJSONError
-	msg := err.Error()
-	switch {
-	case errors.As(err, &ie):
-		return "invalid_input"
-	case errors.Is(err, snapshot.ErrUnsupported):
-		return "unsupported_capability"
-	case errors.As(err, &nf):
-		return "missing_artifact"
-	case errors.As(err, &de), errors.As(err, &ij), strings.Contains(msg, "Migrate ids before"):
-		return "invalid_structure"
-	case strings.HasPrefix(msg, "Stale or option-mismatched"):
-		return "stale_state"
-	case strings.HasPrefix(msg, "Invalid workplan") && strings.HasSuffix(msg, "restart without a cursor"),
-		strings.HasPrefix(msg, "Phase not found"), strings.HasPrefix(msg, "Step filter"),
-		errors.Is(err, model.ErrUnnormalizableID),
-		strings.HasPrefix(msg, "Plan file must"), strings.HasPrefix(msg, "Spec file must"):
-		return "invalid_input"
-	}
-	return "internal"
-}
+// (protocol-envelope-v1 errorClass); see engine.ErrorClass.
+func ErrorClass(err error) string { return engine.ErrorClass(err) }
 
 func fail(stdout, stderr io.Writer, jsonOut bool, err error) int {
 	if !jsonOut {

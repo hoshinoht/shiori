@@ -1,0 +1,56 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/hoshinoht/shiori/internal/protocol"
+)
+
+// runServe runs `shiori serve --stdio`: one private JSON-lines protocol
+// connection on stdin/stdout for a native host adapter (contracts §5.4).
+// There is no network listener and no daemon; the process exits on stdin
+// EOF, SIGTERM/SIGINT, a fatal frame error, or after the idle timeout.
+func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("shiori serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	stdio := fs.Bool("stdio", false, "serve the protocol on stdin/stdout (required)")
+	idle := fs.Duration("idle-timeout", protocol.DefaultIdleTimeout, "exit after this long with no request and no prepared intent")
+	maxFrame := fs.Int("max-frame-bytes", protocol.DefaultMaxFrameBytes, "request frame limit in bytes")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if !*stdio || fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N]")
+		return 2
+	}
+	if *idle <= 0 || *idle > 24*time.Hour {
+		fmt.Fprintln(stderr, "shiori serve: --idle-timeout must be between 1ns and 24h")
+		return 2
+	}
+	if *maxFrame < 1024 || *maxFrame > protocol.DefaultMaxFrameBytes*4 {
+		fmt.Fprintln(stderr, "shiori serve: --max-frame-bytes must be between 1024 and 64 MiB")
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err := protocol.Serve(ctx, protocol.Options{
+		In: stdin, Out: stdout, Err: stderr,
+		CoreVersion:   Version,
+		IdleTimeout:   *idle,
+		MaxFrameBytes: *maxFrame,
+	})
+	switch {
+	case err == nil, errors.Is(err, protocol.ErrIdle):
+		return 0
+	default:
+		return 1
+	}
+}

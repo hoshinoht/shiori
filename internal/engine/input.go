@@ -205,6 +205,9 @@ type DoctorInput struct {
 	WorkspaceRoot *string
 	ID            *string
 	Limit         *int
+	// RuntimeFacts are host facts injected by a trusted adapter (never
+	// model input); nil renders every fact as unknown.
+	RuntimeFacts *ojson.Value
 }
 
 func deref(p *string) string {
