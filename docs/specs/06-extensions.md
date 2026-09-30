@@ -156,14 +156,14 @@ stage it attaches to. Record decisions here with a date.
 | ID | Decision | Date | Notes |
 | --- | --- | --- | --- |
 | X1 | to-review | | |
-| X2 | to-review | | |
-| X3 | to-review | | |
+| X2 | accepted | 2026-09-30 | stage E1, after D.4 |
+| X3 | accepted | 2026-09-30 | stage E2, after E1 (needs X2) |
 | X4 | to-review | | |
 | X5 | to-review | | |
-| X6 | to-review | | |
+| X6 | accepted | 2026-09-30 | implemented in stage D.2 |
 | X7 | to-review | | |
-| P2 | to-review | | |
-| P3 | to-review | | |
+| P2 | accepted | 2026-09-30 | stage D.4 |
+| P3 | accepted | 2026-09-30 | stage D.4 |
 | P4 | to-review | | |
 | P5 | to-review | | |
-| P6 | to-review | | |
+| P6 | accepted | 2026-09-30 | covered by D.1 (F) and D.3 |
