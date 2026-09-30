@@ -30,6 +30,11 @@ Ordered by expected value for effort.
 | X5 | Cross-plan workspace graph | Portfolio view of related plans in one repo | X4 optional |
 | X6 | Critical path and slack | Surface the steps that block the most work | stage F ready queue |
 | X7 | Session ↔ step/lane links | Precise handoffs across sessions | X3 optional |
+| P2 | Compaction advisor | Keeps long-running plans small without manual bookkeeping | stage C compaction |
+| P3 | Note rollover | Keeps the plan roughly constant in size over hours of iteration | P2, stage C compaction |
+| P4 | Journal v2 by reference | About 3x fewer bytes written per mutation on large plans | stage C journal |
+| P5 | Markdown section index for resume | Smaller resume packets on Markdown-heavy plans | stage B resume |
+| P6 | Stray-file classification in doctor | Tidy workplan roots; no unknown files silently ignored | stage B doctor |
 
 ## 3. Sketches
 
@@ -87,6 +92,57 @@ never automatic execution.
 Record OpenCode session IDs from trusted host context (never model input) that
 touched each step or lane, for `/handoff` and resume.
 
+### Long-plan measurements behind P2–P6
+
+Measured 2026-09-30 on a copy of a real plan after many hours of iteration
+(257 KB JSON, 203 KB Markdown, 12 phases, 62 steps, 214 notes). Go stage B
+timings were ~22–24 ms for every read-only operation including process start,
+so parse/hash cost is not the bottleneck at this size; X1 matters only at
+~10 MB. The costs are elsewhere:
+
+- `notes` is 48% of the JSON; terminal (completed/cancelled) steps are 48% of
+  step bytes; handwritten Markdown sections (work packages, execution
+  receipts, decision register) are append-only.
+- A full `read` returned 576 KB (~145k tokens) versus ~12 KB for `resume` at
+  the 12000 budget. (hoshi-opencode2 now steers agents to bounded reads.)
+- The v1 journal stores base64 before/after content, so one status change on
+  this plan writes on the order of 1 MB plus fsyncs, growing with every note.
+- Loose `.patch` files (~200 KB) sit in the workplan root unclassified.
+
+### P2 — Compaction advisor
+
+`resume` and `doctor` report `compactionRecommended` with the estimated
+savings when terminal-step bytes, note count or total size cross configurable
+thresholds. Advice only: compaction still requires preview → exact token →
+authorized apply ([01 §7](01-core.md)).
+
+### P3 — Note rollover
+
+A compaction selection mode that archives notes older than the latest N (and
+older than the newest checkpoint), keeping notes pinned by the decision
+register or referenced by open steps/findings. Archives keep complete
+originals. Uses the existing "selected history" mechanism; no V2 field change.
+
+### P4 — Journal v2 by reference
+
+A separately versioned `<id>.transaction.json` v2 that records digests and
+the paths of same-directory staged files instead of inline base64 content.
+v1 journals stay readable and recoverable. Needs its own crash/fault matrix
+(S04) and must not weaken third-state detection (S05). This is the only
+item here that adds a new artifact version.
+
+### P5 — Markdown section index for resume
+
+Hash-bound heading/marker ranges over the plan Markdown so `resume` can point
+to "execution receipts §N" by offset instead of inlining text. Reads remain
+byte-exact; offsets are invalidated by any Markdown hash change.
+
+### P6 — Stray-file classification
+
+Doctor lists files in the workplan root that are neither known artifacts,
+sidecars, locks, staging files nor archives (for example `*.patch`), and
+suggests moving them under `archive/`. Never moves or deletes them itself.
+
 ## 4. Not proposed
 
 Ropes/piece tables, SQLite storage and Bloom filters remain deferred per
@@ -106,3 +162,8 @@ stage it attaches to. Record decisions here with a date.
 | X5 | to-review | | |
 | X6 | to-review | | |
 | X7 | to-review | | |
+| P2 | to-review | | |
+| P3 | to-review | | |
+| P4 | to-review | | |
+| P5 | to-review | | |
+| P6 | to-review | | |
