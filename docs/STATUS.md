@@ -22,7 +22,7 @@ sections below keep the full record.
 | D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
 | D.4.2 | done | `cdcaa24` (pushed) |
-| D.4.3 | done | `31961fc` (pushed) |
+| D.4.3 | done | `8b98602` (pushed) |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
