@@ -9,8 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Section 11 records the approved D.1 design changes, which
-deliberately depart from the reference.
+spell out). Sections 11 and 12 record the approved D.1 and D.2 design
+changes, which deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -718,3 +718,134 @@ Doctor never moves or deletes anything. The new members
 `strayArtifacts[{name, kind, suggestion}]` (bounded by `limit`),
 `strayArtifactCount`, `omittedStrayArtifacts` and `warnings` appear only
 when there is at least one stray. `workplan_list` is unchanged.
+
+## 12. Approved design changes D.2 (APPROVED 2026-09-30)
+
+The dependency graph now drives work. The owner approved the brief on
+2026-09-30, with two decisions: order checks **warn only** and never
+refuse a write, and the critical path (extension X6,
+[06](specs/06-extensions.md)) is included. Everything not listed here stays
+as in sections 1–11: the V2 plan/checkpoint/dependencies/journal formats,
+the `.opencode/workplan/` layout, the thirteen `workplan_*` identities
+and argument shapes, the hash algorithm and the generated Markdown bytes.
+The graph is never written into generated Markdown. There is no schema
+change.
+
+**Scope rule.** Every graph addition appears only when the plan has a
+dependency sidecar that decodes and passes `ValidateDependencies` (no
+issues). Without a sidecar, or with an invalid one (whose issues are
+already reported), outputs are byte-identical to D.1. A prerequisite is
+met only when it is `completed`, either as a plan step or as an archived
+`terminalSummaries` entry. A step is open when it is neither `completed`
+nor `cancelled`.
+
+The oracle corpus is not edited. Vectors whose output changes on purpose
+are listed in [`testdata/d2/expectations.json`](../testdata/d2/expectations.json)
+(SHA-256 and UTF-16 length of the pinned Go output). Each one is judged
+twice (`internal/engine/d2_vectors_test.go`). The same engine with the
+graph additions turned off must still pass the oracle, D.1 pin or
+divergence check it passed before, and the D.2 output must pass a
+comparator against that output which restates readiness, downstream counts
+and the critical path from the fixture's raw JSON. There are 11 such
+vectors: 6 resume (`full-valid`, `list-mixed/b-plan`), 3 doctor and 2
+inspect. No mutation vector changes.
+
+**G1. Resume readiness.** The current step (`checkpoint.current`) and
+every `active-work` page item carry `readiness: "ready" | "blocked"`,
+right after their status. A ready step also carries `unblocks: N`. A
+blocked step carries `blockedBy: [{phaseId, stepId, status}]`, its
+prerequisites that are not completed, in stored order. The list shows at
+most the pinned-list cap (`clamp(floor(maxChars/900), 4, 8)`, shrinking
+with the D.1 list levels), and `blockedByOmitted` gives the rest when
+there is any. Ids and statuses are never truncated, so the members cost
+a fixed, small budget. The D.1 budgeting (target page 8/4/2, readable
+floors, current work ≥512, pinned safety lists kept whole before the page
+shrinks) is unchanged, and `TestResumeBudgetSweep` covers a 12-entry
+cross-phase graph in addition to the D.1 plans. On the synthetic roadmap
+with that graph, the 12000 budget gives 5 items where D.2-off gives 6, and
+every other sampled budget gives the same count.
+
+**G2. Order warnings (warn only).** `workplan_update` that sets a step to
+`in_progress`, `review` or `completed` while a prerequisite is not completed succeeds
+and returns `warnings` (only when nonempty), listing the unmet
+prerequisites with their statuses. `workplan_validate`, each
+`workplan_doctor` plan entry and `workplan_patch {validate:true}` report
+every such step as a non-failing `warnings` entry
+(`dependencies: Order warning: step <p>/<s> is <status> but its
+prerequisites are not completed: ...`). `valid`, `issues` and every
+refusal are unchanged. `review` counts as started (owner decision,
+2026-09-30).
+
+**G3. Cancelled prerequisites.** An open step whose unmet prerequisites
+include a cancelled one, in the plan or as an archived terminal summary,
+is reported as `dependencies: Step <p>/<s> is blocked by cancelled
+prerequisite <p>/<s>. Replace or remove the dependency, or cancel the
+step.` in validate, doctor and patch validation. Resume adds `Dependency
+order warning: Step ...` to `safety.unverifiedWarnings`, after the
+checkpoint freshness issue (when there is one) and before the unverified
+checkpoint lines, and the item's `blockedBy` shows `status:
+"cancelled"`. An update that cancels a step with open dependents returns a
+warning naming them.
+
+**G4. Phase replacement against the graph.** An update with `phases` (a
+full replacement) and without `dependencies` re-validates the stored
+sidecar against the resulting plan in the same prepared write. If the
+replacement adds dependency issues, for example a removed prerequisite or
+source step, it is refused before authorization:
+`Invalid dependency metadata: <issues>; the phase replacement would leave
+these dependency links dangling. Replace the dependencies in the same
+update.` Issues the sidecar already had do not block the update. An update
+that also supplies `dependencies` is validated against the result as
+before. `workplan_reset` (draft) is not covered; it is revisited in D.3
+(owner decision).
+
+**G5. Dependency writes and views.**
+
+- An entry with an empty `dependsOn` is refused:
+  `Invalid dependency metadata: dependencies.<i>.dependsOn: Dependency
+  entry must list at least one prerequisite`. A stored sidecar with such an
+  entry is still read. Validate reports it as a warning
+  (`...: Dependency entry lists no prerequisites.`), not an issue.
+- A backward link (a step that depends on a step later in plan order) is
+  accepted with a warning: `dependencies.<i>.dependsOn.<j>: Backward link:
+  <p>/<s> depends on <p>/<s>, which comes later in plan order.` A
+  dependency write returns all graph warnings of the result. Validate and
+  doctor report them too.
+- The compaction preview adds `archivedPrerequisites[{phaseId, stepId,
+  status, dependents[{phaseId, stepId}]}]` (only when nonempty) for
+  selected steps that remaining steps depend on. Apply keeps them as
+  terminal summaries (unchanged).
+- `workplan_inspect` step entries add `prerequisites[{phaseId, stepId,
+  status}]` and `dependents[{phaseId, stepId}]`. Open steps also get
+  `readiness`, `unblocks` and `slack`.
+
+**G6. Downstream counts and critical path (X6).** `unblocks` is the
+number of distinct open plan steps that depend on the step, directly or
+transitively. Resume ranks `active-work` items as follows: ready items
+first, by `unblocks` descending with ties in plan order, then blocked items
+in plan order, then findings and references as before. The page total and
+cursor are unchanged; the cursor offset indexes the ranked list. The
+critical path is the heaviest chain of open steps. A step weighs its
+optional numeric `estimate` member (kept as unknown step metadata, a
+positive finite number), else 1. V2 has no estimate field and no
+writer sets one: `estimate` is an optional member that stays hand-edited,
+preserved like any unknown step member (owner decision, 2026-09-30). Ties go to more steps, then to earlier
+plan order. `workplan_inspect` (top level) and each `workplan_doctor` plan
+entry add `criticalPath: {length, estimate?, steps[{phaseId, stepId,
+status}], recommendation}` when it chains at least two open steps.
+`estimate` appears only when a step on the path used one. `slack` is the
+critical weight minus the heaviest chain through the step. These are
+recommendations only: nothing is executed, reordered on disk or
+refused because of them. Resume does not include the critical path, to
+keep its budget. The current-step selection is unchanged from D.1 (a
+fresh checkpoint position, else the first in-progress, else the first
+unfinished step, shown as `blocked` when it is; owner decision).
+
+**Error class of dependency refusals.** Every refusal whose message starts
+with `Invalid dependency metadata` (the existing dependency-write
+refusals, the G4 phase-replacement and G5 empty-entry refusals, and a
+compaction apply over an invalid sidecar) now has the protocol and CLI
+`--json` error class `invalid_structure` instead of `internal` (owner
+decision, 2026-09-30). The message text is unchanged, so the oracle
+mutation vectors (which record messages only) still pass unchanged; the
+class is pinned by `TestD2PhaseReplacement` and `TestD2DependencyWrites`.

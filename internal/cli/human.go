@@ -111,8 +111,9 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 			fmt.Fprintf(w, "%s. [%s] %s  %s\n", str(get(ph, "indexLabel")), str(get(ph, "status")), str(get(ph, "id")), str(get(ph, "title")))
 		}
 		for _, st := range get(v, "steps").Elems() {
-			fmt.Fprintf(w, "  %s [%s] %s/%s  %s\n", str(get(st, "indexPath")), str(get(st, "status")), str(get(st, "phaseId")), str(get(st, "id")), str(get(st, "title")))
+			fmt.Fprintf(w, "  %s [%s] %s/%s  %s%s\n", str(get(st, "indexPath")), str(get(st, "status")), str(get(st, "phaseId")), str(get(st, "id")), str(get(st, "title")), graphNote(st))
 		}
+		criticalPath(w, get(v, "criticalPath"), "")
 		pg := get(v, "pagination")
 		fmt.Fprintf(w, "items %s-%s of %s", str(get(pg, "offset")), itoaSum(get(pg, "offset"), get(pg, "returned")), str(get(pg, "total")))
 		if c := get(pg, "nextCursor"); c.Kind() == ojson.String {
@@ -140,7 +141,7 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		cp := get(v, "checkpoint")
 		fmt.Fprintf(w, "%s  checkpoint: %s  stateHash: %s\n", str(get(v, "workplan", "id")), str(get(cp, "freshness")), str(get(v, "hashes", "stateHash")))
 		if cur := get(cp, "current"); cur.Kind() == ojson.Object {
-			fmt.Fprintf(w, "current:   %s/%s  %s [%s]\n", str(get(cur, "phaseId")), str(get(cur, "stepId")), str(get(cur, "stepTitle")), str(get(cur, "stepStatus")))
+			fmt.Fprintf(w, "current:   %s/%s  %s [%s]%s\n", str(get(cur, "phaseId")), str(get(cur, "stepId")), str(get(cur, "stepTitle")), str(get(cur, "stepStatus")), graphNote(cur))
 		}
 		if na := get(cp, "nextAction"); na.Kind() == ojson.String {
 			fmt.Fprintf(w, "next:      %s\n", oneLine(na.Str(), 200))
@@ -158,7 +159,7 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 			_, isFinding := it.Get("severity")
 			switch {
 			case isWork:
-				fmt.Fprintf(w, "  work     %s/%s  %s\n", str(get(it, "phaseId")), str(get(it, "stepId")), oneLine(str(get(it, "title")), 80))
+				fmt.Fprintf(w, "  work     %s/%s  %s%s\n", str(get(it, "phaseId")), str(get(it, "stepId")), oneLine(str(get(it, "title")), 80), graphNote(it))
 			case isFinding:
 				fmt.Fprintf(w, "  finding  [%s] %s\n", str(get(it, "severity")), oneLine(str(get(it, "title")), 80))
 			default:
@@ -186,6 +187,7 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 			for _, x := range get(p, "warnings").Elems() {
 				fmt.Fprintf(w, "      warning: %s\n", x.Str())
 			}
+			criticalPath(w, get(p, "criticalPath"), "      ")
 		}
 		for _, l := range get(v, "locks").Elems() {
 			fmt.Fprintf(w, "  lock %s  %s\n", str(get(l, "path")), str(get(l, "diagnostic")))
@@ -208,4 +210,43 @@ func itoaSum(a, b ojson.Value) string {
 	x, _ := a.Float()
 	y, _ := b.Float()
 	return fmt.Sprintf("%d", int64(x+y))
+}
+
+// graphNote renders the D.2 readiness of a step view (resume current and
+// page items, inspect steps): "  [ready, unblocks N]" or
+// "  [blocked by p/s (status), ...]"; empty without a dependency sidecar.
+func graphNote(v ojson.Value) string {
+	switch str(get(v, "readiness")) {
+	case "ready":
+		return "  [ready, unblocks " + str(get(v, "unblocks")) + "]"
+	case "blocked":
+		var parts []string
+		for _, b := range get(v, "blockedBy").Elems() {
+			parts = append(parts, str(get(b, "phaseId"))+"/"+str(get(b, "stepId"))+" ("+str(get(b, "status"))+")")
+		}
+		if o := get(v, "blockedByOmitted"); o.Kind() == ojson.Number {
+			parts = append(parts, "+"+str(o)+" more")
+		}
+		if len(parts) == 0 {
+			for _, b := range get(v, "prerequisites").Elems() {
+				if str(get(b, "status")) != "completed" {
+					parts = append(parts, str(get(b, "phaseId"))+"/"+str(get(b, "stepId"))+" ("+str(get(b, "status"))+")")
+				}
+			}
+		}
+		return "  [blocked by " + strings.Join(parts, ", ") + "]"
+	}
+	return ""
+}
+
+// criticalPath prints the D.2 advisory critical path, when present.
+func criticalPath(w io.Writer, cp ojson.Value, indent string) {
+	if cp.Kind() != ojson.Object {
+		return
+	}
+	var ids []string
+	for _, s := range get(cp, "steps").Elems() {
+		ids = append(ids, str(get(s, "phaseId"))+"/"+str(get(s, "stepId")))
+	}
+	fmt.Fprintf(w, "%scritical path (%s steps, advisory): %s\n", indent, str(get(cp, "length")), strings.Join(ids, " -> "))
 }

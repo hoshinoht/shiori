@@ -73,6 +73,8 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 	if end > len(items) {
 		end = len(items)
 	}
+	dv := e.dependencies(s, ix)
+	g := e.graph(ix, dv)
 	phases := []ojson.Value{}
 	steps := []ojson.Value{}
 	for _, it := range items[offset:end] {
@@ -98,7 +100,7 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 		if err != nil {
 			return ojson.Value{}, err
 		}
-		steps = append(steps, ojson.NewObject(10).
+		sb := ojson.NewObject(15).
 			Set("type", ojson.StringValue("step")).
 			Set("phaseId", ojson.StringValue(ph.ID)).
 			Set("phaseTitle", ojson.StringValue(ph.Title)).
@@ -108,7 +110,11 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 			Set("target", ptrValue(st.Target)).
 			Set("index", ojson.IntValue(int64(it.step))).
 			Set("indexPath", ojson.StringValue(strconv.Itoa(it.phase+1)+"."+strconv.Itoa(it.step+1))).
-			Set("markdownMarker", ojson.StringValue(marker)).Value())
+			Set("markdownMarker", ojson.StringValue(marker))
+		if g != nil {
+			inspectGraphMembers(sb, g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})
+		}
+		steps = append(steps, sb.Value())
 	}
 	next := ojson.NullValue()
 	if end < len(items) {
@@ -116,7 +122,7 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 			stateHash: s.StateHash, phaseID: in.PhaseID, limit: limit, offset: end,
 		}.fields()))
 	}
-	return ojson.NewObject(9).
+	out := ojson.NewObject(10).
 		Set("path", ojson.StringValue(s.JSON.Path)).
 		Set("workplan", p.Summary()).
 		Set("plan", ojson.NewObject(2).
@@ -124,7 +130,13 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 			Set("exists", ojson.BoolValue(s.Markdown.Exists)).Value()).
 		Set("phases", ojson.ArrayValue(phases)).
 		Set("steps", ojson.ArrayValue(steps)).
-		Set("dependencies", e.dependencies(s, ix).value()).
+		Set("dependencies", dv.value())
+	// D.2 (X6): the advisory critical path over the whole plan (not the
+	// page), only when it chains at least two open steps.
+	if cp, ok := criticalPathValue(g); ok {
+		out.Set("criticalPath", cp)
+	}
+	return out.
 		Set("pagination", ojson.NewObject(5).
 			Set("total", ojson.IntValue(int64(len(items)))).
 			Set("offset", ojson.IntValue(int64(offset))).
@@ -133,4 +145,30 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 			Set("nextCursor", next).Value()).
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).Value(), nil
+}
+
+// inspectGraphMembers adds the D.2 per-step graph view (G5, X6): the
+// step's prerequisites with their statuses and its direct dependents;
+// for an open step also its readiness, how many open steps it holds up
+// (transitively) and its slack against the critical path.
+func inspectGraphMembers(b *ojson.Builder, g *index.Graph, k index.StepKey) {
+	pre := []ojson.Value{}
+	for _, p := range g.Prereqs(k) {
+		pre = append(pre, stepRefStatus(p.Key, p.Status))
+	}
+	deps := []ojson.Value{}
+	for _, d := range g.Dependents(k) {
+		deps = append(deps, stepRefValue(d))
+	}
+	b.Set("prerequisites", ojson.ArrayValue(pre)).
+		Set("dependents", ojson.ArrayValue(deps))
+	if slack, open := g.Slack(k); open {
+		readiness := "ready"
+		if !g.Ready(k) {
+			readiness = "blocked"
+		}
+		b.Set("readiness", ojson.StringValue(readiness)).
+			Set("unblocks", ojson.IntValue(int64(g.Unblocks(k)))).
+			Set("slack", floatValue(slack))
+	}
 }

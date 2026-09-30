@@ -28,7 +28,7 @@ Ordered by expected value for effort.
 | X3 | Worktree lanes: path-claim trie, lane state machine, baseline tree fingerprint, merge train | Safe parallel execution | [04](04-worktrees.md), X2 |
 | X4 | Hash-chained event log | Audit trail, cheap "changed since checkpoint", basis for undo | stage C |
 | X5 | Cross-plan workspace graph | Portfolio view of related plans in one repo | X4 optional |
-| X6 | Critical path and slack | Surface the steps that block the most work | stage F ready queue |
+| X6 | Critical path and slack | Surface the steps that block the most work | stage F ready queue (readiness delivered early in D.2) |
 | X7 | Session ↔ step/lane links | Precise handoffs across sessions | X3 optional |
 | X8 | Warm snapshot cache (buffer pool) | Repeat reads skip parsing; near-zero cost when nothing changed | stage D serve process |
 | X9 | Derived plan index (materialized view) | Reads touch only the slices they need; ready queue and hashes precomputed | X8, X1 |
@@ -90,9 +90,21 @@ cross-plan writes need their own locking design.
 
 ### X6 — Critical path and slack
 
+**Status: accepted and implemented in stage D.2** (2026-09-30;
+[contracts §12](../contracts.md#12-approved-design-changes-d2-approved-2026-09-30)
+G6).
+
 Longest-path and slack over the step DAG, weighted by optional estimates.
 Resume and inspect may show "blocks N downstream steps". Recommendations only;
 never automatic execution.
+
+As implemented: the critical path is the heaviest chain of open steps
+(weight = a step's optional numeric `estimate` member, else 1). Inspect
+(top level) and doctor (per plan) show it when it chains at least two open
+steps. Inspect shows `unblocks` and `slack` per open step. Resume ranks
+ready work by `unblocks` and shows it per item, but leaves the path out to
+keep its budget. It is computed on every read from the validated sidecar;
+there is no new sidecar or cache.
 
 ### X7 — Session links
 
@@ -201,7 +213,7 @@ stage it attaches to. Record decisions here with a date.
 | X3 | accepted | 2026-09-30 | stage E2, after E1 (needs X2) |
 | X4 | to-review | | |
 | X5 | to-review | | |
-| X6 | accepted | 2026-09-30 | implemented in stage D.2 |
+| X6 | accepted, implemented | 2026-09-30 | implemented in stage D.2 (contracts §12 G6) |
 | X7 | to-review | | |
 | X8 | to-review | | |
 | X9 | to-review | | |

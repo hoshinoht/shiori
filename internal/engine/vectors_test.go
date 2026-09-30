@@ -204,6 +204,8 @@ func TestCorpusParity(t *testing.T) {
 	}
 	d1Write(t, "tools/", "resume/", "paging/")
 	t.Logf("D.1 listed vectors: %s", d1Summary(d1Expectations(t)))
+	d2Write(t, "tools/", "resume/", "paging/")
+	t.Logf("D.2 listed vectors: %s", d1Summary(d2Expectations(t)))
 }
 
 func runVector(t *testing.T, v *vector) (outcome, string) {
@@ -235,6 +237,33 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 		}
 		os.WriteFile(filepath.Join(dir, name+".out"), []byte(body), 0o644)
 	}
+	// D.2 (contracts §12): a vector whose output changes with the graph
+	// additions is judged in two steps. The D.2-off output must pass the
+	// earlier checks (oracle, D.1 pins, divergences) unchanged, and the
+	// D.2 output must differ from it only by the approved change.
+	if runErr == nil {
+		off := *e
+		off.noGraph = true
+		offText, offErr := runTool(t, &off, v.Call.Tool, input.Value)
+		if offErr != nil {
+			t.Fatalf("D.2-off run failed: %v", offErr)
+		}
+		if d2Candidate(t, v, text, offText) {
+			_, note := judgeVector(t, v, root, offText, nil)
+			d2note := checkD2(t, v, root, text, offText)
+			if note != "" {
+				d2note += " (D.2-off: " + note + ")"
+			}
+			return outDivergence, d2note
+		}
+	}
+	return judgeVector(t, v, root, text, runErr)
+}
+
+// judgeVector compares one vector output with the oracle, the D.1 pins or
+// a declared divergence.
+func judgeVector(t *testing.T, v *vector, root testutil.Root, text string, runErr error) (outcome, string) {
+	t.Helper()
 	if runErr == nil && d1Candidate(t, v, root.Normalize(text)) {
 		return checkD1(t, v, root, text)
 	}

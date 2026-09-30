@@ -8,10 +8,11 @@ This repository contains the specifications, the approved stage A contract
 (machine schemas, a golden fixture corpus and a measured TypeScript baseline),
 the stage B read-only Go core, the stage C transactional core with its
 `shiori` CLI, the stage D native OpenCode adapter (`shiori serve --stdio`
-plus `adapter/opencode/`), and the D.1 approved design changes
-([contracts §11](docs/contracts.md#11-approved-design-changes-d1-approved-2026-09-30)).
+plus `adapter/opencode/`), and the D.1 and D.2 approved design changes
+([contracts §11](docs/contracts.md#11-approved-design-changes-d1-approved-2026-09-30),
+[§12](docs/contracts.md#12-approved-design-changes-d2-approved-2026-09-30)).
 The architecture is a Go core and CLI with a thin OpenCode JS/TS adapter.
-Stages A–D and D.1 are authorized. Automatic artifact migration, commits
+Stages A–D, D.1 and D.2 are authorized. Automatic artifact migration, commits
 and remote publication are not.
 
 ## Specifications
@@ -27,7 +28,7 @@ Read in this order:
 Stage A contract:
 
 - [Frozen contract v1 (APPROVED 2026-09-30)](docs/contracts.md), including the
-  approved D.1 design changes (§11)
+  approved D.1 and D.2 design changes (§11, §12)
 - [Machine schemas](schema/index.json) and [golden corpus](testdata/MANIFEST.json)
 - [TypeScript reference baseline and Go stage B results](docs/baseline.md)
 
@@ -77,6 +78,26 @@ D.1 behaviour of the read operations (contracts §11):
   is not the generated rendering. `doctor` also lists orphaned sidecars
   and unclassified files in `.opencode/workplan/`. It never moves or
   deletes them.
+
+D.2 behaviour when the plan has a valid dependency sidecar (contracts §12;
+without one, output is the same as D.1):
+
+- `resume` marks the current step and each open work item `ready` (with
+  `unblocks`: how many open steps depend on it) or `blocked` (with
+  `blockedBy`: the prerequisites that are not completed). Ready work comes
+  first, ranked by `unblocks`, then blocked work. Open steps behind a
+  cancelled prerequisite are flagged.
+- Order checks only warn. An update that starts, reviews or completes a step before
+  its prerequisites succeeds with `warnings`, and `validate`/`doctor`
+  report order violations, cancelled prerequisites and backward links
+  without changing `valid`.
+- An update that replaces `phases` is refused if it would leave dependency
+  links dangling. A dependency entry with an empty `dependsOn` is refused.
+  Dependency refusals have the error class `invalid_structure`.
+- `inspect` shows each step's prerequisites and dependents. `inspect` and
+  `doctor` show the advisory critical path (the longest chain of open
+  steps). The compaction preview lists steps that archived prerequisites
+  still block.
 
 ```sh
 shiori list     --root /path/to/project
@@ -236,6 +257,10 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
   purpose are pinned in `testdata/d1/expectations.json`, and each one also
   passes a comparator against the unchanged oracle vector. Re-pin them
   after review with `SHIORI_D1_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
+  Vectors that D.2 changes are pinned in `testdata/d2/expectations.json`.
+  The same engine with the graph additions off must still pass the
+  earlier check, and the D.2 output must differ from it only by the
+  approved members (`SHIORI_D2_UPDATE=1` re-pins).
 - `TestMutationVectors` runs all 70 mutation vectors with a frozen clock and
   compares output, authorization count and the exact changed files;
   `TestMutationInputVectors` covers the 39 mutating-tool input vectors.
@@ -251,7 +276,7 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit D.1 (see [STATUS](docs/STATUS.md)). Updating the pinned
+Review and commit D.2 (see [STATUS](docs/STATUS.md)). Updating the pinned
 copy the owner's OpenCode uses is a separate step for the owner. Worktree
 orchestration and alternative storage remain later, explicitly gated
 stages.

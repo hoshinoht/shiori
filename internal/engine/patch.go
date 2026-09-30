@@ -210,14 +210,14 @@ func (e *Engine) PreparePatch(data ojson.Value) (*Prepared, error) {
 			Set("patched", ojson.BoolValue(true)).
 			Set("validate", ojson.BoolValue(validate))
 		if validate {
-			issues, _ := e.validationIssues(post, rawID)
+			issues, dv := e.validationIssues(post, rawID)
 			// D.1 (contracts §11 item D): the issue list itself, not only
 			// its count; drift warnings are additive and non-failing.
 			vb := ojson.NewObject(4).
 				Set("valid", ojson.BoolValue(len(issues) == 0)).
 				Set("issueCount", ojson.IntValue(int64(len(issues)))).
 				Set("issues", ojson.StringsValue(issues))
-			if w := validationWarnings(post); len(w) > 0 {
+			if w := e.validationWarnings(post, dv); len(w) > 0 {
 				vb.Set("warnings", ojson.StringsValue(w))
 			}
 			meta.Set("validation", vb.Value())

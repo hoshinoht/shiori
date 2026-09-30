@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -349,16 +350,23 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 		Set("id", ojson.StringValue(name)).
 		Set("valid", ojson.BoolValue(len(issues) == 0)).
 		Set("issues", ojson.StringsValue(issues))
-	if w := validationWarnings(s); len(w) > 0 {
+	if w := e.validationWarnings(s, dv); len(w) > 0 {
 		b.Set("warnings", ojson.StringsValue(w)) // D.1, additive
 	}
-	return b.
+	b.
 		Set("workplan", p.Summary()).
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).
 		Set("checkpointFreshness", ojson.StringValue(cv.freshness)).
-		Set("dependenciesRecorded", ojson.BoolValue(dv.recorded)).
-		Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
+		Set("dependenciesRecorded", ojson.BoolValue(dv.recorded))
+	// D.2 (X6): the advisory critical path, only when a valid sidecar
+	// chains at least two open steps.
+	if dv.deps != nil && len(dv.issues) == 0 {
+		if cp, ok := criticalPathValue(e.graph(index.Build(p), dv)); ok {
+			b.Set("criticalPath", cp)
+		}
+	}
+	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }
 
 // lockValue reports a lock owner without judging liveness from age.

@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
@@ -262,7 +263,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 
 	// Dependency sidecar: full replacement, validated against the result.
 	var depsAfter []byte
-	if has(data, "dependencies") {
+	var depsFinal *model.Dependencies // the sidecar the result is checked against (D.2)
+	depsWritten := has(data, "dependencies")
+	if depsWritten {
 		d := &model.Dependencies{ID: id}
 		for _, ev := range getObjs(data, "dependencies") {
 			var en model.DependencyEntry
@@ -276,11 +279,54 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			}
 			d.Entries = append(d.Entries, en)
 		}
-		if issues := index.ValidateDependencies(index.Build(p), d); len(issues) > 0 {
+		// D.2 (G5): an entry must name at least one prerequisite.
+		var issues []string
+		for i, en := range d.Entries {
+			if len(en.DependsOn) == 0 {
+				issues = append(issues, "dependencies."+strconv.Itoa(i)+".dependsOn: Dependency entry must list at least one prerequisite")
+			}
+		}
+		issues = append(issues, index.ValidateDependencies(index.Build(p), d)...)
+		if len(issues) > 0 {
 			return nil, errors.New("Invalid dependency metadata: " + strings.Join(issues, "; "))
 		}
 		d.UpdatedAt = nowISO()
 		depsAfter = model.EncodeDependencies(d)
+		depsFinal = d
+	} else if s.Dependencies.Exists {
+		// D.2 (G4): replacing phases re-validates the stored sidecar in the
+		// same prepared write; links it would leave dangling are refused.
+		if dv := e.dependencies(s, nil); dv.deps != nil {
+			after := index.ValidateDependencies(index.Build(p), dv.deps)
+			if len(getObjs(data, "phases")) > 0 {
+				before := map[string]bool{}
+				for _, is := range dv.issues {
+					before[is] = true
+				}
+				var added []string
+				for _, is := range after {
+					if !before[is] {
+						added = append(added, is)
+					}
+				}
+				if len(added) > 0 {
+					return nil, errors.New("Invalid dependency metadata: " + strings.Join(added, "; ") +
+						"; the phase replacement would leave these dependency links dangling. Replace the dependencies in the same update.")
+				}
+			}
+			if len(after) == 0 {
+				depsFinal = dv.deps
+			}
+		}
+	}
+	var warnings []string
+	if depsFinal != nil && !e.noGraph {
+		g := index.NewGraph(index.Build(p), depsFinal)
+		if depsWritten {
+			warnings = graphWarnings(g)
+		} else {
+			warnings = statusChangeWarnings(old, g)
+		}
 	}
 	p.UpdatedAt = nowISO()
 	if v, ok := statusUpdate(data); ok {
@@ -367,14 +413,19 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		if err != nil {
 			return Output{}, err
 		}
-		return Output{Value: ojson.NewObject(7).
+		b := ojson.NewObject(8).
 			Set("updated", ojson.BoolValue(true)).
 			Set("path", ojson.StringValue(e.absRel(s.JSON.Rel))).
 			Set("planPath", ojson.StringValue(e.absRel(newPF))).
 			Set("workplan", post.Plan.Summary()).
 			Set("planHash", ojson.StringValue(post.PlanHash)).
 			Set("stateHash", ojson.StringValue(post.StateHash)).
-			Set("directorySync", dirSyncValue(sync)).Value()}, nil
+			Set("directorySync", dirSyncValue(sync))
+		// D.2 (G2/G3/G5): non-failing order warnings, only when present.
+		if len(warnings) > 0 {
+			b.Set("warnings", ojson.StringsValue(warnings))
+		}
+		return Output{Value: b.Value()}, nil
 	}
 	return finalize(prep), nil
 }

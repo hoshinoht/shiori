@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 
+	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -51,18 +52,22 @@ const msgMarkdownDrift = "planFile: Linked Markdown is not the generated renderi
 	"Later JSON changes (status, notes, findings, compaction) are not written into it. " +
 	"To regenerate it from the JSON (discarding the edits) use workplan_reset with mode \"markdown-only\" and replaceMarkdown=true; otherwise keep it in sync by hand."
 
-// validationWarnings are non-failing diagnostics (D.1); they never change
-// "valid". A missing or empty Markdown is an issue, not a warning, and a
+// validationWarnings are non-failing diagnostics; they never change
+// "valid": Markdown drift (D.1) and then the dependency-graph warnings
+// (D.2: order violations, cancelled prerequisites, backward links, empty
+// entries). A missing or empty Markdown is an issue, not a warning, and a
 // plan whose ids cannot render is diagnosed by the structure rules.
-func validationWarnings(s *snapshot.Snapshot) []string {
-	if !s.Markdown.Exists || model.Blank(string(s.Markdown.Bytes)) {
-		return nil
+func (e *Engine) validationWarnings(s *snapshot.Snapshot, dv depView) []string {
+	var w []string
+	if s.Markdown.Exists && !model.Blank(string(s.Markdown.Bytes)) {
+		if out, err := model.RenderMarkdown(s.Plan); err == nil && string(out) != string(s.Markdown.Bytes) {
+			w = append(w, fmt.Sprintf(msgMarkdownDrift, s.Markdown.Rel))
+		}
 	}
-	out, err := model.RenderMarkdown(s.Plan)
-	if err != nil || string(out) == string(s.Markdown.Bytes) {
-		return nil
+	if dv.deps != nil && len(dv.issues) == 0 {
+		w = append(w, graphWarnings(e.graph(index.Build(s.Plan), dv))...)
 	}
-	return []string{fmt.Sprintf(msgMarkdownDrift, s.Markdown.Rel)}
+	return w
 }
 
 // Validate implements workplan_validate. Load failures are reported as a
@@ -91,7 +96,7 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 		Set("issues", ojson.StringsValue(issues))
 	// D.1: additive, present only when there is something to report, so
 	// outputs without warnings stay byte-identical to the reference.
-	if w := validationWarnings(s); len(w) > 0 {
+	if w := e.validationWarnings(s, dv); len(w) > 0 {
 		b.Set("warnings", ojson.StringsValue(w))
 	}
 	return b.

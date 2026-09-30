@@ -24,6 +24,11 @@ type Engine struct {
 	// MaxResponseBytes bounds a single operation's serialized output
 	// (contracts §5.2, D9). Zero means the default 64 MiB.
 	MaxResponseBytes int
+
+	// noGraph turns off the D.2 dependency-graph additions (contracts
+	// §12). Test-only: the corpus comparators prove that a D.2 output
+	// differs from the D.2-off output only by the approved change.
+	noGraph bool
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.

@@ -82,6 +82,11 @@ func mutationErrorClass(err error) (string, bool) {
 		strings.HasPrefix(msg, "Plan file already exists"), strings.HasPrefix(msg, "Plan file destination is already owned"),
 		strings.HasPrefix(msg, "Workplan destination is claimed"), strings.HasPrefix(msg, "Ambiguous pending workplan"):
 		return "ownership_conflict", true
+	case strings.HasPrefix(msg, "Invalid dependency metadata"):
+		// D.2 (contracts §12): every dependency refusal (writes, phase
+		// replacement, compaction of an invalid sidecar) is a structure
+		// error; the message text is unchanged.
+		return "invalid_structure", true
 	case strings.HasPrefix(msg, "Refusing to replace handwritten"):
 		return "invalid_input", true
 	case strings.HasPrefix(msg, "Cannot move workplan link"), strings.HasPrefix(msg, "Cannot overwrite missing"),

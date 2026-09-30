@@ -10,6 +10,10 @@ item 7): the resume display-cap residual is accepted as a divergence
 five design changes to behaviour inherited from the reference (resume
 budgeting, filtered read slice, Markdown drift warning, status gate and
 patch issue list, doctor stray artifacts) are approved and implemented.
+D.2 owner decision (contracts §12, 2026-09-30): the dependency graph drives
+work (resume readiness and ranking, warn-only order checks, cancelled
+prerequisites, phase replacement against the graph, dependency write and
+view fixes, critical path X6); order checks never refuse.
 Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
 configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
@@ -541,7 +545,7 @@ against it.
    from the reference (known since stage C, §10a); the adapter's permission
    request therefore names Shiori's lock auxiliary paths.
 
-## Stage D.1 — approved design changes: DONE (uncommitted, for owner review)
+## Stage D.1 — approved design changes: DONE (committed `5c94cdb`)
 
 Base `4044539`. Nothing was committed. The pinned copy of `4044539` that
 the owner's OpenCode uses and everything under `~/.config/opencode` were
@@ -684,13 +688,172 @@ both with the `archive/` suggestion and changes nothing.
    give different resume, filtered-read and doctor output. Stage E's
    one-writer-per-root rule is unchanged.
 
+## Stage D.2 — dependency graph drives work: DONE (uncommitted, for owner review)
+
+Base `5c94cdb`. Nothing was committed. The pinned `vendor/shiori` copy
+(`5c94cdb`) that the owner's OpenCode uses and everything under
+`~/.config/opencode` were not touched. The decisions and exact behaviour are
+in [contracts §12](contracts.md#12-approved-design-changes-d2-approved-2026-09-30).
+Graph additions appear only with a valid dependency sidecar. Without one,
+every output is byte-identical to D.1.
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| G1 readiness | `checkpoint.current` and each `active-work` item: `readiness`, plus `unblocks` (ready) or `blockedBy[{phaseId, stepId, status}]` capped at the pinned-list cap, with `blockedByOmitted` (blocked) | `internal/engine/resume.go` (`readinessView`), `internal/index/graph.go` |
+| G2 order warnings | update that sets `in_progress`/`review`/`completed` with unmet prerequisites succeeds with `warnings`; validate, doctor plan entries and patch validation add non-failing `dependencies: Order warning: ...` | `internal/engine/graph.go` (`graphWarnings`, `statusChangeWarnings`), `update.go`, `validate.go` (`validationWarnings` is now an engine method), `doctor.go`, `patch.go` |
+| G3 cancelled prerequisites | open dependents of a cancelled step (plan or archived terminal summary) are flagged in validate/doctor/patch validation and in resume `safety.unverifiedWarnings` (placed before the unverified checkpoint lines) and `blockedBy` status; cancelling a step with open dependents warns in the update result | `graph.go`, `resume.go`, `index.Graph.Status` |
+| G4 phase replacement | `update {phases}` without `dependencies` re-validates the stored sidecar against the result during preparation; new dangling links are refused before authorization (`Invalid dependency metadata: ...; the phase replacement would leave these dependency links dangling...`) | `internal/engine/update.go` |
+| G5 small | empty `dependsOn` refused on write (warning on read); backward links warn (write result, validate, doctor); compaction preview `archivedPrerequisites`; inspect steps `prerequisites`/`dependents` (+ `readiness`/`unblocks`/`slack` for open steps) | `update.go`, `graph.go`, `compact.go`, `inspect.go` |
+| G6 critical path (X6) | transitive open-dependent counts; resume ranks ready work by `unblocks` (ties in plan order), then blocked work; `criticalPath{length, estimate?, steps, recommendation}` in inspect and doctor plan entries (≥2 open steps); optional numeric `estimate` step member weights it | `internal/index/graph.go` (`Graph`, `Critical`, `Slack`, `Unblocks`), `inspect.go`, `doctor.go` |
+| CLI | human output shows `[ready, unblocks N]` / `[blocked by ...]` and the critical path | `internal/cli/human.go` |
+
+### Vector expectations
+
+The oracle corpus is unchanged. `testdata/d2/expectations.json` pins the 11
+vectors whose output gains graph members: 6 resume (`full-valid`,
+`list-mixed/b-plan` at 4096/12000/64000), `tools/full-valid/{doctor,
+doctor-limit1, full-plan--doctor, full-plan--inspect}` and
+`tools/list-mixed/b-plan--inspect`. None of them overlaps a D.1 pin.
+`TestCorpusParity` runs every vector twice. The output with the graph
+additions turned off (`Engine.noGraph`, test-only) must pass exactly the
+check it passed at D.1: the oracle bytes, a D.1 pin or a declared
+divergence. The D.2 output must differ from it only by the approved
+members, which the comparator restates from the raw fixture JSON:
+readiness, `blockedBy` prefix and omitted count, `unblocks`, ranking,
+prerequisites/dependents, and a critical path of the restated maximum
+length along stored edges. A listed vector that stops differing, or an
+unlisted one that starts, fails. Re-pin after review with
+`SHIORI_D2_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
+
+| Category | Pass (oracle-exact) | Earlier approved divergence | D.1 divergence | D.2 divergence | Fail |
+| --- | --- | --- | --- | --- | --- |
+| tools (199) | 163 | 10 | 21 | 5 (3 doctor critical path, 2 inspect graph view) | 0 |
+| resume (87) | 77 | 0 | 4 | 6 (readiness) | 0 |
+| paging (74) | 43 | 0 | 31 | 0 | 0 |
+| mutations (70) | 62 | 7 | 1 | 0 | 0 |
+
+The CLI `--json` vector checks use the D.2 pins before the D.1 pins.
+
+### New tests
+
+- `internal/index/graph_test.go`: estimate weighting (including ignored
+  non-positive estimates), unblocks, slack, readiness through completed and
+  cancelled terminal summaries.
+- `internal/engine/d2_test.go`, on the D.1 synthetic 13-phase/38-step
+  roadmap with a 12-entry cross-phase graph (M1 p2–p5 → M2 p6–p9 → M3
+  p10–p12, invented content):
+  - `TestD2ResumeReadiness`: exact ranked order, `unblocks` 12/11, `blockedBy`.
+  - `TestD2ResumeBudgets`: 6 budgets × 2 limits paged to the end with the
+    D.1 invariants and the D.2 order. It logs D.2 against D.2-off page sizes.
+  - `TestD2OrderWarnings`: G2 (in_progress, review, completed) on
+    update/validate/doctor; `valid` unchanged.
+  - `TestD2CancelledPrerequisite`: G3, including cancelled and completed
+    terminal summaries.
+  - `TestD2PhaseReplacement`: G4 refusals (class `invalid_structure`)
+    before authorization (no bytes written) and the accepted cases.
+  - `TestD2DependencyWrites`: G5 (empty entry, backward link, inspect view,
+    compaction preview differs from D.2-off only by `archivedPrerequisites`).
+  - `TestD2CriticalPath`: path, slack, inspect/doctor agreement, no members
+    without a sidecar.
+- `TestResumeBudgetSweep` now also sweeps the graph roadmap and checks the
+  D.2 order on every page (33 budgets × 4 limits × 6 plans).
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1` per package with timeouts: all pass (engine
+  99 s).
+- `bun test` in `adapter/opencode`: 48 pass, 1 skip (opt-in runtime smoke).
+  The tool surface and registration are unchanged.
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+
+Budget on the synthetic graph roadmap (first page, D.2 against D.2-off): at
+64000/20000 the counts are the same (7 or 20, and 9); at 12000 it is 5
+against 6; at 8000/6000/4096 it is 1 against 1. Every page fits and keeps
+the D.1 minimums.
+
+Owner-plan evidence ran on fresh `cp -Rp` copies of the read-only fixture;
+nothing from it is in the repository. The pristine fixture's tree hash
+(paths, modes, mtimes, sizes and file bytes) was identical before and
+after. `5c94cdb` (D.1) and the working tree (D.2) were compared on the
+same copies:
+
+- **Unchanged without a sidecar.** On an unmodified copy, `resume` (12000,
+  6000, 4096), `validate`, `doctor`, `inspect --limit 500` and
+  `read --phase core-bot` are byte-identical between D.1 and D.2.
+- **12-entry graph** (synthetic, M1 core-bot/core-evidence → M2
+  workspace/authoring-ops/member-portal → M3 later-extension → release-ops),
+  written with `update --input '{"dependencies":[...]}'`: no warnings.
+  Resume page sizes D.1/D.2 are 6/6 at 12000, 1/1 at 6000 and 4096, and
+  20/20 at 64000. The current step `core-bot/context` is `ready, unblocks
+  11`. At 64000 the ranked page starts with `core-bot/reliability` and
+  `core-bot/staging` (unblocks 11 each), then ready steps with 0, then
+  blocked steps (`core-evidence/offline-proof` blocked by reliability and
+  staging). Inspect's critical path is `core-bot/reliability →
+  core-evidence/offline-proof → m1-stability → workspace/visual-contract →
+  m3e-pass → later-extension/nexon-feasibility → guide-publisher →
+  release-ops/roadmap-completion` (8 steps).
+- **offline-proof completed early:** the update succeeds with `Order
+  warning: step core-evidence/offline-proof was set to completed while its
+  prerequisites are not completed: core-bot/reliability (draft),
+  core-bot/staging (draft)...`. Validate stays `valid: true` with the
+  matching `dependencies: Order warning`, and doctor repeats it. The doctor
+  plan is `valid: false` only because the owner's checkpoint went stale with
+  the update, as in D.1.
+- **nexon-feasibility cancelled:** the update warns that
+  `later-extension/nexon-enrichment` and `guide-publisher` are now blocked
+  by a cancelled prerequisite. Validate and doctor flag both, and resume
+  lists both `Dependency order warning`s in the shown safety warnings. The
+  items carry `blockedBy[{... nexon-feasibility, status: "cancelled"}]`
+  (guide-publisher also `member-portal/member-reads (draft)`).
+- **Dropping later-extension via phase replacement:** refused (exit 1,
+  before the prompt) with the six dangling links listed
+  (`dependencies.8: Source step later-extension/nexon-feasibility does not
+  exist; ...`). The plan bytes are unchanged.
+- **Empty dependsOn:** refused with `Invalid dependency metadata:
+  dependencies.12.dependsOn: Dependency entry must list at least one
+  prerequisite`.
+- **Backward link** (`core-bot/context` depends on
+  `release-ops/metadata-docs`): accepted. The result and validate carry
+  `dependencies.12.dependsOn.0: Backward link: core-bot/context depends on
+  release-ops/metadata-docs, which comes later in plan order.`
+
+### Owner decisions on the D.2 review (2026-09-30)
+
+1. All dependency refusals (existing and G4/G5) have the error class
+   `invalid_structure` (was `internal`); message text unchanged
+   (`internal/engine/errclass.go`, contracts §12).
+2. G2 also warns when a step moves to `review` with unmet prerequisites
+   (update result, validate, doctor, patch validation).
+3. Current-step selection stays as in D.1 (a blocked current step is shown
+   as `blocked`).
+4. `estimate` stays an optional hand-edited step member (documented in
+   contracts §12 G6); no writer sets it.
+5. `workplan_reset` (draft) clearing phases without touching the sidecar is
+   left for D.3.
+
+After these, the validation above was re-run: gofmt, go vet (darwin and
+`GOOS=linux`), `go test -race -count=1` per package, adapter `bun test` and
+the static build all pass. No pinned vector changed (the oracle records
+error messages, not classes).
+
+### Remaining issues (D.2)
+
+1. **Budget cost.** On the synthetic graph roadmap the 12000 budget gives
+   5 items instead of 6 (the readiness members). All D.1 rules still hold.
+2. Mixed writers: the D.2 core and the reference TypeScript plugin now also
+   differ in resume/inspect/doctor/validate output and in the error class
+   of dependency refusals. Stage E's one-writer-per-root rule is unchanged.
+
 ## Resume after maintenance
 
 1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
    needed.
-2. Inspect `git status`. Stages A–D are committed (`fdadfd4`, `7a899e5`,
-   `9f66518`, `4044539`). D.1 exists only in the working tree until the
-   owner commits it. Preserve any user edits.
+2. Inspect `git status`. Stages A–D and D.1 are committed (`fdadfd4`,
+   `7a899e5`, `9f66518`, `4044539`, `5c94cdb`). D.2 exists only in the
+   working tree until the owner commits it. Preserve any user edits.
 3. If the oracle files change, the corpus is stale. Compare their sha256 against
    `testdata/MANIFEST.json` → `oracle.files`.
 

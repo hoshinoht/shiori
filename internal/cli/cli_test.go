@@ -49,21 +49,24 @@ func TestJSONOutputMatchesVectors(t *testing.T) {
 				t.Fatalf("CLI wrote: %v", d)
 			}
 			got := root.Normalize(strings.TrimSuffix(out, "\n"))
-			// D.1 (contracts §11) vectors are pinned in testdata/d1.
-			var d1 struct {
-				Vectors map[string]struct {
-					OutputSha256 string `json:"outputSha256"`
-				} `json:"vectors"`
-			}
-			testutil.ReadJSON(t, testutil.Testdata("d1", "expectations.json"), &d1)
-			if x, ok := d1.Vectors[strings.TrimSuffix(c.vector, ".json")]; ok {
-				if !root.SameLength() && strings.HasPrefix(c.vector, "resume/") {
-					t.Skip("budget-sensitive vector needs a generation-length root")
+			// D.1 (contracts §11) and D.2 (§12) vectors are pinned in
+			// testdata/d1 and testdata/d2; a D.2 pin is the final output.
+			for _, stage := range []string{"d2", "d1"} {
+				var pins struct {
+					Vectors map[string]struct {
+						OutputSha256 string `json:"outputSha256"`
+					} `json:"vectors"`
 				}
-				if sum := sha256hex(got); sum != x.OutputSha256 {
-					t.Fatalf("D.1 sha %s want %s", sum, x.OutputSha256)
+				testutil.ReadJSON(t, testutil.Testdata(stage, "expectations.json"), &pins)
+				if x, ok := pins.Vectors[strings.TrimSuffix(c.vector, ".json")]; ok {
+					if !root.SameLength() && strings.HasPrefix(c.vector, "resume/") {
+						t.Skip("budget-sensitive vector needs a generation-length root")
+					}
+					if sum := sha256hex(got); sum != x.OutputSha256 {
+						t.Fatalf("%s sha %s want %s", stage, sum, x.OutputSha256)
+					}
+					return
 				}
-				return
 			}
 			if v.Expect.OutputText != nil && got != *v.Expect.OutputText {
 				t.Fatalf("resume text differs")

@@ -107,16 +107,19 @@ func TestResumeBudgetSweep(t *testing.T) {
 		budgets = append(budgets, 4096+rng.Intn(64000-4096+1))
 	}
 	type target struct {
-		e  *Engine
-		id string
+		e     *Engine
+		id    string
+		graph bool // D.2: valid dependency sidecar
 	}
 	var targets []target
 	for _, fx := range []struct{ fixture, id string }{{"resume-stress", "stress-plan"}, {"large-paging", "big-plan"}, {"unicode", "unicode-plan"}, {"full-valid", "full-plan"}} {
 		root := testutil.NewRoot(t, fx.fixture)
-		targets = append(targets, target{mustEngine(t, root.Path), fx.id})
+		targets = append(targets, target{mustEngine(t, root.Path), fx.id, fx.id == "full-plan"})
 	}
 	re, _ := seedRoadmap(t)
-	targets = append(targets, target{re, "roadmap"})
+	targets = append(targets, target{re, "roadmap", false})
+	ge, _ := seedGraphRoadmap(t)
+	targets = append(targets, target{ge, "roadmap", true})
 	for _, fx := range targets {
 		e := fx.e
 		for _, b := range budgets {
@@ -139,6 +142,9 @@ func TestResumeBudgetSweep(t *testing.T) {
 						checkReadable(t, fmt.Sprintf("%s budget %d limit %d page %d", fx.id, b, limit, page), v)
 					}
 					checkTargetOrder(t, fmt.Sprintf("%s budget %d limit %d page %d", fx.id, b, limit, page), v, b, limit)
+					if fx.graph {
+						checkD2Order(t, fmt.Sprintf("%s (graph) budget %d limit %d page %d", fx.id, b, limit, page), v, resumeListCap(b))
+					}
 					seen += int(r)
 					next, _ := pg.Get("nextCursor")
 					if next.Kind() != ojson.String {

@@ -2,7 +2,9 @@ package engine
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -27,6 +29,48 @@ type currentView struct {
 	phaseID, phaseTitle, phaseStatus string
 	stepID, stepTitle, stepStatus    string
 	target, action, validation       *string
+	readiness                        readinessView
+}
+
+// readinessView is the D.2 readiness of an open step (contracts §12
+// G1/G6), shown only when the plan has a valid dependency sidecar.
+type readinessView struct {
+	shown     bool
+	ready     bool
+	blockedBy []index.Prereq // prerequisites not completed, stored order
+	unblocks  int            // open steps held up, transitively
+}
+
+func readinessOf(g *index.Graph, k index.StepKey) readinessView {
+	if g == nil {
+		return readinessView{}
+	}
+	unmet := g.Unmet(k)
+	return readinessView{shown: true, ready: len(unmet) == 0, blockedBy: unmet, unblocks: g.Unblocks(k)}
+}
+
+// set adds readiness members compactly: a ready step carries how many
+// open steps it unblocks, a blocked one its unmet prerequisites (ids and
+// status only, at most the pinned-list cap, with the omitted count).
+func (r readinessView) set(b *ojson.Builder, listCap int) {
+	if !r.shown {
+		return
+	}
+	if r.ready {
+		b.Set("readiness", ojson.StringValue("ready")).
+			Set("unblocks", ojson.IntValue(int64(r.unblocks)))
+		return
+	}
+	n := shown(len(r.blockedBy), listCap)
+	refs := make([]ojson.Value, n)
+	for i := 0; i < n; i++ {
+		refs[i] = stepRefStatus(r.blockedBy[i].Key, r.blockedBy[i].Status)
+	}
+	b.Set("readiness", ojson.StringValue("blocked")).
+		Set("blockedBy", ojson.ArrayValue(refs))
+	if o := len(r.blockedBy) - n; o > 0 {
+		b.Set("blockedByOmitted", ojson.IntValue(int64(o)))
+	}
 }
 
 type findingView struct {
@@ -42,6 +86,7 @@ type pageItem struct {
 	// active-work
 	phaseID, phaseTitle, phaseStatus, stepID, title, status string
 	target, action, validation                              *string
+	readiness                                               readinessView
 	// finding
 	finding findingView
 	// reference
@@ -183,6 +228,10 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 	m.freshness = cv.freshness
 	m.cpFresh = cv.freshness == FreshnessFresh
 	var warnings []string
+	// D.2 cancelled-prerequisite warnings go after the checkpoint issue
+	// (when there is one) and before the unverified checkpoint lines, so
+	// the pinned list cap does not hide current plan facts behind them.
+	d2At := 0
 	if cv.cp != nil {
 		sua := cv.cp.SourceUpdatedAt
 		m.sourceUpdatedAt = &sua
@@ -198,6 +247,7 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 			m.recentValidation = cv.cp.RecentValidation
 		} else {
 			warnings = append(warnings, cv.issue)
+			d2At = 1
 			for _, g := range cv.cp.Guardrails {
 				warnings = append(warnings, "Unverified checkpoint guardrail: "+g)
 			}
@@ -212,6 +262,7 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		d := cv.diagnostic
 		m.diagnostic = &d
 		warnings = append(warnings, d)
+		d2At = 1
 	}
 	if m.cpFresh {
 		m.instruction = instructionFresh
@@ -257,6 +308,27 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 			}
 		}
 	}
+	// D.2 (G1/G3/G6): readiness of the current step and the open items;
+	// open steps behind a cancelled prerequisite are flagged.
+	g := e.graph(ix, dv)
+	if g != nil {
+		if cur != nil {
+			m.current.readiness = readinessOf(g, *cur)
+		}
+		var d2 []string
+		for _, k := range g.Steps() {
+			st, _ := g.Status(k)
+			if !index.IsOpen(st) {
+				continue
+			}
+			if c := cancelledOf(g.Unmet(k)); len(c) > 0 {
+				d2 = append(d2, "Dependency order warning: "+strings.TrimPrefix(cancelledWarning(k, c), "dependencies: "))
+			}
+		}
+		if len(d2) > 0 {
+			warnings = append(warnings[:d2At:d2At], append(d2, warnings[d2At:]...)...)
+		}
+	}
 	m.warnings = warnings
 
 	// Findings.
@@ -291,8 +363,20 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 			m.items = append(m.items, pageItem{kind: "active-work",
 				phaseID: ph.ID, phaseTitle: ph.Title, phaseStatus: ph.Status,
 				stepID: st.ID, title: st.Title, status: st.Status,
-				target: st.Target, action: st.Action, validation: st.Validation})
+				target: st.Target, action: st.Action, validation: st.Validation,
+				readiness: readinessOf(g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})})
 		}
+	}
+	if g != nil {
+		// D.2 (G1/G6): ready work first, ranked by how many open steps it
+		// unblocks (ties keep plan order), then blocked work in plan order.
+		sort.SliceStable(m.items, func(i, j int) bool {
+			a, b := m.items[i].readiness, m.items[j].readiness
+			if a.ready != b.ready {
+				return a.ready
+			}
+			return a.ready && a.unblocks > b.unblocks
+		})
 	}
 	m.activeWorkTotal = activeFiltered
 	if cur != nil {
@@ -457,13 +541,15 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		current = ojson.NullValue()
 	} else {
 		c := m.current
-		current = ojson.NewObject(9).
+		cb := ojson.NewObject(12).
 			Set("phaseId", ojson.StringValue(c.phaseID)).
 			Set("phaseTitle", t.str("checkpoint.current.phaseTitle", c.phaseTitle, clsTitle, false)).
 			Set("phaseStatus", ojson.StringValue(c.phaseStatus)).
 			Set("stepId", ojson.StringValue(c.stepID)).
 			Set("stepTitle", t.str("checkpoint.current.stepTitle", c.stepTitle, clsTitle, false)).
-			Set("stepStatus", ojson.StringValue(c.stepStatus)).
+			Set("stepStatus", ojson.StringValue(c.stepStatus))
+		c.readiness.set(cb, L)
+		current = cb.
 			Set("target", t.ptr("checkpoint.current.target", c.target, clsPinned, false)).
 			Set("action", t.ptr("checkpoint.current.action", c.action, clsPinned, false)).
 			Set("validation", t.ptr("checkpoint.current.validation", c.validation, clsPinned, false)).Value()
@@ -548,14 +634,16 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		base := "page.items[" + strconv.Itoa(i) + "]"
 		switch it.kind {
 		case "active-work":
-			items = append(items, ojson.NewObject(10).
+			ib := ojson.NewObject(13).
 				Set("kind", ojson.StringValue(it.kind)).
 				Set("phaseId", ojson.StringValue(it.phaseID)).
 				Set("phaseTitle", t.str(base+".phaseTitle", it.phaseTitle, clsTitle, false)).
 				Set("phaseStatus", ojson.StringValue(it.phaseStatus)).
 				Set("stepId", ojson.StringValue(it.stepID)).
 				Set("title", t.str(base+".title", it.title, clsTitle, false)).
-				Set("status", ojson.StringValue(it.status)).
+				Set("status", ojson.StringValue(it.status))
+			it.readiness.set(ib, L)
+			items = append(items, ib.
 				Set("target", t.ptr(base+".target", it.target, clsLong, false)).
 				Set("action", t.ptr(base+".action", it.action, clsLong, false)).
 				Set("validation", t.ptr(base+".validation", it.validation, clsLong, false)).Value())

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -440,7 +441,7 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 		Set("noteIndexes", intsValue(cp.noteIdx)).
 		Set("resolvedFindingIndexes", intsValue(cp.findingIdx)).Value()
 	selected := compactSelected(cp)
-	return ojson.NewObject(17).
+	out := ojson.NewObject(18).
 		Set("mode", ojson.StringValue("preview")).
 		Set("workplanId", ojson.StringValue(s.ID)).
 		Set("confirmationRequiredForApply", ojson.StringValue(ConfirmArchive)).
@@ -451,7 +452,13 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).
 		Set("canonicalSelection", canonical).
-		Set("selected", selected).
+		Set("selected", selected)
+	// D.2 (G5): archived steps that remaining steps still depend on; apply
+	// keeps them as terminal summaries. Present only when there are any.
+	if ap := e.archivedPrerequisites(cp); len(ap) > 0 {
+		out.Set("archivedPrerequisites", ojson.ArrayValue(ap))
+	}
+	return out.
 		Set("removals", ojson.NewObject(4).
 			Set("digest", ojson.StringValue(cp.digest)).
 			Set("phaseCount", ojson.IntValue(int64(len(cp.phaseIDs)))).
@@ -467,6 +474,46 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 			Set("lockPaths", ojson.StringsValue(lockPaths)).
 			Set("stagingPaths", ojson.StringsValue(res.Staging)).
 			Set("resources", ojson.StringsValue(resources)).Value()).Value(), nil
+}
+
+// archivedPrerequisites lists each selected step with dependents that
+// stay in the plan (valid sidecar only), in selection order.
+func (e *Engine) archivedPrerequisites(cp *compactPlan) []ojson.Value {
+	if e.noGraph || len(cp.phases) == 0 {
+		return nil
+	}
+	ix := index.Build(cp.s.Plan)
+	g := e.graph(ix, e.dependencies(cp.s, ix))
+	if g == nil {
+		return nil
+	}
+	gone := map[index.StepKey]bool{}
+	for _, ph := range cp.phases {
+		for _, st := range ph.Steps {
+			gone[index.StepKey{PhaseID: ph.ID, StepID: st.ID}] = true
+		}
+	}
+	var out []ojson.Value
+	for _, ph := range cp.phases {
+		for _, st := range ph.Steps {
+			k := index.StepKey{PhaseID: ph.ID, StepID: st.ID}
+			var deps []ojson.Value
+			for _, d := range g.Dependents(k) {
+				if !gone[d] {
+					deps = append(deps, stepRefValue(d))
+				}
+			}
+			if len(deps) == 0 {
+				continue
+			}
+			out = append(out, ojson.NewObject(4).
+				Set("phaseId", ojson.StringValue(ph.ID)).
+				Set("stepId", ojson.StringValue(st.ID)).
+				Set("status", ojson.StringValue(st.Status)).
+				Set("dependents", ojson.ArrayValue(deps)).Value())
+		}
+	}
+	return out
 }
 
 func compactSelected(cp *compactPlan) ojson.Value {
