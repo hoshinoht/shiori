@@ -22,7 +22,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	if v, ok := data.Get("overwrite"); ok {
 		overwrite = v.Bool()
 	}
-	now := nowISO()
+	now := e.nowISO()
 	p := &model.Plan{SchemaVersion: ojson.IntValue(2), ID: id, HasSpecFiles: true, CreatedAt: now, UpdatedAt: now}
 	p.Kind = "general"
 	if k, ok := getStr(data, "kind"); ok && !model.Blank(k) {
@@ -69,6 +69,13 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	if err := statusGate(p.Status, p); err != nil {
 		return nil, err
 	}
+	// D.3.1 (contracts §14 item 1): every step created in a gated status
+	// must carry its own required structure.
+	if !e.noD31 {
+		if err := stepStatusGate(&model.Plan{}, p); err != nil {
+			return nil, err
+		}
+	}
 	explicitMD, hasMD := getStr(data, "planMarkdown")
 	replaceMD := false
 	if v, ok := data.Get("replaceMarkdown"); ok {
@@ -80,6 +87,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	var reads []storage.ReadEntry
 	var jsonBefore, mdBefore snapshot.Artifact
 	keepMD := false // D.3: an unreadable plan's existing Markdown is kept
+	var repair *snapshot.Unreadable
 	op := "create"
 	if !overwrite {
 		if jsonBefore, err = r.ReadFile(jsonRel); err != nil {
@@ -131,6 +139,13 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			if expected != nil && *expected != u.StateHash {
 				return nil, &StaleHashError{Current: u.StateHash}
 			}
+			// D.3.1 (contracts §14 item 2b): without an explicit planFile the
+			// repair keeps the link recovered from the damaged bytes.
+			if !planFileSet {
+				if rec := e.recoverPlanFile(id, u.JSON.Bytes); rec != "" {
+					p.PlanFile = rec
+				}
+			}
 			if mdBefore, err = r.ReadFile(p.PlanFile); err != nil {
 				return nil, err
 			}
@@ -143,6 +158,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 				keepMD = true
 			}
 			jsonBefore = u.JSON
+			repair = u
 			reads = readsOf(u.StateManifest)
 			mdRead := storage.ReadEntry{Rel: p.PlanFile, Missing: true}
 			if mdBefore.Exists {
@@ -176,14 +192,24 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		md = mdBefore.Bytes
 	} else if hasMD {
 		md = withNewline(explicitMD)
-	} else if md, err = model.RenderMarkdown(p); err != nil {
+	} else if md, err = e.render(p); err != nil {
 		return nil, err
 	}
 	tx := storage.NewUUID()
-	in := e.buildIntent(op, id, tx, []targetSpec{
+	targets := []targetSpec{
 		{rel: jsonRel, kind: "plan", before: jsonBefore.Bytes, beforeOK: jsonBefore.Exists, after: p.EncodeStored(), afterOK: true, forceWrite: true},
 		{rel: p.PlanFile, kind: "markdown", before: mdBefore.Bytes, beforeOK: mdBefore.Exists, after: md, afterOK: true},
-	}, reads)
+	}
+	archiveRel := ""
+	if repair != nil && !e.noD31 {
+		// D.3.1 (contracts §14 item 2a): the exact damaged bytes are
+		// archived first, in the same transaction.
+		var archive []byte
+		archiveRel, archive = e.repairArchive(id, repair, p.PlanFile, mdBefore, now)
+		targets = append([]targetSpec{{rel: archiveRel, kind: "archive", after: archive, afterOK: true}}, targets...)
+		reads = append(reads, storage.ReadEntry{Rel: archiveRel, Missing: true})
+	}
+	in := e.buildIntent(op, id, tx, targets, reads)
 	if err := e.checkTargetPaths(in); err != nil {
 		return nil, err
 	}
@@ -198,11 +224,15 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		if err != nil {
 			return Output{}, err
 		}
-		return Output{Value: ojson.NewObject(8).
+		b := ojson.NewObject(9).
 			Set("created", ojson.BoolValue(!overwrite)).
 			Set("overwritten", ojson.BoolValue(overwrite)).
 			Set("path", ojson.StringValue(e.absRel(jsonRel))).
-			Set("planPath", ojson.StringValue(e.absRel(p.PlanFile))).
+			Set("planPath", ojson.StringValue(e.absRel(p.PlanFile)))
+		if archiveRel != "" {
+			b.Set("archivePath", ojson.StringValue(e.absRel(archiveRel))) // D.3.1 repair archive
+		}
+		return Output{Value: b.
 			Set("workplan", post.Plan.Summary()).
 			Set("planHash", ojson.StringValue(post.PlanHash)).
 			Set("stateHash", ojson.StringValue(post.StateHash)).
@@ -225,8 +255,9 @@ func optHash(data ojson.Value) *string {
 }
 
 // generatedMarkdown reports whether the stored Markdown byte-equals the
-// rendering of the stored plan. Ids that cannot render are reported with
-// field paths (D7).
+// rendering of the stored plan, in the current or the legacy (pre-D.3.1)
+// finding style. Ids that cannot render are reported with field paths
+// (D7).
 func (e *Engine) generatedMarkdown(s *snapshot.Snapshot) (bool, error) {
 	if !s.Markdown.Exists {
 		return false, nil
@@ -234,11 +265,7 @@ func (e *Engine) generatedMarkdown(s *snapshot.Snapshot) (bool, error) {
 	if err := d7Check(s.Plan); err != nil {
 		return false, err
 	}
-	out, err := model.RenderMarkdown(s.Plan)
-	if err != nil {
-		return false, err
-	}
-	return string(out) == string(s.Markdown.Bytes), nil
+	return e.isGenerated(s.Plan, s.Markdown.Bytes)
 }
 
 // checkTargetPaths refuses targets that escape the root through symlinks

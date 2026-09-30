@@ -121,6 +121,7 @@ type resumeModel struct {
 	depsRecorded        bool
 	depsValid           bool
 	currentDeps         []model.StepRef
+	critical            *criticalView // D.3.1 compact critical path
 	high                []findingView
 	highCounts          [3]int
 	warnings            []string
@@ -135,6 +136,14 @@ type resumeModel struct {
 	historicalNotes     int
 	resolvedFindings    int
 	instruction         string
+}
+
+// criticalView is resume's compact critical path (D.3.1, contracts §14
+// item 4): its length and the first open step on it. The full path stays
+// in workplan_inspect and workplan_doctor.
+type criticalView struct {
+	length int
+	next   index.StepKey
 }
 
 // resumeParams is one degradation level. Caps are UTF-16 code units
@@ -248,6 +257,12 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		} else {
 			warnings = append(warnings, cv.issue)
 			d2At = 1
+			// D.3.1 (contracts §14 item 3): a stale checkpoint names what
+			// changed, compactly (the doctor issue has the full detail).
+			if cv.freshness == FreshnessStale && !e.noD31 {
+				d := staleDiagnostic(cv.staleChanged)
+				m.diagnostic = &d
+			}
 			for _, g := range cv.cp.Guardrails {
 				warnings = append(warnings, "Unverified checkpoint guardrail: "+g)
 			}
@@ -327,6 +342,18 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		}
 		if len(d2) > 0 {
 			warnings = append(warnings[:d2At:d2At], append(d2, warnings[d2At:]...)...)
+		}
+		// D.3.1 (contracts §14 item 4): the critical path's length and the
+		// first open step on it, when it chains at least two open steps.
+		if !e.noD31 {
+			if cp := g.Critical(); len(cp.Steps) >= 2 {
+				for _, k := range cp.Steps {
+					if st, _ := g.Status(k); index.IsOpen(st) {
+						m.critical = &criticalView{length: len(cp.Steps), next: k}
+						break
+					}
+				}
+			}
 		}
 	}
 	m.warnings = warnings
@@ -601,6 +628,14 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("valid", ojson.BoolValue(m.depsValid)).
 		Set("total", ojson.IntValue(int64(len(m.currentDeps)))).
 		Set("references", ojson.ArrayValue(depRefs)).Value()
+	var criticalPath ojson.Value
+	if m.critical != nil {
+		criticalPath = ojson.NewObject(2).
+			Set("length", ojson.IntValue(int64(m.critical.length))).
+			Set("nextStep", ojson.NewObject(2).
+				Set("phaseId", ojson.StringValue(m.critical.next.PhaseID)).
+				Set("stepId", ojson.StringValue(m.critical.next.StepID)).Value()).Value()
+	}
 
 	high := make([]ojson.Value, 0, shown(len(m.high), L))
 	for i := 0; i < shown(len(m.high), L); i++ {
@@ -715,7 +750,7 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		listed = listed[:pathCap]
 	}
 
-	return ojson.NewObject(15).
+	out := ojson.NewObject(16).
 		Set("path", pathV).
 		Set("planFile", planFileV).
 		Set("hashes", ojson.NewObject(2).
@@ -724,7 +759,11 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("planFresh", ojson.BoolValue(m.planFresh)).
 		Set("checkpoint", checkpoint).
 		Set("workplan", workplan).
-		Set("currentDependencies", currentDependencies).
+		Set("currentDependencies", currentDependencies)
+	if m.critical != nil {
+		out.Set("criticalPath", criticalPath)
+	}
+	return out.
 		Set("safety", safety).
 		Set("page", page).
 		Set("counts", ojson.NewObject(6).
@@ -813,8 +852,24 @@ func resumeTargetPage(maxChars, limit int) int {
 }
 
 // chooseResume applies the budget policy: the first degradation level
-// whose complete text fits maxChars (UTF-16 code units).
+// whose complete text fits maxChars (UTF-16 code units). The D.3.1
+// critical path is advisory (the full path stays in inspect and doctor),
+// so it is dropped before any text goes below the D.1 minimums.
 func chooseResume(m *resumeModel) (ojson.Value, string, error) {
+	if v, text, ok := chooseResumeLevels(m); ok {
+		return v, text, nil
+	}
+	if m.critical != nil {
+		m.critical = nil
+		if v, text, ok := chooseResumeLevels(m); ok {
+			return v, text, nil
+		}
+	}
+	return chooseResumeEmergency(m)
+}
+
+// chooseResumeLevels tries the readable levels (steps 1 and 2).
+func chooseResumeLevels(m *resumeModel) (ojson.Value, string, bool) {
 	L := resumeListCap(m.maxChars)
 	remaining := len(m.items) - m.offset
 	if remaining < 0 {
@@ -875,7 +930,7 @@ func chooseResume(m *resumeModel) (ojson.Value, string, error) {
 			for _, compact := range []bool{false, true} {
 				base.compact = compact
 				if v, b, ok := try(base); ok {
-					return v, string(b), nil
+					return v, string(b), true
 				}
 			}
 			continue
@@ -900,7 +955,24 @@ func chooseResume(m *resumeModel) (ojson.Value, string, error) {
 			base.items, base.compact = nC, true
 		}
 		v, b := m.render(base)
-		return v, string(b), nil
+		return v, string(b), true
+	}
+	return ojson.Value{}, "", false
+}
+
+// chooseResumeEmergency applies the emergency caps (steps 3 and 4).
+func chooseResumeEmergency(m *resumeModel) (ojson.Value, string, error) {
+	remaining := len(m.items) - m.offset
+	if remaining < 0 {
+		remaining = 0
+	}
+	maxN := m.limit
+	if maxN > remaining {
+		maxN = remaining
+	}
+	try := func(pr resumeParams) (ojson.Value, []byte, bool) {
+		v, b := m.render(pr)
+		return v, b, ojson.UTF16LenBytes(b) <= m.maxChars
 	}
 	one := maxN
 	if one > 1 {

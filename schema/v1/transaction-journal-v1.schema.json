@@ -8,7 +8,7 @@
     "schemaVersion": { "const": 1 },
     "transactionId": { "$ref": "common.schema.json#/$defs/nonblank", "description": "Random UUID in the reference implementation. Not authority." },
     "workplanId": { "$ref": "common.schema.json#/$defs/nonblank" },
-    "operation": { "$ref": "common.schema.json#/$defs/nonblank", "description": "Reference values: create, create:overwrite, update, patch, reset:draft, reset:markdown-only, checkpoint, compact:apply; D.3 adds reset:wipe (plan, Markdown, archive, checkpoint and dependency targets; sidecars may be deleted) and lets reset:draft delete the checkpoint; recovery uses the operation label recovery:resume or recovery:rollback for its own authorization intent. An operation string never grants authority beyond what journal validation proves." },
+    "operation": { "$ref": "common.schema.json#/$defs/nonblank", "description": "Reference values: create, create:overwrite, update, patch, reset:draft, reset:markdown-only, checkpoint, compact:apply; D.3 adds reset:wipe (plan, Markdown, archive, checkpoint and dependency targets; sidecars may be deleted) and lets reset:draft delete the checkpoint; D.3.1 lets create:overwrite of an unreadable plan add an archive target (the damaged bytes); recovery uses the operation label recovery:resume or recovery:rollback for its own authorization intent. An operation string never grants authority beyond what journal validation proves." },
     "createdAt": { "type": "string" },
     "targets": {
       "type": "array",

@@ -307,7 +307,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		if len(issues) > 0 {
 			return nil, errors.New("Invalid dependency metadata: " + strings.Join(issues, "; "))
 		}
-		d.UpdatedAt = nowISO()
+		d.UpdatedAt = e.nowISO()
 		depsAfter = model.EncodeDependencies(d)
 		depsFinal = d
 	} else if s.Dependencies.Exists {
@@ -345,9 +345,16 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			warnings = statusChangeWarnings(old, g)
 		}
 	}
-	p.UpdatedAt = nowISO()
+	p.UpdatedAt = e.nowISO()
 	if v, ok := statusUpdate(data); ok {
 		if err := statusGate(v, p); err != nil {
+			return nil, err
+		}
+	}
+	// D.3.1 (contracts §14 item 1): steps this call moves to a gated
+	// status must carry their own required structure.
+	if !e.noD31 {
+		if err := stepStatusGate(old, p); err != nil {
 			return nil, err
 		}
 	}
@@ -381,7 +388,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			return nil, errors.New("Cannot move workplan link because source Markdown is missing; supply a nonblank planMarkdown explicitly")
 		}
 		if gen {
-			if mdAfter, err = model.RenderMarkdown(p); err != nil {
+			if mdAfter, err = e.render(p); err != nil {
 				return nil, err
 			}
 		} else {
@@ -389,7 +396,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		}
 		mdWrite = true
 	} else if gen {
-		if mdAfter, err = model.RenderMarkdown(p); err != nil {
+		if mdAfter, err = e.render(p); err != nil {
 			return nil, err
 		}
 		mdWrite = true

@@ -417,7 +417,7 @@ func TestD2DependencyWrites(t *testing.T) {
 	root := testutil.NewRoot(t, "empty-workspace")
 	e := mustEngine(t, root.Path)
 	mustMutate(t, e, "workplan_create", `{"id":"dw","goal":"g","phases":[
-		{"id":"a","title":"A","status":"completed","steps":[{"id":"a1","title":"A1","status":"completed"},{"id":"a2","title":"A2","status":"completed"}]},
+		{"id":"a","title":"A","status":"completed","steps":[{"id":"a1","title":"A1","action":"x","validation":"y","status":"completed"},{"id":"a2","title":"A2","action":"x","validation":"y","status":"completed"}]},
 		{"id":"b","title":"B","steps":[{"id":"b1","title":"B1"},{"id":"b2","title":"B2"}]}]}`)
 	p, _ := ojson.Parse([]byte(`{"id":"dw","dependencies":[{"phaseId":"b","stepId":"b1","dependsOn":[]}]}`))
 	auth := &countingAuth{}

@@ -208,6 +208,8 @@ func TestCorpusParity(t *testing.T) {
 	t.Logf("D.2 listed vectors: %s", d1Summary(d2Expectations(t)))
 	d3Write(t, "tools/", "resume/", "paging/")
 	t.Logf("D.3 listed vectors: %s", d1Summary(d3Expectations(t)))
+	d31Write(t, "tools/", "resume/", "paging/")
+	t.Logf("D.3.1 listed vectors: %s", d1Summary(d31Expectations(t)))
 }
 
 func runVector(t *testing.T, v *vector) (outcome, string) {
@@ -239,6 +241,33 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 		}
 		os.WriteFile(filepath.Join(dir, name+".out"), []byte(body), 0o644)
 	}
+	// D.3.1 (contracts §14): a vector whose output changes with the D.3.1
+	// additions is judged in two steps, like D.2/D.3. The D.3.1-off output
+	// must pass every earlier check unchanged, and the D.3.1 output must
+	// differ from it only by the approved change.
+	if runErr == nil {
+		off31 := *e
+		off31.noD31 = true
+		off31Text, off31Err := runTool(t, &off31, v.Call.Tool, input.Value)
+		if off31Err != nil {
+			t.Fatalf("D.3.1-off run failed: %v", off31Err)
+		}
+		if d31Candidate(t, v, text, off31Text) {
+			_, note := judgeD3(t, v, root, &off31, input.Value, off31Text, nil)
+			d31note := checkD31(t, v, root, e, text, off31Text)
+			if note != "" {
+				d31note += " (D.3.1-off: " + note + ")"
+			}
+			return outDivergence, d31note
+		}
+	}
+	return judgeD3(t, v, root, e, input.Value, text, runErr)
+}
+
+// judgeD3 is the D.3 split followed by the D.2 and earlier checks, for an
+// engine that may have the D.3.1 changes turned off.
+func judgeD3(t *testing.T, v *vector, root testutil.Root, e *Engine, input ojson.Value, text string, runErr error) (outcome, string) {
+	t.Helper()
 	// D.3 (contracts §13): a vector whose output changes with the D.3
 	// read-path additions is judged in two steps, like D.2. The D.3-off
 	// output must pass every earlier check (oracle, D.1/D.2 pins,
@@ -247,12 +276,12 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 	if runErr == nil {
 		off3 := *e
 		off3.noD3 = true
-		off3Text, off3Err := runTool(t, &off3, v.Call.Tool, input.Value)
+		off3Text, off3Err := runTool(t, &off3, v.Call.Tool, input)
 		if off3Err != nil {
 			t.Fatalf("D.3-off run failed: %v", off3Err)
 		}
 		if d3Candidate(t, v, text, off3Text) {
-			_, note := judgeGraph(t, v, root, &off3, input.Value, off3Text, nil)
+			_, note := judgeGraph(t, v, root, &off3, input, off3Text, nil)
 			d3note := checkD3(t, v, root, text, off3Text)
 			if note != "" {
 				d3note += " (D.3-off: " + note + ")"
@@ -260,7 +289,7 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 			return outDivergence, d3note
 		}
 	}
-	return judgeGraph(t, v, root, e, input.Value, text, runErr)
+	return judgeGraph(t, v, root, e, input, text, runErr)
 }
 
 // judgeGraph is the D.2 split followed by the oracle/D.1/divergence

@@ -487,3 +487,82 @@ func statusGate(status string, p *model.Plan) error {
 	}
 	return &StatusGateError{Status: status, Issues: issues}
 }
+
+// StepStatusGateError is the D.3.1 step-level status gate refusal
+// (contracts §14 item 1): an update may not set a step to in_progress,
+// review or completed while that step fails the per-step structure rules
+// (spec 01 §3: id, title, action, validation); create applies the same
+// rule to every step it creates. draft, blocked and cancelled stay
+// allowed; completing the fields in the same call is accepted.
+type StepStatusGateError struct {
+	Steps  []string // "<phaseId>/<stepId> -> <status>"
+	Issues []model.Issue
+}
+
+func (e *StepStatusGateError) Error() string {
+	return "Refusing to set step status while the step's executable structure is incomplete: " + strings.Join(e.Steps, ", ") +
+		". Missing: " + model.JoinIssues(e.Issues) +
+		". Complete the listed fields first (or in the same update); draft, blocked and cancelled are allowed with incomplete structure."
+}
+
+// StructuredIssues exposes the field-path issues to the CLI and protocol.
+func (e *StepStatusGateError) StructuredIssues() []model.Issue { return e.Issues }
+
+// stepStatusGate checks every step of the resulting plan whose gated
+// status this call set: a step that is new (by phase and step id) or whose
+// status changed to in_progress, review or completed. Steps whose gated
+// status is unchanged are not re-checked, so an existing plan stays
+// editable and repairable.
+func stepStatusGate(old, p *model.Plan) error {
+	before := map[[2]string]string{}
+	for i := range old.Phases {
+		for j := range old.Phases[i].Steps {
+			k := [2]string{old.Phases[i].ID, old.Phases[i].Steps[j].ID}
+			if _, ok := before[k]; !ok {
+				before[k] = old.Phases[i].Steps[j].Status
+			}
+		}
+	}
+	set := map[string]string{} // path prefix -> step label
+	var order []string
+	for i := range p.Phases {
+		for j := range p.Phases[i].Steps {
+			st := &p.Phases[i].Steps[j]
+			if !gatedStatuses[st.Status] {
+				continue
+			}
+			if prev, ok := before[[2]string{p.Phases[i].ID, st.ID}]; ok && prev == st.Status {
+				continue
+			}
+			prefix := "phases." + strconv.Itoa(i) + ".steps." + strconv.Itoa(j) + "."
+			set[prefix] = p.Phases[i].ID + "/" + st.ID + " -> " + st.Status
+			order = append(order, prefix)
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	id := p.ID
+	var issues []model.Issue
+	failed := map[string]bool{}
+	for _, s := range model.ValidateStructure(p, &id) {
+		path, msg, _ := strings.Cut(s, ": ")
+		for prefix := range set {
+			if strings.HasPrefix(path, prefix) {
+				issues = append(issues, model.Issue{Path: []string{path}, Message: msg})
+				failed[prefix] = true
+				break
+			}
+		}
+	}
+	if len(issues) == 0 {
+		return nil
+	}
+	var steps []string
+	for _, prefix := range order {
+		if failed[prefix] {
+			steps = append(steps, set[prefix])
+		}
+	}
+	return &StepStatusGateError{Steps: steps, Issues: issues}
+}

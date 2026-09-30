@@ -131,7 +131,34 @@ func finalize(p *Prepared) *Prepared {
 // Clock is the engine's time source (tests freeze it).
 var Clock = func() time.Time { return time.Now() }
 
-func nowISO() string { return Clock().UTC().Format("2006-01-02T15:04:05.000Z") }
+// nowISO is the timestamp new writes record: whole-second UTC
+// ("2006-01-02T15:04:05Z", D.3.1, contracts §14 item 5b). Readers keep
+// accepting milliseconds and every other isoDatetimeUtc form.
+func (e *Engine) nowISO() string {
+	if e.noD31 {
+		return Clock().UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	return Clock().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05Z")
+}
+
+// render is the generated Markdown of a plan (the legacy finding style in
+// the test-only D.3.1-off engine).
+func (e *Engine) render(p *model.Plan) ([]byte, error) {
+	if e.noD31 {
+		return model.RenderMarkdownLegacy(p)
+	}
+	return model.RenderMarkdown(p)
+}
+
+// isGenerated reports whether md is the generated rendering of p. Both
+// the current and the legacy (pre-D.3.1) finding style count.
+func (e *Engine) isGenerated(p *model.Plan, md []byte) (bool, error) {
+	if e.noD31 {
+		out, err := model.RenderMarkdownLegacy(p)
+		return err == nil && string(out) == string(md), err
+	}
+	return model.IsGeneratedMarkdown(p, md)
+}
 
 // errPendingJournal is the reference refusal for a plan with a journal.
 func (e *Engine) errPendingJournal(id string) error {
@@ -165,7 +192,7 @@ func (e *Engine) loadForMutation(raw string, expected *string) (*snapshot.Snapsh
 	}
 	s, err := e.load(id)
 	if err != nil {
-		return nil, err
+		return nil, e.repairHint(id, err) // D.3.1 item 2c
 	}
 	if s.Journal.Exists {
 		return nil, e.errPendingJournal(id)
@@ -243,7 +270,7 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		WorkplanID:    id,
 		Root:          e.Root,
 		TransactionID: tx,
-		CreatedAt:     nowISO(),
+		CreatedAt:     e.nowISO(),
 		Reads:         reads,
 		JournalRel:    journalRel(id),
 		JournalStage:  storage.JournalStagePath(snapshot.WorkplanDir, id, tx),

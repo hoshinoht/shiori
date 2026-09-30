@@ -43,7 +43,7 @@ func (e *ExternalEditError) Error() string {
 
 var operationKinds = map[string]map[string]bool{
 	"create":              {"plan": true, "markdown": true},
-	"create:overwrite":    {"plan": true, "markdown": true},
+	"create:overwrite":    {"plan": true, "markdown": true, "archive": true}, // D.3.1: repair archive
 	"update":              {"plan": true, "markdown": true, "dependencies": true},
 	"patch":               {"markdown": true},
 	"reset:draft":         {"plan": true, "markdown": true, "checkpoint": true},
@@ -316,7 +316,7 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 		WorkplanID:    id,
 		Root:          e.Root,
 		TransactionID: j.TransactionID,
-		CreatedAt:     nowISO(),
+		CreatedAt:     e.nowISO(),
 		JournalRel:    journalRel(id),
 		Recovery:      mode,
 		JournalBytes:  jbytes,

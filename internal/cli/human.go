@@ -146,6 +146,12 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		}
 		cp := get(v, "checkpoint")
 		fmt.Fprintf(w, "%s  checkpoint: %s  stateHash: %s\n", str(get(v, "workplan", "id")), str(get(cp, "freshness")), str(get(v, "hashes", "stateHash")))
+		if d := get(cp, "diagnostic"); d.Kind() == ojson.String {
+			fmt.Fprintf(w, "stale:     %s\n", oneLine(d.Str(), 240))
+		}
+		if c := get(v, "criticalPath"); c.Kind() == ojson.Object {
+			fmt.Fprintf(w, "critical:  %s steps, next %s/%s\n", str(get(c, "length")), str(get(c, "nextStep", "phaseId")), str(get(c, "nextStep", "stepId")))
+		}
 		if cur := get(cp, "current"); cur.Kind() == ojson.Object {
 			fmt.Fprintf(w, "current:   %s/%s  %s [%s]%s\n", str(get(cur, "phaseId")), str(get(cur, "stepId")), str(get(cur, "stepTitle")), str(get(cur, "stepStatus")), graphNote(cur))
 		}
@@ -194,6 +200,9 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 				fmt.Fprintf(w, "      warning: %s\n", x.Str())
 			}
 			criticalPath(w, get(p, "criticalPath"), "      ")
+			if pf := get(p, "recoveredPlanFile"); pf.Kind() == ojson.String {
+				fmt.Fprintf(w, "      recovered planFile %s (kept by create --overwrite unless --plan-file is given)\n", pf.Str())
+			}
 		}
 		for _, l := range get(v, "locks").Elems() {
 			fmt.Fprintf(w, "  lock %s  %s\n", str(get(l, "path")), str(get(l, "diagnostic")))

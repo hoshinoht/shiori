@@ -19,6 +19,11 @@ D.3 owner decision (contracts §13, 2026-09-30): safety and robustness fixes
 unreadable plans; stale Markdown copies; missing step markers; stale
 checkpoint detail, readable ids, spec existence, list issues, note limit,
 file modes; SIGKILL recovery; unverified-host degradation).
+D.3.1 owner decision (contracts §14, 2026-09-30): step status gate, repair
+archive and recovered planFile for unparseable plans with a repair hint on
+writers, compact stale diagnostic and critical path in resume, wiped-plan
+doctor note, finding rendering `title (status)` and whole-second
+timestamps (both renderings are detected as generated).
 Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
 configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
@@ -852,7 +857,7 @@ error messages, not classes).
    differ in resume/inspect/doctor/validate output and in the error class
    of dependency refusals. Stage E's one-writer-per-root rule is unchanged.
 
-## Stage D.3 — safety and robustness: DONE (uncommitted, for owner review)
+## Stage D.3 — safety and robustness: DONE (committed `83a3414`)
 
 Base `e47e667`. Nothing was committed. The pinned `vendor/shiori` copy
 (`e47e667`) that the owner's OpenCode uses and everything under
@@ -997,13 +1002,182 @@ after. Before is `e47e667`, after is the working tree.
    also differ in reset semantics, list shape and doctor output. Stage E's
    one-writer-per-root rule is unchanged.
 
+## Stage D.3.1 — third live-testing round: DONE (uncommitted, for owner review)
+
+Base `83a3414`. Nothing was committed. The pinned `vendor/shiori` copy
+(`83a3414`) that the owner's OpenCode uses and everything under
+`~/.config/opencode` were not touched. The decisions and exact behaviour
+are in [contracts §14](contracts.md#14-approved-design-changes-d31-approved-2026-09-30).
+No tool input schema or registration changed.
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| 1 step gate | update (and create, for the steps it creates) refuses to move a step to `in_progress`/`review`/`completed` (new step, or status changed by any edit) while that step fails its spec 01 §3 rules; before authorization, class `invalid_structure`, field-path `issues` (CLI `--json`, protocol); same-call completion accepted; unchanged gated steps not re-checked | `internal/engine/planedit.go` (`stepStatusGate`, `StepStatusGateError`), `update.go`, `errclass.go`, `internal/cli/cli.go`, `internal/protocol/server.go` |
+| 2a repair archive | `create --overwrite` of an unreadable plan publishes `archive/<id>/state-<stateHash:12>-<rawSha:12>.json` (0600) first in the same `create:overwrite` transaction: exact damaged bytes (string, or base64 when not UTF-8) plus Markdown and sidecars; result `archivePath`; recovery accepts the archive target | `internal/engine/repair.go`, `create.go`, `recovery.go`, journal schema description |
+| 2b recovered link | doctor `recoveredPlanFile` from a tolerant raw scan (single value, plan-file policy, not another plan's link); the repair keeps that Markdown path unless `planFile` is given | `repair.go` (`recoverPlanFile`), `doctor.go`, `create.go`, CLI human output |
+| 2c repair hint | update/patch/reset/checkpoint/compact apply on an unreadable plan name `workplan_create overwrite=true and expectedHash=<stateHash>`; class unchanged | `repair.go` (`UnreadablePlanError`), `mutate.go`, `compact.go` |
+| 3 stale diagnostic | resume `checkpoint.diagnostic` = `changed: <path>[, …] [+N more]` (≤3 paths, ≤240 units) for a stale v2 checkpoint | `engine.go` (`staleDiagnostic`), `resume.go` |
+| 4 critical path | resume `criticalPath {length, nextStep}` with a valid sidecar and ≥2 open steps; dropped before any text would go below the D.1 minimums | `resume.go` (`criticalView`, `chooseResume` split into levels/emergency) |
+| 5a wiped note | doctor warning for an empty draft plan with a `reset:wipe` archive; validate unchanged | `doctor.go` (`wipedNote`) |
+| 5b cosmetics | findings render `title (status)`; generated detection accepts old and new renderings everywhere; new writes whole-second UTC | `internal/model/markdown.go` (`RenderMarkdownLegacy`, `IsGeneratedMarkdown`), `engine/mutate.go` (`nowISO`, `render`, `isGenerated`), `create.go`, `update.go`, `reset.go`, `compact.go`, `validate.go`, `read.go` |
+
+### Vector expectations
+
+The oracle corpus is unchanged. Every vector runs with the D.3.1 changes
+off (`Engine.noD31`), which passes every earlier check unchanged, and on;
+a difference must be pinned in `testdata/d3_1/expectations.json` and pass
+the D.3.1 comparator (contracts §14). `SHIORI_D31_UPDATE=1 go test
+./internal/engine ./internal/model` re-pins (run the packages one at a
+time; each rewrites only its own prefixes).
+
+| Category | Pass (oracle-exact) | Earlier approved | D.1 | D.2 | D.3 | D.3.1 | Fail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| tools (199) | 149 | 9 | 16 | 5 | 20 (3 also D.3.1) | 3 (2b recovered planFile, doctor) | 0 |
+| resume (87) | 74 | 0 | 4 | 6 (3 also D.3.1) | 0 | 6 (3 stale diagnostic, 3 critical path) | 0 |
+| paging (74) | 43 | 0 | 31 | 0 | 0 | 0 | 0 |
+| mutations (70) | 56 (D.3.1-off) | 7 | 1 | 0 | 6 | 17 (5b; 7 also refresh generated Markdown) | 0 |
+| mutating input (39) | 37 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Markdown render (13) | 12 | 0 | 0 | 0 | 0 | 1 (`finding-permutations`) | 0 |
+
+The D.3.1 columns overlap the earlier ones: a D.3.1 vector's D.3.1-off
+output is still judged by its earlier check (for example the three doctor
+vectors are D.3 raw-hash vectors, the critical-path resume vectors are D.2
+readiness vectors). `mutations/update-dependencies-empty-replace` now also
+writes the plan JSON (its stored `updatedAt` was the frozen clock in the
+millisecond form, so the D.3.1-off write left the bytes unchanged) and
+refreshes the old-rendering Markdown. No vector exercises item 1 or 2c.
+
+### New tests
+
+- `d3_1_test.go`: `TestD31StepStatusGate` (all three gated statuses,
+  paths, no write, allowed statuses, same-call completion, addSteps /
+  addPhases / phases replacement, unchanged gated step editable),
+  `TestD31UnreadableRepair` (recovered link, hint on update/reset/
+  checkpoint, archive bytes/mode/layout, base64 for non-UTF-8, explicit
+  `planFile` wins, ambiguous/unsafe/missing members and another plan's
+  link give nothing),
+  `TestD31ResumeStaleDiagnostic` (one path, `+N more`, cap, legacy null),
+  `TestD31ResumeCriticalPath` (agrees with inspect; byte-identical without
+  a sidecar on three fixtures), `TestD31ResumeBudget` (4096–16000, three
+  limits: fits, diagnostic present, critical path never kept below the
+  minimums; fails without the drop), `TestD31WipedNote`,
+  `TestD31LegacyGeneratedMarkdown` (old rendering: generated, no drift
+  warning, update and markdown-only refresh it; a real hand edit is still
+  handwritten), `TestD31Timestamps`.
+- `internal/model`: `TestMarkdownVectors` checks the legacy rendering
+  against the oracle and the D.3.1 rendering against it, and that both
+  are detected as generated.
+- CLI `TestStepStatusGateCLI`, `TestCreateStepStatusGateCLI`; protocol
+  `TestStepStatusGateIssues`. `TestD31StepStatusGate` also covers create.
+- `TestFaultInjection` `create-overwrite-unreadable` now includes the
+  archive target at every fault point.
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1` per package: all pass (see the run log in the
+  handoff).
+- `bun test` in `adapter/opencode`: 49 pass, 1 skip (opt-in runtime
+  smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+
+Owner-plan evidence ran on fresh `cp -Rp` copies of the read-only fixture
+(`chmod -R u+w` on the copy); nothing from it is in the repository. The
+pristine fixture's paths, modes, mtimes, sizes and bytes were identical
+before and after. Before is `83a3414` (D.3), after is the working tree.
+
+- **Unmodified copy:** resume (12000/6000/4096), validate, doctor,
+  `inspect --limit 500` and `read --phase core-bot` are byte-identical
+  between D.3 and D.3.1 (fresh checkpoint, no sidecar, handwritten
+  Markdown).
+- **Step gate:** after adding a draft step with an action but no
+  validation, `updateSteps … in_progress` is refused (exit 1,
+  `invalid_structure`, `issues[{path: "phases.6.steps.7.validation"}]`,
+  plan bytes unchanged); D.3 accepts the same update. `blocked` is
+  accepted, and `in_progress` plus `validation` in the same call is
+  accepted.
+- **Unreadable plan with a moved link** (`planFile` moved to
+  `.opencode/workplan/roadmap/kanade-v5.md`, JSON cut in half): D.3.1
+  doctor reports `recoveredPlanFile: .opencode/workplan/roadmap/kanade-v5.md`;
+  update is refused with the repair hint naming the doctor state hash;
+  `create --overwrite --expected-hash <that hash>` relinks the handwritten
+  `roadmap/kanade-v5.md` and writes
+  `archive/kanade-v5-roadmap/state-c8ce6f258585-1d43c6e33c63.json` (0600,
+  `workplanJson` byte-identical to the damaged file, sha256 matches, 115 KB
+  of original Markdown). D.3 has no `recoveredPlanFile`, no hint and no
+  archive, and relinks the stale `kanade-v5-roadmap.md` copy left by the
+  move (the wrong file).
+- **Stale checkpoint** (a line appended to the Markdown): D.3 resume
+  diagnostic `null`; D.3.1 `changed: .opencode/workplan/kanade-v5-roadmap.md`
+  at 12000/6000/4096, with the same page sizes (6/1/1) and truncated-field
+  sets; +46 units.
+- **Critical path** (3-entry graph `core-bot/reliability,staging →
+  core-evidence/offline-proof → m1-stability → workspace/visual-contract`,
+  which also makes the checkpoint stale): D.3.1 resume adds
+  `criticalPath {length 4, nextStep core-bot/reliability}` at
+  64000/12000/6000 (page sizes 20/6/1, same as D.3; truncated fields
+  unchanged), matching inspect. At 4096 the critical path is dropped; the
+  D.3 packet was already in the emergency tier there (display cap 64), and
+  the stale diagnostic moves it one step lower (48).
+- **Wipe:** doctor adds `phases: Plan was wiped …; the removed content is
+  archived at .opencode/workplan/archive/kanade-v5-roadmap/state-8ed35bcbe9c6-3725f90fc967.json. Add phases …`;
+  validate keeps only `phases: At least one phase is required`; D.3 doctor
+  has no note.
+- **Old-rendering generated Markdown** (regenerated with the D.3 binary,
+  4 findings `…(resolved)`/`…(open)`): D.3.1 validate gives no drift
+  warning; a D.3.1 update refreshes it to `… finalized (resolved)— …` and
+  records `updatedAt 2026-09-30T15:07:56Z` (D.3: `…:56.329Z`, rendering
+  unchanged); `createdAt` stays as stored; validate stays `valid: true`
+  without warnings.
+
+### Owner decisions to review (D.3.1)
+
+1. The step gate also applies to `workplan_create` (coordinator review,
+   2026-09-30): every step created in `in_progress`/`review`/`completed`
+   must pass the per-step rules (same class and `issues`).
+2. "Set by this call" means a new step or a changed status; a step already
+   in a gated status is not re-checked by unrelated edits (keeps repairs
+   possible; a `phases` replacement that restates an existing in-progress
+   step unchanged is not gated).
+3. The repair archive name is `state-<stateHash:12>-<sha256(raw):12>.json`
+   (compaction/wipe layout; recovery validation already requires the
+   `state-` prefix), and it also stores the Markdown and sidecars, not only
+   the damaged JSON.
+4. `recoveredPlanFile` is reported by doctor only (not validate or list);
+   members that disagree, or a link another readable plan owns, yield
+   nothing.
+5. The resume critical path is dropped before any text would go below the
+   D.1 minimums; the stale diagnostic is never dropped (it can only
+   shrink).
+6. Lock owner files keep millisecond `startedAt`; journals, archives,
+   plans and sidecars use whole seconds. Two writes in the same second can
+   now produce the same `updatedAt`; a write that changes nothing else is
+   then a no-op (no intent, D12 behaviour).
+7. `reset --mode markdown-only` on old-rendering generated Markdown now
+   rewrites it to the new rendering (one authorization) instead of the D12
+   no-op.
+
+### Remaining issues (D.3.1)
+
+1. At the minimum budget the roadmap packet was already in the emergency
+   tier; with a stale checkpoint the diagnostic costs about 50 units and
+   takes the emergency cap one step lower (64 → 48) there.
+2. Mixed writers: the reference plugin and D.3 write `title(status)` and
+   millisecond timestamps; D.3.1 treats both renderings as generated, but
+   a reference write after a D.3.1 write flips the rendering back (still
+   classified as generated either way). Stage E's one-writer-per-root rule
+   is unchanged.
+
 ## Resume after maintenance
 
 1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
    needed.
-2. Inspect `git status`. Stages A–D, D.1 and D.2 are committed (`fdadfd4`,
-   `7a899e5`, `9f66518`, `4044539`, `5c94cdb`, `e47e667`). D.3 exists only
-   in the working tree until the owner commits it. Preserve any user edits.
+2. Inspect `git status`. Stages A–D, D.1, D.2 and D.3 are committed
+   (`fdadfd4`, `7a899e5`, `9f66518`, `4044539`, `5c94cdb`, `e47e667`,
+   `83a3414`). D.3.1 exists only in the working tree until the owner
+   commits it. Preserve any user edits.
 3. If the oracle files change, the corpus is stale. Compare their sha256 against
    `testdata/MANIFEST.json` → `oracle.files`.
 

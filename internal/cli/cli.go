@@ -319,7 +319,7 @@ func fail(stdout, stderr io.Writer, jsonOut bool, err error) int {
 	var issues []model.Issue
 	var ie *engine.InputError
 	var de *model.DecodeError
-	var gate *engine.StatusGateError
+	var gate interface{ StructuredIssues() []model.Issue } // D.1 plan and D.3.1 step status gates
 	switch {
 	case errors.As(err, &ie):
 		issues = ie.Issues

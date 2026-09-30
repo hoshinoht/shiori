@@ -23,10 +23,49 @@ func StepMarker(id string) (string, error) {
 	return "<!-- workplan-step-id: " + n + " -->", nil
 }
 
-// RenderMarkdown renders the generated Markdown for a normalized plan
-// (byte parity with testdata/vectors/markdown). Markers use the lossy
-// normalized id (D8); a marker that normalizes to empty is an error.
-func RenderMarkdown(p *Plan) ([]byte, error) {
+// RenderMarkdown renders the generated Markdown for a normalized plan.
+// Markers use the lossy normalized id (D8); a marker that normalizes to
+// empty is an error. D.3.1 (contracts §14 item 5b): a finding renders as
+// "title (status)" with a space; everything else is byte-identical to the
+// reference rendering (RenderMarkdownLegacy, testdata/vectors/markdown).
+func RenderMarkdown(p *Plan) ([]byte, error) { return renderMarkdown(p, false) }
+
+// RenderMarkdownLegacy is the reference rendering ("title(status)"), as
+// produced by the TypeScript reference and Shiori before D.3.1. It is kept
+// so Markdown generated that way is still recognized as generated.
+func RenderMarkdownLegacy(p *Plan) ([]byte, error) { return renderMarkdown(p, true) }
+
+// IsGeneratedMarkdown reports whether md is the generated rendering of p
+// in either the current or the legacy finding style (D.3.1), so Markdown
+// generated before D.3.1 is never misclassified as hand-edited.
+func IsGeneratedMarkdown(p *Plan, md []byte) (bool, error) {
+	out, err := RenderMarkdown(p)
+	if err != nil {
+		return false, err
+	}
+	if string(out) == string(md) {
+		return true, nil
+	}
+	if !hasFindingStatus(p) {
+		return false, nil // both styles render identically
+	}
+	legacy, err := RenderMarkdownLegacy(p)
+	if err != nil {
+		return false, err
+	}
+	return string(legacy) == string(md), nil
+}
+
+func hasFindingStatus(p *Plan) bool {
+	for i := range p.Findings {
+		if st := p.Findings[i].Status; st != nil && *st != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderMarkdown(p *Plan, legacy bool) ([]byte, error) {
 	var b strings.Builder
 	title := p.ID
 	if p.Title != nil && !Blank(*p.Title) {
@@ -101,6 +140,9 @@ func RenderMarkdown(p *Plan) ([]byte, error) {
 			f := &p.Findings[i]
 			line := "- [" + f.Severity + "] " + f.Title
 			if f.Status != nil && *f.Status != "" {
+				if !legacy {
+					line += " "
+				}
 				line += "(" + *f.Status + ")"
 			}
 			if f.Detail != nil && *f.Detail != "" {

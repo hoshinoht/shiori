@@ -49,9 +49,10 @@ func TestJSONOutputMatchesVectors(t *testing.T) {
 				t.Fatalf("CLI wrote: %v", d)
 			}
 			got := root.Normalize(strings.TrimSuffix(out, "\n"))
-			// D.1 (contracts §11) and D.2 (§12) vectors are pinned in
-			// testdata/d1 and testdata/d2; a D.2 pin is the final output.
-			for _, stage := range []string{"d2", "d1"} {
+			// D.1 (contracts §11), D.2 (§12) and D.3.1 (§14) vectors are
+			// pinned in testdata/d1, d2 and d3_1; the latest pin is the
+			// final output.
+			for _, stage := range []string{"d3_1", "d2", "d1"} {
 				var pins struct {
 					Vectors map[string]struct {
 						OutputSha256 string `json:"outputSha256"`

@@ -136,7 +136,7 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := nowISO()
+	now := e.nowISO()
 	cp := &model.Checkpoint{SchemaVersion: 2, ID: id, SourceUpdatedAt: p.UpdatedAt, PlanHash: s.PlanHash,
 		Manifest: manifestEntries(s.PlanManifest), CreatedAt: now, UpdatedAt: now, Status: p.Status,
 		Summary: summary, Current: cur, NextAction: next}

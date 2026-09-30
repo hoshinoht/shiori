@@ -99,6 +99,19 @@ func TestMutationVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// D.3.1 (contracts §14): the earlier checks run with the D.3.1
+			// changes off; checkD31Mutation then compares on against off.
+			e.noD31 = true
+			defer func() {
+				if !t.Failed() {
+					if note := checkD31Mutation(t, &v); note != "" {
+						t.Log(note)
+						d31Mu.Lock()
+						d31Notes = append(d31Notes, note)
+						d31Mu.Unlock()
+					}
+				}
+			}()
 			if ids := seededIDs[v.ID]; ids != nil {
 				i := 0
 				IDSource = func(string) string { i++; return ids[i-1] }
@@ -126,7 +139,15 @@ func TestMutationVectors(t *testing.T) {
 		t.Log(n)
 	}
 	d3Write(t, "mutations/")
+	sort.Strings(d31Notes)
+	t.Logf("D.3.1 mutation vectors: %d", len(d31Notes))
+	for _, n := range d31Notes {
+		t.Log(n)
+	}
+	d31Write(t, "mutations/")
 }
+
+var d31Notes []string
 
 func checkMutationVector(t *testing.T, v *mutationVector, root testutil.Root, e *Engine) {
 	t.Helper()

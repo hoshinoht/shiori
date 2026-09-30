@@ -1088,3 +1088,26 @@ func TestRedact(t *testing.T) {
 		}
 	}
 }
+
+// D.3.1 (contracts §14 item 1): the step status gate carries its field
+// paths too, before any intent is prepared.
+func TestStepStatusGateIssues(t *testing.T) {
+	root := fixtureRoot(t, "minimal-valid")
+	h := start(t, Options{})
+	h.handshake()
+	hash := readHash(t, h, root, "minimal")
+	before := fingerprint(t, root)
+	r := h.call("g", "workplan_update", root, map[string]any{"id": "minimal", "expectedHash": hash,
+		"addSteps": []any{map[string]any{"phaseId": "phase-one", "step": map[string]any{"id": "bare", "title": "Bare", "status": "in_progress", "action": "a"}}}})
+	if r.errClass() != "invalid_structure" || r.obj("prepared") != nil {
+		t.Fatalf("step gate: %v", r)
+	}
+	var paths []string
+	for _, is := range r.obj("error")["issues"].([]any) {
+		paths = append(paths, is.(map[string]any)["path"].(string))
+	}
+	if strings.Join(paths, ",") != "phases.0.steps.1.validation" {
+		t.Fatalf("step gate issue paths %v", paths)
+	}
+	sameFingerprint(t, before, fingerprint(t, root))
+}

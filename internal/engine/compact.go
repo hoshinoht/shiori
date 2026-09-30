@@ -98,6 +98,9 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	}
 	s, err := e.load(id)
 	if err != nil {
+		if apply {
+			return nil, e.repairHint(id, err) // D.3.1 item 2c
+		}
 		return nil, err
 	}
 	if s.Journal.Exists {
@@ -254,7 +257,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 			next.Findings = append(next.Findings, f)
 		}
 	}
-	now := nowISO()
+	now := e.nowISO()
 	next.UpdatedAt = now
 	cp.next = next
 	return cp, e.compactIntent(cp, id, hexTok[:16], now, canonical)
@@ -308,7 +311,7 @@ func (e *Engine) compactIntent(cp *compactPlan, id, tx, now string, canonical oj
 	mdAfter := s.Markdown.Bytes
 	if cp.gen {
 		var err error
-		if mdAfter, err = model.RenderMarkdown(cp.next); err != nil {
+		if mdAfter, err = e.render(cp.next); err != nil {
 			return err
 		}
 	}

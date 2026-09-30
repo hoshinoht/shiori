@@ -166,3 +166,51 @@ func TestStatusGateCLI(t *testing.T) {
 		t.Fatalf("gate wrote: %v", d)
 	}
 }
+
+// D.3.1 (contracts §14 item 1): the step status gate carries field paths
+// in the --json error and refuses before the prompt.
+func TestStepStatusGateCLI(t *testing.T) {
+	root := testutil.NewRoot(t, "minimal-valid")
+	withPrompt(t, false, "")
+	if code, out, errOut := run("update", "minimal", "--input", `{"addSteps":[{"phaseId":"phase-one","step":{"id":"bare","title":"Bare"}}]}`, "--legacy-unhashed", "--yes", "--root", root.Path); code != 0 {
+		t.Fatal(out, errOut)
+	}
+	before := testutil.Fingerprint(t, root.Path)
+	code, out, _ := run("update", "minimal", "--input", `{"updateSteps":[{"phaseId":"phase-one","stepId":"bare","status":"in_progress"}]}`, "--legacy-unhashed", "--yes", "--json", "--root", root.Path)
+	var e struct {
+		Error struct {
+			Class  string `json:"class"`
+			Issues []struct{ Path, Message string }
+		} `json:"error"`
+	}
+	json.Unmarshal([]byte(out), &e)
+	if code != 1 || e.Error.Class != "invalid_structure" || len(e.Error.Issues) != 2 ||
+		e.Error.Issues[0].Path != "phases.0.steps.1.action" || e.Error.Issues[1].Path != "phases.0.steps.1.validation" {
+		t.Fatalf("step gate: %d %s", code, out)
+	}
+	if d := testutil.DiffFingerprints(before, testutil.Fingerprint(t, root.Path)); len(d) > 0 {
+		t.Fatalf("step gate wrote: %v", d)
+	}
+}
+
+// D.3.1: create applies the step status gate to the steps it creates.
+func TestCreateStepStatusGateCLI(t *testing.T) {
+	root := testutil.NewRoot(t, "empty-workspace")
+	withPrompt(t, false, "")
+	before := testutil.Fingerprint(t, root.Path)
+	code, out, _ := run("create", "--input", `{"id":"gated","goal":"g","phases":[{"id":"p","title":"P","steps":[{"id":"s","title":"S","status":"in_progress","validation":"v"}]}]}`,
+		"--yes", "--json", "--root", root.Path)
+	var e struct {
+		Error struct {
+			Class  string `json:"class"`
+			Issues []struct{ Path, Message string }
+		} `json:"error"`
+	}
+	json.Unmarshal([]byte(out), &e)
+	if code != 1 || e.Error.Class != "invalid_structure" || len(e.Error.Issues) != 1 || e.Error.Issues[0].Path != "phases.0.steps.0.action" {
+		t.Fatalf("create step gate: %d %s", code, out)
+	}
+	if d := testutil.DiffFingerprints(before, testutil.Fingerprint(t, root.Path)); len(d) > 0 {
+		t.Fatalf("create step gate wrote: %v", d)
+	}
+}

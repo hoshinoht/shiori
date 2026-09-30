@@ -187,9 +187,9 @@ func (e *Engine) MarkdownGenerated(id string) (generated, present bool, err erro
 	if !s.Markdown.Exists {
 		return false, false, nil
 	}
-	out, err := model.RenderMarkdown(s.Plan)
+	gen, err := e.isGenerated(s.Plan, s.Markdown.Bytes)
 	if err != nil {
 		return false, true, err
 	}
-	return string(out) == string(s.Markdown.Bytes), true, nil
+	return gen, true, nil
 }

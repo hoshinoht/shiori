@@ -77,7 +77,7 @@ func (e *Engine) PrepareReset(data ojson.Value) (*Prepared, error) {
 	if s.Markdown.Exists && !gen && !replaceMD {
 		return nil, errors.New(msgHandwrittenReset)
 	}
-	md, err := model.RenderMarkdown(s.Plan)
+	md, err := e.render(s.Plan)
 	if err != nil {
 		return nil, err
 	}
@@ -125,10 +125,10 @@ func (e *Engine) prepareDraftReset(s *snapshot.Snapshot, replaceMD, gen bool) (*
 			p.Phases[i].Steps[j].Status = "draft"
 		}
 	}
-	p.UpdatedAt = nowISO()
+	p.UpdatedAt = e.nowISO()
 	specs := []targetSpec{{rel: s.JSON.Rel, kind: "plan", before: s.JSON.Bytes, beforeOK: true, after: p.EncodeStored(), afterOK: true}}
 	if !s.Markdown.Exists || gen || replaceMD {
-		md, err := model.RenderMarkdown(p)
+		md, err := e.render(p)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +205,7 @@ func (e *Engine) wipeSelect(s *snapshot.Snapshot, preserveNotes, replaceMD, gen 
 		Set("linkedMarkdownTreatment", ojson.StringValue(w.treatment)).Value())
 	hexTok := strings.TrimPrefix(w.token, "v1-")
 	w.archiveRel = snapshot.WorkplanDir + "/archive/" + id + "/state-" + s.StateHash[:12] + "-" + hexTok[:12] + ".json"
-	now := nowISO()
+	now := e.nowISO()
 	next.UpdatedAt = now
 	w.next = next
 	archive := ojson.NewObject(8).
@@ -225,7 +225,7 @@ func (e *Engine) wipeSelect(s *snapshot.Snapshot, preserveNotes, replaceMD, gen 
 			Set("checkpoint", artifactString(s.Checkpoint)).
 			Set("dependencyPath", ojson.StringValue(s.Dependencies.Rel)).
 			Set("dependencies", artifactString(s.Dependencies)).Value()).Value()
-	md, err := model.RenderMarkdown(next)
+	md, err := e.render(next)
 	if err != nil {
 		return nil, err
 	}

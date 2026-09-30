@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
@@ -34,6 +35,12 @@ type Engine struct {
 	// only, like noGraph: the corpus comparators prove that a D.3 output
 	// differs from the D.3-off output only by the approved change.
 	noD3 bool
+	// noD31 turns off the D.3.1 changes (contracts §14): the step status
+	// gate, the repair archive and recovered planFile, the unreadable-plan
+	// repair hint, the resume stale diagnostic and critical path, the
+	// wiped-plan doctor note, and the new finding rendering and
+	// whole-second timestamps. Test-only, like noD3.
+	noD31 bool
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.
@@ -201,6 +208,9 @@ type cpView struct {
 	// staleDetail names what differs from a stale v2 checkpoint's
 	// manifest (D.3, contracts §13 item 5); doctor appends it.
 	staleDetail string
+	// staleChanged are the manifest paths behind staleDetail, in the same
+	// order (D.3.1: the compact resume diagnostic).
+	staleChanged []string
 }
 
 func classifyCheckpoint(s *snapshot.Snapshot) cpView {
@@ -232,9 +242,36 @@ func classifyCheckpoint(s *snapshot.Snapshot) cpView {
 	default:
 		v.freshness = FreshnessStale
 		v.issue = msgStale
-		v.staleDetail = staleDetail(cp, s)
+		v.staleDetail, v.staleChanged = staleDetail(cp, s)
 	}
 	return v
+}
+
+// maxDiagnosticPaths and maxDiagnosticUnits bound the compact resume
+// diagnostic of a stale checkpoint (D.3.1, contracts §14 item 3).
+const (
+	maxDiagnosticPaths = 3
+	maxDiagnosticUnits = 240
+)
+
+// staleDiagnostic is the compact resume form of staleDetail:
+// "changed: <path>[, <path>...] [+N more]" (at most three paths), or
+// "changed: planHash only" when every manifest entry still matches. The
+// text is capped at maxDiagnosticUnits UTF-16 code units.
+func staleDiagnostic(paths []string) string {
+	if len(paths) == 0 {
+		return "changed: planHash only"
+	}
+	shown := paths
+	if len(shown) > maxDiagnosticPaths {
+		shown = shown[:maxDiagnosticPaths]
+	}
+	out := "changed: " + strings.Join(shown, ", ")
+	if n := len(paths) - len(shown); n > 0 {
+		out += " +" + strconv.Itoa(n) + " more"
+	}
+	out, _ = ojson.TruncateUTF16(out, maxDiagnosticUnits)
+	return out
 }
 
 // maxStaleEntries bounds the artifacts named by staleDetail.
@@ -250,7 +287,7 @@ func short(h string) string {
 // staleDetail compares a stale v2 checkpoint's manifest with the current
 // plan manifest and names each artifact whose bytes changed, appeared,
 // disappeared or entered/left the manifest.
-func staleDetail(cp *model.Checkpoint, s *snapshot.Snapshot) string {
+func staleDetail(cp *model.Checkpoint, s *snapshot.Snapshot) (string, []string) {
 	state := func(sha string, missing bool) string {
 		if missing {
 			return "missing"
@@ -261,7 +298,7 @@ func staleDetail(cp *model.Checkpoint, s *snapshot.Snapshot) string {
 	for _, en := range cp.Manifest {
 		then[en.Path] = en
 	}
-	var parts []string
+	var parts, paths []string
 	now := map[string]bool{}
 	for _, en := range s.PlanManifest {
 		now[en.Path] = true
@@ -269,24 +306,27 @@ func staleDetail(cp *model.Checkpoint, s *snapshot.Snapshot) string {
 		switch {
 		case !ok:
 			parts = append(parts, en.Path+" was added to the plan's links since the checkpoint (now "+state(en.SHA256, en.Missing)+")")
+			paths = append(paths, en.Path)
 		case old.Missing != en.Missing || old.SHA256 != en.SHA256:
 			parts = append(parts, en.Path+" changed (checkpoint "+state(old.SHA256, old.Missing)+", now "+state(en.SHA256, en.Missing)+")")
+			paths = append(paths, en.Path)
 		}
 	}
 	for _, en := range cp.Manifest {
 		if !now[en.Path] {
 			parts = append(parts, en.Path+" is no longer linked (checkpoint "+state(en.SHA256, en.Missing)+")")
+			paths = append(paths, en.Path)
 		}
 	}
 	if len(parts) == 0 {
-		return "Every manifest entry matches, but the recorded planHash differs (checkpoint " + short(cp.PlanHash) + ", now " + short(s.PlanHash) + ")"
+		return "Every manifest entry matches, but the recorded planHash differs (checkpoint " + short(cp.PlanHash) + ", now " + short(s.PlanHash) + ")", nil
 	}
 	more := ""
 	if len(parts) > maxStaleEntries {
 		more = fmt.Sprintf("; and %d more", len(parts)-maxStaleEntries)
 		parts = parts[:maxStaleEntries]
 	}
-	return "Changed since the checkpoint: " + strings.Join(parts, "; ") + more + ". Write a new checkpoint after reviewing the change."
+	return "Changed since the checkpoint: " + strings.Join(parts, "; ") + more + ". Write a new checkpoint after reviewing the change.", paths
 }
 
 // journalRel is the pending journal path for an id.

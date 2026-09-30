@@ -9,8 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Sections 11, 12 and 13 record the approved D.1, D.2 and D.3
-design changes, which deliberately depart from the reference.
+spell out). Sections 11, 12, 13 and 14 record the approved D.1, D.2, D.3 and
+D.3.1 design changes, which deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -983,7 +983,8 @@ Markdown always has the markers. Handwritten Markdown is never rewritten.
   sha256 <12>, now sha256 <12>|missing)`, `<path> was added to the plan's
   links ...`, `<path> is no longer linked ...` (at most five, then `and N
   more`), or, when every entry matches, that only the recorded planHash
-  differs. Resume keeps the D.1 text so its budget is unchanged.
+  differs. Resume keeps the D.1 text so its budget is unchanged. *D.3.1
+  (§14 item 3) adds a compact form to the resume `checkpoint.diagnostic`.*
 - *Readable generated ids.* A phase or step without an id gets the slug
   of its title (the id normalization, cut at a word boundary to 48 units),
   with `-2`, `-3`, ... only when that id is taken. Generated step ids also
@@ -1046,3 +1047,146 @@ no write can be authorized either. `workplan_doctor` reports
 "enabled"|"disabled", detail}`; the core renders `host` only when the
 adapter supplies it (type-checked and bounded like the other facts), so
 CLI and corpus doctor output are unchanged.
+
+## 14. Approved design changes D.3.1 (APPROVED 2026-09-30)
+
+Changes from a third live testing round against a copy of the owner's
+roadmap, approved by the owner on 2026-09-30 (items 1–5). Everything not
+listed here stays as in sections 1–13: the V2
+plan/checkpoint/dependencies/journal formats, the `.opencode/workplan/`
+layout, the thirteen `workplan_*` identities and argument shapes (no
+input schema changes), the hash algorithm, D.1's resume budgeting rules
+and D.2's graph behaviour. Item 5b changes the generated Markdown bytes
+and the timestamp format of new writes on purpose.
+
+The oracle corpus is not edited. Every vector runs with the D.3.1 changes
+off (`Engine.noD31`, test-only), which must pass every earlier check
+(oracle, D.1/D.2/D.3 pins, declared divergences) unchanged, and with them
+on. A vector whose output or written files differ is pinned in
+[`testdata/d3_1/expectations.json`](../testdata/d3_1/expectations.json)
+(SHA-256 and UTF-16 length of the root-normalized output; for a refusal,
+of the error text) and passes a comparator
+(`internal/engine/d3_1_vectors_test.go`):
+
+- read vectors: removing the approved members (resume
+  `checkpoint.diagnostic` back to `null` and `criticalPath`; doctor
+  `recoveredPlanFile` and the wiped-plan note) gives the D.3.1-off text
+  byte-for-byte; the stale paths are restated from the raw checkpoint
+  manifest and files, the recovered link from the raw `planFile` member,
+  and the resume critical path from `workplan_inspect`;
+- mutation vectors: the same authorization count and changed-file set;
+  every changed file equals the D.3.1-off file after mapping the
+  whole-second timestamp back to its millisecond form and each SHA-256 to
+  a placeholder, except generated Markdown, which must be the current
+  rendering of the written plan where the D.3.1-off file is the legacy
+  rendering of its plan (the plans equal after the timestamp mapping); the
+  output compares the same way and its hashes match the files on disk;
+- Markdown render vectors (`internal/model`): the legacy rendering is
+  byte-identical to the oracle file, and the current rendering equals it
+  with a space inserted before each finding's `(status)`.
+
+There are 27 pinned vectors: 3 doctor tools vectors (2b), 6 resume vectors
+(3 stale diagnostic, 3 critical path), 17 mutation vectors (5b timestamps;
+7 of them also refresh generated Markdown to the new finding rendering)
+and 1 Markdown render vector (5b). No paging vector and no mutating-input
+vector changes.
+
+**1. Step status gate.** `workplan_update` (and, for the steps it
+creates, `workplan_create`) refuses to set a step to
+`in_progress`, `review` or `completed` while that step fails the per-step
+structure rules of spec 01 §3 (`x-shiori-structure-rules`: nonblank and
+unique `id`, nonblank `title`, `action` and `validation`), applied to the
+resulting plan. A step counts as set by the call when it is new (by phase
+and step id) or its status changes to a gated one, whichever edit did it
+(`updateSteps`, `addSteps`, `addPhases`, a `phases` replacement). A step
+whose gated status does not change is not re-checked, so an existing plan
+stays editable and repairable. The refusal comes before authorization
+(nothing is prepared, prompted or written) with class
+`invalid_structure`: `Refusing to set step status while the step's
+executable structure is incomplete: <p>/<s> -> <status>, .... Missing:
+<path>: <message>; .... Complete the listed fields first (or in the same
+update); draft, blocked and cancelled are allowed with incomplete
+structure.` The CLI `--json` error and the protocol error carry
+`issues[{path, message}]` like the D.1 plan gate. `draft`, `blocked` and
+`cancelled` stay allowed; supplying the missing fields in the same call
+is accepted. `workplan_create` applies the same gate to every step it
+creates in a gated status (coordinator review, 2026-09-30), after the
+D.1 plan-level gate, with the same message, class and `issues` shape;
+`workplan_patch` is unchanged. No oracle vector changes because of it.
+
+**2. Repair of unparseable plans** (extends §13 item 2).
+
+- (a) `workplan_create {overwrite: true}` over an unreadable plan adds an
+  archive target to the same `create:overwrite` transaction, published
+  first: `archive/<id>/state-<stateHash:12>-<sha256(raw):12>.json` (mode
+  0600; `archiveVersion: 1`, `workplanId`, `archivedAt`, `reason`,
+  `operation: "create:overwrite"`, `stateHash`, and `source` with
+  `workplanJsonPath`, `workplanJsonSha256`, the exact damaged bytes as
+  `workplanJson` when they are valid UTF-8, else `workplanJson: null` and
+  `workplanJsonBase64`, plus the linked Markdown, checkpoint and
+  dependency bytes as they were). The result adds `archivePath`. Recovery
+  validation accepts an archive target for `create:overwrite`.
+- (b) `workplan_doctor` scans the raw bytes of an unreadable plan for a
+  `"planFile": "<string>"` member (tolerant of truncation and of a broken
+  document around it). When one value is found (members that disagree
+  give nothing) and it passes the plan-file policy (inside the root, under
+  `.opencode/workplan/`, Markdown, no backslash, not a symlink) and is not
+  the linked Markdown of another readable plan, the plan entry adds
+  `recoveredPlanFile`. The repair uses that Markdown path
+  instead of `<id>.md` unless the input gives `planFile` (an explicit
+  `planFile` wins). The raw-byte hashes are unchanged.
+- (c) `workplan_update`, `patch`, `reset`, `checkpoint` and `compact`
+  (apply) on an unreadable plan append to the load error: `The plan cannot
+  be loaded, so it cannot be changed in place. Repair it with
+  workplan_create overwrite=true and expectedHash=<stateHash> (the
+  stateHash workplan_doctor reports for it; the damaged bytes are
+  archived first, and the linked Markdown is kept unless
+  replaceMarkdown=true).` The error class is unchanged. A plan with a
+  pending journal keeps the recovery refusal.
+
+**3. Stale checkpoint diagnostic in resume.** For a stale v2 checkpoint,
+`checkpoint.diagnostic` (earlier `null`) is `changed: <path>[, <path>,
+<path>] [+N more]`: the manifest paths that the §13 item 5 doctor detail
+names (changed, added or no longer linked), at most three, or `changed:
+planHash only` when every entry still matches. The text is capped at 240
+UTF-16 code units at construction and is prose for the D.1 budget (it can
+shrink to the 120 floor and, in the emergency tier, below it, listed in
+`truncatedFields`). Fresh, legacy (v1), invalid and missing checkpoints
+keep their earlier diagnostic.
+
+**4. Compact critical path in resume.** When the plan has a valid
+dependency sidecar and the D.2 critical path chains at least two open
+steps, the packet adds `criticalPath: {length, nextStep: {phaseId,
+stepId}}` after `currentDependencies`; `nextStep` is the first open step
+on the path. The full path stays in `workplan_inspect` and
+`workplan_doctor`. Without such a sidecar the packet is byte-identical to
+D.3. The member is advisory, so it is dropped before any text would go
+below the D.1 minimums (the level ladder is retried without it before the
+emergency caps). `TestResumeBudgetSweep` passes unchanged, and
+`TestD31ResumeBudget` checks every budget from 4096 to 16000 (step 8
+below 6000) on the synthetic graph roadmap with a stale checkpoint.
+
+**5. Wiped plans and cosmetics.**
+
+- (a) A doctor plan entry for a readable plan with no phases and status
+  `draft` whose `archive/<id>/` holds a `reset:wipe` archive adds the
+  warning `phases: Plan was wiped (workplan_reset mode=wipe); the removed
+  content is archived at <newest archive path>. Add phases (workplan_update
+  phases or addPhases) to continue; the missing-phases issue stays until
+  then.` Validate keeps the `phases: At least one phase is required` issue
+  and adds nothing.
+- (b) Generated Markdown renders a finding as `- [<severity>] <title>
+  (<status>)` with a space (the reference wrote `<title>(<status>)`); the
+  rest of the rendering is unchanged. Detection of generated Markdown
+  (validate/doctor drift and marker warnings, the handwritten guards of
+  create, update, reset and compaction, and `MarkdownGenerated`) accepts
+  both renderings, so Markdown generated by the reference or an earlier
+  stage is still generated and a write refreshes it to the new rendering.
+  New writes record whole-second UTC timestamps (`2026-09-30T15:07:56Z`)
+  in the plan, checkpoint, dependency sidecar, archives and journals;
+  reads keep accepting every `isoDatetimeUtc` form (milliseconds, whole
+  seconds, minutes, any fraction), and stored timestamps are never
+  rewritten except `updatedAt` by a write. Lock owner files keep their
+  millisecond `startedAt` (it is parsed for lock age, not stored with the
+  plan).
+

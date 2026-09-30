@@ -533,7 +533,7 @@ func TestD3FileModes(t *testing.T) {
 		t.Fatalf("first plan modes %v %v, want %v", mode(filepath.Join(wp, "first.json")), mode(filepath.Join(wp, "first.md")), want)
 	}
 	os.Chmod(filepath.Join(wp, "first.json"), 0o640)
-	mustMutate(t, e, "workplan_create", `{"id":"second","goal":"g","phases":[{"id":"p","title":"P","status":"completed","steps":[{"id":"s","title":"S","status":"completed"}]}]}`)
+	mustMutate(t, e, "workplan_create", `{"id":"second","goal":"g","phases":[{"id":"p","title":"P","status":"completed","steps":[{"id":"s","title":"S","action":"x","validation":"y","status":"completed"}]}]}`)
 	if mode(filepath.Join(wp, "second.json")) != 0o640 || mode(filepath.Join(wp, "second.md")) != 0o640 {
 		t.Fatalf("second plan modes %v", mode(filepath.Join(wp, "second.json")))
 	}

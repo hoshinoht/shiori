@@ -8,12 +8,14 @@ This repository contains the specifications, the approved stage A contract
 (machine schemas, a golden fixture corpus and a measured TypeScript baseline),
 the stage B read-only Go core, the stage C transactional core with its
 `shiori` CLI, the stage D native OpenCode adapter (`shiori serve --stdio`
-plus `adapter/opencode/`), and the D.1, D.2 and D.3 approved design changes
+plus `adapter/opencode/`), and the D.1, D.2, D.3 and D.3.1 approved design
+changes
 ([contracts §11](docs/contracts.md#11-approved-design-changes-d1-approved-2026-09-30),
 [§12](docs/contracts.md#12-approved-design-changes-d2-approved-2026-09-30),
-[§13](docs/contracts.md#13-approved-design-changes-d3-approved-2026-09-30)).
+[§13](docs/contracts.md#13-approved-design-changes-d3-approved-2026-09-30),
+[§14](docs/contracts.md#14-approved-design-changes-d31-approved-2026-09-30)).
 The architecture is a Go core and CLI with a thin OpenCode JS/TS adapter.
-Stages A–D, D.1, D.2 and D.3 are authorized. Automatic artifact migration, commits
+Stages A–D, D.1, D.2, D.3 and D.3.1 are authorized. Automatic artifact migration, commits
 and remote publication are not.
 
 ## Specifications
@@ -29,7 +31,7 @@ Read in this order:
 Stage A contract:
 
 - [Frozen contract v1 (APPROVED 2026-09-30)](docs/contracts.md), including the
-  approved D.1, D.2 and D.3 design changes (§11–§13)
+  approved D.1, D.2, D.3 and D.3.1 design changes (§11–§14)
 - [Machine schemas](schema/index.json) and [golden corpus](testdata/MANIFEST.json)
 - [TypeScript reference baseline and Go stage B results](docs/baseline.md)
 
@@ -111,6 +113,20 @@ D.3 behaviour of the read operations (contracts §13):
 - `validate`/`doctor` warn when handwritten Markdown lacks a step's
   `<!-- workplan-step-id: ... -->` marker (it is never rewritten).
 
+D.3.1 behaviour of the read operations (contracts §14):
+
+- `resume` names what changed since a stale checkpoint in
+  `checkpoint.diagnostic` (`changed: <path>[, …] [+N more]`, at most three
+  paths). With a valid dependency sidecar it adds `criticalPath: {length,
+  nextStep}` (dropped before any text would go below the D.1 minimums;
+  the full path is in `inspect`/`doctor`).
+- `doctor` reports `recoveredPlanFile` for an unreadable plan whose raw
+  bytes still name a safe `planFile`, and notes an empty draft plan left by
+  a wipe (with the archive path).
+- Generated Markdown renders findings as `title (status)`; Markdown in the
+  earlier `title(status)` rendering still counts as generated and is
+  refreshed by the next write.
+
 ```sh
 shiori list     --root /path/to/project
 shiori read     <id> [--phase ID] [--step ID] [--no-markdown | --markdown] [--notes]
@@ -160,6 +176,10 @@ shiori update     my-plan --recovery resume|rollback --expected-hash "$H"       
   `completed` while the executable-structure rules fail. The error lists
   every field path. `draft`, `blocked` and `cancelled` are always allowed.
   `patch --validate` returns the full issue list (D.1).
+- D.3.1: `update` (and `create`, for the steps it creates) also refuses to move a step to `in_progress`, `review`
+  or `completed` while that step lacks its own `action`, `validation`,
+  `title` or a unique `id` (field paths in the error; completing them in
+  the same call is fine).
 - `reset` (draft) only resets statuses to draft and removes the checkpoint;
   phases, steps, notes, findings and dependencies are kept. `--mode wipe`
   clears the content after a preview and the exact token and confirmation,
@@ -168,6 +188,11 @@ shiori update     my-plan --recovery resume|rollback --expected-hash "$H"       
 - New `specFiles` must exist, a new note is at most 16 KiB, generated ids
   are title slugs (`-2`... on collision), and new plan/Markdown files take
   the mode of the existing plans (else 0644 minus the umask) (D.3).
+- `create --overwrite` of an unreadable plan archives the damaged bytes
+  under `.opencode/workplan/archive/<id>/` in the same transaction and
+  keeps the doctor's `recoveredPlanFile` unless `--plan-file` is given;
+  other writers on an unreadable plan name that repair and its hash. New
+  writes record whole-second UTC timestamps (D.3.1).
 
 ### Common
 
@@ -283,9 +308,12 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
   passes a comparator against the unchanged oracle vector. Re-pin them
   after review with `SHIORI_D1_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
   Vectors that D.2 changes are pinned in `testdata/d2/expectations.json`,
-  and those D.3 changes in `testdata/d3/expectations.json`
+  those D.3 changes in `testdata/d3/expectations.json`
   (`SHIORI_D3_UPDATE=1` re-pins; the D.3-off output must still pass every
-  earlier check).
+  earlier check), and those D.3.1 changes, including mutation and Markdown
+  render vectors, in `testdata/d3_1/expectations.json`
+  (`SHIORI_D31_UPDATE=1`, per package; the D.3.1-off run must still pass
+  every earlier check).
   The same engine with the graph additions off must still pass the
   earlier check, and the D.2 output must differ from it only by the
   approved members (`SHIORI_D2_UPDATE=1` re-pins).
@@ -304,7 +332,7 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit D.3 (see [STATUS](docs/STATUS.md)). Updating the pinned
+Review and commit D.3.1 (see [STATUS](docs/STATUS.md)). Updating the pinned
 copy the owner's OpenCode uses is a separate step for the owner. Worktree
 orchestration and alternative storage remain later, explicitly gated
 stages.

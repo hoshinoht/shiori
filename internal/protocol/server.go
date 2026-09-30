@@ -644,12 +644,12 @@ func (s *server) failRequest(id string, err error) string {
 	}
 	s.writeErrorLocked(id, class, err.Error(), func(b *ojson.Builder) {
 		var ie *engine.InputError
-		var gate *engine.StatusGateError
+		var gate interface{ StructuredIssues() []model.Issue }
 		var list []model.Issue
 		if errors.As(err, &ie) {
 			list = ie.Issues
 		} else if errors.As(err, &gate) {
-			list = gate.StructuredIssues() // D.1 status gate field paths
+			list = gate.StructuredIssues() // D.1 plan / D.3.1 step status gate field paths
 		}
 		if len(list) > 0 {
 			issues := make([]ojson.Value, len(list))

@@ -54,6 +54,7 @@ func mutationErrorClass(err error) (string, bool) {
 	var d7 *D7Error
 	var jinv *JournalInvalidError
 	var gate *StatusGateError
+	var stepGate *StepStatusGateError
 	var specMissing *SpecFileMissingError
 	var noteSize *NoteTooLargeError
 	msg := err.Error()
@@ -78,7 +79,7 @@ func mutationErrorClass(err error) (string, bool) {
 		return "permission_denied", true
 	case errors.As(err, &specMissing), errors.As(err, &noteSize):
 		return "invalid_input", true
-	case errors.As(err, &dup), errors.As(err, &d7), errors.As(err, &jinv), errors.As(err, &gate):
+	case errors.As(err, &dup), errors.As(err, &d7), errors.As(err, &jinv), errors.As(err, &gate), errors.As(err, &stepGate):
 		return "invalid_structure", true
 	case strings.HasPrefix(msg, "Workplan transaction pending requires explicit recovery"):
 		return "recovery_required", true

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"sort"
 	"strings"
 
@@ -337,6 +338,10 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 			if u := e.unreadableFor(id, err); u != nil {
 				b.Set("planHash", ojson.StringValue(u.PlanHash)).
 					Set("stateHash", ojson.StringValue(u.StateHash))
+				// D.3.1 (contracts §14 item 2b): the link a repair keeps.
+				if pf := e.recoverPlanFile(id, u.JSON.Bytes); pf != "" {
+					b.Set("recoveredPlanFile", ojson.StringValue(pf))
+				}
 			}
 		}
 		return b.Set("recoveryRequired", ojson.BoolValue(journalExists)).Value()
@@ -378,7 +383,11 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 		Set("id", ojson.StringValue(name)).
 		Set("valid", ojson.BoolValue(len(issues) == 0)).
 		Set("issues", ojson.StringsValue(issues))
-	if w := e.validationWarnings(s, dv); len(w) > 0 {
+	w := e.validationWarnings(s, dv)
+	if note := e.wipedNote(s); note != "" {
+		w = append(w, note) // D.3.1 (contracts §14 item 5a)
+	}
+	if len(w) > 0 {
 		b.Set("warnings", ojson.StringsValue(w)) // D.1, additive
 	}
 	b.
@@ -560,4 +569,57 @@ func sliceUTF16(s string, max int) string {
 		n += w
 	}
 	return s
+}
+
+// wipedNote explains an empty draft plan that a wipe left behind (D.3.1,
+// contracts §14 item 5a): validate still reports the missing phases as an
+// issue, and doctor adds where the removed content is archived and what to
+// do next. The newest reset:wipe archive under archive/<id>/ is named.
+func (e *Engine) wipedNote(s *snapshot.Snapshot) string {
+	p := s.Plan
+	if e.noD31 || len(p.Phases) != 0 || p.Status != "draft" {
+		return ""
+	}
+	dirRel := snapshot.WorkplanDir + "/archive/" + s.ID
+	st, err := os.Lstat(e.absRel(dirRel))
+	if err != nil || !st.IsDir() {
+		return ""
+	}
+	ents, err := os.ReadDir(e.absRel(dirRel))
+	if err != nil {
+		return ""
+	}
+	r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
+	best, bestAt := "", ""
+	for _, de := range ents {
+		name := de.Name()
+		if !de.Type().IsRegular() || !strings.HasPrefix(name, "state-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		a, err := r.ReadFile(dirRel + "/" + name)
+		if err != nil || !a.Exists {
+			continue
+		}
+		parsed, err := ojson.Parse(a.Bytes)
+		if err != nil {
+			continue
+		}
+		op, _ := parsed.Value.Get("operation")
+		wid, _ := parsed.Value.Get("workplanId")
+		if op.Str() != "reset:wipe" || wid.Str() != s.ID {
+			continue
+		}
+		at, _ := parsed.Value.Get("archivedAt")
+		// Whole-second and millisecond timestamps compare by their
+		// seconds prefix; ties go to the later name.
+		key := strings.TrimSuffix(strings.SplitN(at.Str(), ".", 2)[0], "Z") + "\x00" + name
+		if best == "" || key > bestAt {
+			best, bestAt = dirRel+"/"+name, key
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return "phases: Plan was wiped (workplan_reset mode=wipe); the removed content is archived at " + best +
+		". Add phases (workplan_update phases or addPhases) to continue; the missing-phases issue stays until then."
 }
