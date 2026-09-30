@@ -69,7 +69,7 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1, D.3 and D.4 changes", () => {
+  it("differs from the reference registration only by the approved D.1, D.3, D.4 and D.4.1 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
     expect(reg.d1.additions).toEqual([{ tool: "workplan_read", property: "includeNotes" }]);
@@ -86,7 +86,16 @@ describe("registration (identities, shapes, model-facing text)", () => {
     expect(read.input.properties.includeNotes.type).toBe("boolean");
     const reset = reg.tools.find((t: any) => t.name === "workplan_reset");
     expect(reset.input.properties.mode.enum).toEqual(["draft", "markdown-only", "wipe"]);
-    const { d1, d3, d4, ...rest } = reg;
+    const mutating = ["workplan_create", "workplan_update", "workplan_patch", "workplan_reset", "workplan_checkpoint", "workplan_compact"];
+    expect(reg.d4_1.changes.map((c: any) => c.tool)).toEqual(mutating);
+    for (const c of reg.d4_1.changes) {
+      expect(c.path).toEqual(["description"]);
+      const now = reg.tools.find((t: any) => t.name === c.tool).description;
+      expect(now.startsWith(`${c.previous} `)).toBe(true);
+      expect(now.slice(c.previous.length + 1)).toMatch(/^(With overwrite=true, p|In apply mode, p|P)ass expectedHash = the stateHash from your latest read or successful write\.$/);
+    }
+    const { d1, d3, d4, d4_1, ...rest } = reg;
+    for (const c of [...d4_1.changes].reverse()) rest.tools.find((t: any) => t.name === c.tool).description = c.previous;
     for (const a of [...d1.additions, ...d3.additions, ...d4.additions]) delete rest.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
     for (const c of d3.changes) {
       let cur = rest.tools.find((t: any) => t.name === c.tool);

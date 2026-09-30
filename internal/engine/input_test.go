@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -258,7 +259,18 @@ func TestMutationInputVectors(t *testing.T) {
 				}
 				if !ok.Bool() {
 					msg, _ := exp.Get("message")
-					if err == nil || err.Error() != msg.Str() {
+					if err == nil {
+						t.Fatalf("%s: accepted, want error %q", sf.name, msg.Str())
+					}
+					if sf.s == SurfaceNative {
+						// D.4.1 (contracts §16): the native missing-hash
+						// refusal appends guidance; pinned and compared.
+						if note := checkD41Text(t, id.Str(), err.Error(), msg.Str()); note != "" {
+							d41Mu.Lock()
+							d41InputNotes = append(d41InputNotes, note)
+							d41Mu.Unlock()
+						}
+					} else if err.Error() != msg.Str() {
 						t.Fatalf("%s: error %v, want %q", sf.name, err, msg.Str())
 					}
 					continue
@@ -279,4 +291,12 @@ func TestMutationInputVectors(t *testing.T) {
 	if ran != 39 || diverged != 2 {
 		t.Fatalf("ran %d mutating input vectors (want 39), %d divergences (want 2: D2, D.3)", ran, diverged)
 	}
+	sort.Strings(d41InputNotes)
+	t.Logf("D.4.1 mutating input vectors: %d", len(d41InputNotes))
+	for _, n := range d41InputNotes {
+		t.Log(n)
+	}
+	d41Write(t, "validation/input/")
 }
+
+var d41InputNotes []string

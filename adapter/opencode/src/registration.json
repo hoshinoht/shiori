@@ -3,7 +3,7 @@
   "tools": [
     {
       "name": "workplan_create",
-      "description": "Create a structured workplan under .opencode/workplan as a JSON document plus a linked Markdown plan.",
+      "description": "Create a structured workplan under .opencode/workplan as a JSON document plus a linked Markdown plan. With overwrite=true, pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -235,7 +235,7 @@
     },
     {
       "name": "workplan_update",
-      "description": "Update workplan metadata, the linked plan file, spec files, findings, dependencies, or targeted phase and step fields without rewriting the whole plan.",
+      "description": "Update workplan metadata, the linked plan file, spec files, findings, dependencies, or targeted phase and step fields without rewriting the whole plan. Pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -897,7 +897,7 @@
     },
     {
       "name": "workplan_patch",
-      "description": "Patch only the linked Markdown plan with a restricted single Update File patch; use workplan_update for JSON changes.",
+      "description": "Patch only the linked Markdown plan with a restricted single Update File patch; use workplan_update for JSON changes. Pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -931,7 +931,7 @@
     },
     {
       "name": "workplan_reset",
-      "description": "Reset a workplan: draft resets every status (plan, phases, steps) to draft and removes the checkpoint, keeping phases, steps, notes, findings and dependencies; wipe clears phases, findings and notes after a preview and an exact confirmation, archiving the originals first; markdown-only only regenerates the linked Markdown from the JSON.",
+      "description": "Reset a workplan: draft resets every status (plan, phases, steps) to draft and removes the checkpoint, keeping phases, steps, notes, findings and dependencies; wipe clears phases, findings and notes after a preview and an exact confirmation, archiving the originals first; markdown-only only regenerates the linked Markdown from the JSON. Pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1027,7 +1027,7 @@
     },
     {
       "name": "workplan_checkpoint",
-      "description": "Write a concise, structured handoff checkpoint for the next session without replacing the full workplan. Include the current task, immediate next action, blockers, validation, and safety guardrails.",
+      "description": "Write a concise, structured handoff checkpoint for the next session without replacing the full workplan. Include the current task, immediate next action, blockers, validation, and safety guardrails. Pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1098,7 +1098,7 @@
     },
     {
       "name": "workplan_compact",
-      "description": "Preview or archive explicitly selected workplan history. Apply mode requires a fresh checkpoint and exact confirmation; it snapshots the original JSON, linked Markdown, and checkpoint before removing only selected completed phases, notes, and explicitly resolved findings.",
+      "description": "Preview or archive explicitly selected workplan history. Apply mode requires a fresh checkpoint and exact confirmation; it snapshots the original JSON, linked Markdown, and checkpoint before removing only selected completed phases, notes, and explicitly resolved findings. In apply mode, pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1374,6 +1374,53 @@
       {
         "tool": "workplan_compact_preview",
         "property": "noteRollover"
+      }
+    ]
+  },
+  "d4_1": {
+    "note": "Approved design change D.4.1 (docs/contracts.md §16, 2026-10-01): one sentence about expectedHash on the six mutating tools' descriptions. Restoring each listed change to its previous value (before the d3 changes), then applying the d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    "changes": [
+      {
+        "tool": "workplan_create",
+        "path": [
+          "description"
+        ],
+        "previous": "Create a structured workplan under .opencode/workplan as a JSON document plus a linked Markdown plan."
+      },
+      {
+        "tool": "workplan_update",
+        "path": [
+          "description"
+        ],
+        "previous": "Update workplan metadata, the linked plan file, spec files, findings, dependencies, or targeted phase and step fields without rewriting the whole plan."
+      },
+      {
+        "tool": "workplan_patch",
+        "path": [
+          "description"
+        ],
+        "previous": "Patch only the linked Markdown plan with a restricted single Update File patch; use workplan_update for JSON changes."
+      },
+      {
+        "tool": "workplan_reset",
+        "path": [
+          "description"
+        ],
+        "previous": "Reset a workplan: draft resets every status (plan, phases, steps) to draft and removes the checkpoint, keeping phases, steps, notes, findings and dependencies; wipe clears phases, findings and notes after a preview and an exact confirmation, archiving the originals first; markdown-only only regenerates the linked Markdown from the JSON."
+      },
+      {
+        "tool": "workplan_checkpoint",
+        "path": [
+          "description"
+        ],
+        "previous": "Write a concise, structured handoff checkpoint for the next session without replacing the full workplan. Include the current task, immediate next action, blockers, validation, and safety guardrails."
+      },
+      {
+        "tool": "workplan_compact",
+        "path": [
+          "description"
+        ],
+        "previous": "Preview or archive explicitly selected workplan history. Apply mode requires a fresh checkpoint and exact confirmation; it snapshots the original JSON, linked Markdown, and checkpoint before removing only selected completed phases, notes, and explicitly resolved findings."
       }
     ]
   }

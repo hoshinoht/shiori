@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://shiori.invalid/schema/v1/tools/workplan_checkpoint.input.schema.json",
   "title": "workplan_checkpoint input (native surface)",
-  "description": "Record a checkpoint bound to the current plan manifest.",
+  "description": "Record a checkpoint bound to the current plan manifest. Pass expectedHash = the stateHash from your latest read or successful write.",
   "type": "object",
   "properties": {
     "id": {
@@ -76,7 +76,7 @@
     {
       "when": "always (native)",
       "path": "expectedHash",
-      "native": "Native existing-state writes require the current stateHash"
+      "native": "Native existing-state writes require the current stateHash — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first"
     }
   ],
   "x-shiori-core-surface": "The standalone CLI/core surface additionally accepts optional 'workspaceRoot' (string); the native surface rejects it as an unrecognized key. The allOf conditions are native-surface rules; the core surface keeps expectedHash optional for legacy direct calls (a concurrent change must still be detected), and uses the 'core' messages in x-shiori-rules.",

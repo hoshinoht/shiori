@@ -9,8 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Sections 11–15 record the approved D.1, D.2, D.3, D.3.1 and D.4
-design changes, which deliberately depart from the reference.
+spell out). Sections 11–16 record the approved D.1, D.2, D.3, D.3.1, D.4
+and D.4.1 design changes, which deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -1307,3 +1307,61 @@ key `d4`) lists the two additions; removing the `d1`, `d3` and `d4` keys
 and their additions and restoring the `d3` changes reproduces the
 reference snapshot byte-for-byte (`d1.referenceSha256`, checked by
 `plugin.test.ts`).
+
+## 16. Approved design changes D.4.1 (APPROVED 2026-10-01)
+
+D.4.1, approved 2026-10-01: expectedHash guidance. In real use an agent
+called `workplan_patch` right after a `workplan_update` without
+`expectedHash` and got `Invalid patch input: expectedHash: Native
+existing-state writes require the current stateHash`. The refusal is
+correct and stays; only the guidance changes. Everything not listed here
+stays as in sections 1–15: every input shape, error class, refusal
+condition and output member, the thirteen identities and the corpus
+formats.
+
+**1. Missing expectedHash (native).** The native refusal of every
+existing-state writer (`workplan_update`, `patch`, `reset`, `checkpoint`,
+`compact` apply and `create` with `overwrite: true`) keeps its path, class
+(`invalid_input`) and leading sentence and appends guidance:
+`expectedHash: Native existing-state writes require the current stateHash
+— pass expectedHash set to the stateHash from your last successful write,
+or re-read with workplan_resume or workplan_inspect first`. It names no
+hash (the current hash is not echoed, so an agent re-reads before it
+retries). The guidance contains no `; ` so the issue list stays separable.
+The core surface message (`overwrite requires the current stateHash`) and
+the CLI usage error are unchanged. The `x-shiori-rules` native messages in
+the six `schema/v1/tools` input schemas carry the new text.
+
+**2. Stale expectedHash.** The `stale_state` refusal keeps its reference
+text (`Stale expectedHash; current stateHash is <hash>. Reread the plan and
+recompute the mutation.`, which already names the current hash as the
+reference did; the protocol error's `currentStateHash` is unchanged) and
+appends ` Use workplan_resume or workplan_inspect for that re-read before
+retrying, so the retry is based on the current plan.` The addition names no
+hash. The commit-time `Workplan state changed after preparation: ...`
+refusal (storage layer) is unchanged.
+
+**3. Model-facing descriptions.** One sentence about `expectedHash` is
+appended to the descriptions of the six mutating tools, in the adapter
+registration snapshot (`adapter/opencode/src/registration.json`, generated
+by `scripts/snapshot-registration.ts`, key `d4_1`) and in the top-level
+`description` of the matching `schema/v1/tools` input schemas:
+`Pass expectedHash = the stateHash from your latest read or successful
+write.` (`workplan_update`, `patch`, `reset`, `checkpoint`), prefixed
+`With overwrite=true, pass …` for `workplan_create` and `In apply mode,
+pass …` for `workplan_compact`. `workplan_compact_preview` (read-only) is
+unchanged. `d4_1.changes` records each description's previous value (for
+`workplan_reset` the D.3 text); restoring them, then removing the `d1`,
+`d3` and `d4` additions and restoring the `d3` changes, reproduces the
+reference snapshot byte-for-byte (`d1.referenceSha256`, checked by
+`plugin.test.ts`).
+
+The oracle corpus is not edited. Vectors whose error text changes are
+pinned in [`testdata/d4_1/expectations.json`](../testdata/d4_1/expectations.json)
+(SHA-256 and UTF-16 length of the root-normalized error text) and pass a
+comparator (`internal/engine/d4_1_vectors_test.go`): each guidance suffix
+directly follows its reference sentence, echoes no hash, and removing the
+suffixes gives the oracle text byte-for-byte. There are 6 such vectors: 5
+mutating-input vectors (native surface; core unchanged) and 1 mutation
+vector (`mutations/create-overwrite-stale-hash`). Every other vector is
+unchanged from D.4.

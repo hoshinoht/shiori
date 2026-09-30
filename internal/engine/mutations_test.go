@@ -145,7 +145,15 @@ func TestMutationVectors(t *testing.T) {
 		t.Log(n)
 	}
 	d31Write(t, "mutations/")
+	sort.Strings(d41MutationNotes)
+	t.Logf("D.4.1 mutation vectors: %d", len(d41MutationNotes))
+	for _, n := range d41MutationNotes {
+		t.Log(n)
+	}
+	d41Write(t, "mutations/")
 }
+
+var d41MutationNotes []string
 
 var d31Notes []string
 
@@ -169,8 +177,12 @@ func checkMutationVector(t *testing.T, v *mutationVector, root testutil.Root, e 
 		if runErr == nil {
 			t.Fatalf("expected error %q, got output %s", v.Expect.Message, out.String())
 		}
-		if got := root.Normalize(runErr.Error()); got != v.Expect.Message {
-			t.Fatalf("error\n got %q\nwant %q", got, v.Expect.Message)
+		// D.4.1 (contracts §16): the stale-hash refusal appends guidance;
+		// pinned and compared against the oracle text.
+		if note := checkD41Text(t, v.ID, root.Normalize(runErr.Error()), v.Expect.Message); note != "" {
+			d41Mu.Lock()
+			d41MutationNotes = append(d41MutationNotes, note)
+			d41Mu.Unlock()
 		}
 	} else {
 		if runErr != nil {

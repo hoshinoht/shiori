@@ -1,8 +1,8 @@
 # Maintenance-safe handoff — 2026-09-30
 
-## Resume point (paused after D.4)
+## Resume point (paused after D.4.1)
 
-The owner paused after stage D.4. Read this section first; the stage
+The owner paused after stage D.4.1. Read this section first; the stage
 sections below keep the full record.
 
 **State.** Every stage is done; the owner commits each one after review.
@@ -20,6 +20,7 @@ sections below keep the full record.
 | D.3 safe reset, corrupt-plan repair, host degradation | done | `83a3414` |
 | D.3.1 step gate, repair archive, resume diagnostics | done | `df74f35` (pushed) |
 | D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
+| D.4.1 expectedHash guidance (error text, tool descriptions) | done | (owner adds id) |
 
 **Live.** hoshi-opencode2 (`~/.config/opencode`, remote
 `git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
@@ -61,7 +62,7 @@ OpenCode. Nothing in
 
 - In the repository: the frozen oracle corpus and fixtures (`testdata/`,
   `testdata/MANIFEST.json` pins the oracle hashes), the stage pins
-  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4/expectations.json`), perf
+  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4`, `d4_1/expectations.json`), perf
   fixtures (`testdata/perf/*.tar.gz`, unpacked by the benchmarks into
   `$TMPDIR/shiori-perf-<go version>/`).
 - Owner-plan evidence (never copied into the repository): read-only
@@ -1390,9 +1391,75 @@ after. Before is `df74f35` (D.3.1), after is the working tree.
 2. Mixed writers: the reference plugin has no advice and no
    `noteRollover`; stage E's one-writer-per-root rule is unchanged.
 
+## Stage D.4.1 — expectedHash guidance: DONE (owner adds id)
+
+Base `470e52d` (D.4 = `02d2333`). Nothing was committed. The pinned
+`vendor/shiori` copy (`02d2333`) that the owner's OpenCode uses and
+everything under `~/.config/opencode` were not touched; no OpenCode or
+`shiori serve` process was started, stopped or restarted (the adapter
+`bun test` runs its own temporary stdio children). Found in real use on
+2026-10-01: an agent called `workplan_patch` right after a
+`workplan_update` without `expectedHash`. The refusal is correct and
+stays; only the guidance changed. Decisions and exact texts are in
+[contracts §16](contracts.md#16-approved-design-changes-d41-approved-2026-10-01).
+No input shape, error class or output member changed.
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| missing hash | native refusal (update, patch, reset, checkpoint, compact apply, create overwrite) appends ` — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first`; leading sentence, path and class unchanged; no hash echoed; core surface unchanged | `internal/engine/mutinput.go` (`nativeHashGuidance`, `msgNativeHash`) |
+| stale hash | `stale_state` refusal keeps its reference text and appends ` Use workplan_resume or workplan_inspect for that re-read before retrying, so the retry is based on the current plan.` (the reference text already names the current hash; the addition names none) | `internal/engine/mutate.go` (`staleHashGuidance`) |
+| descriptions | one `expectedHash` sentence on the six mutating tools (create: `With overwrite=true, …`; compact: `In apply mode, …`; others `Pass expectedHash = the stateHash from your latest read or successful write.`) | `adapter/opencode/src/registration.json` (key `d4_1`), `scripts/snapshot-registration.ts`, `schema/v1/tools/workplan_{create,update,patch,reset,checkpoint,compact}.input.schema.json` (`description`, `x-shiori-rules` native text) |
+
+`registration.json` was updated by applying the new D.4.1 block of the
+snapshot script to the committed D.4 snapshot (a JSON round trip checked
+byte-identical first), not by re-running the script against the
+reference plugin in `~/.config/opencode` (off limits during this stage;
+its working tree also has uncommitted changes). The script now produces
+the same `d4_1` key when it is next run.
+
+### Vector expectations
+
+The oracle corpus is unchanged. `testdata/d4_1/expectations.json` pins 6
+vectors (SHA-256 and UTF-16 length of the error text): 5 mutating-input
+vectors on the native surface (`compact--apply-no-token`,
+`create--overwrite-without-hash`, `update--no-hash`,
+`update--recovery-with-replaceMarkdown`, `update--recovery-with-title`)
+and 1 mutation vector (`mutations/create-overwrite-stale-hash`). The
+comparator (`internal/engine/d4_1_vectors_test.go`) requires each
+guidance to follow its reference sentence, to contain no hash, and the
+text without the guidance to equal the oracle message byte-for-byte.
+`SHIORI_D41_UPDATE=1 go test ./internal/engine -run
+'TestMutationInputVectors|TestMutationVectors'` re-pins. Everything else
+is byte-identical to D.4: tools 149 pass / 50 approved, resume 74 / 13,
+paging 43 / 31, mutations 56 pass (one of them the D.4.1 pin) / 14
+declared divergences, mutating input 39 (2 earlier divergences, 5 D.4.1
+pins on the native surface), 0 fail.
+
+### New tests
+
+- `d4_1_vectors_test.go`: the pin/comparator used by
+  `TestMutationInputVectors` and `TestMutationVectors`, and
+  `TestD41Guidance` (all six native writers carry the guidance with class
+  `invalid_input` and no hash; the core surface never does; the stale
+  message keeps its prefix, names the hash once and has class
+  `stale_state`).
+- Adapter `plugin.test.ts`: the registration test checks the `d4_1`
+  changes (six tools, description-only, exact sentence) and restores
+  them before the D.1/D.3/D.4 reversal; `referenceSha256` unchanged.
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1 -timeout 20m` per package: all pass (engine
+  164 s).
+- `bun test` in `adapter/opencode`: 49 pass, 1 skip (opt-in runtime smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+
 ## Resume after maintenance
 
-See [Resume point](#resume-point-paused-after-d4) at the top. The Go
+See [Resume point](#resume-point-paused-after-d41) at the top. The Go
 toolchain observed is 1.27.1 darwin/arm64; build and test commands are in
 the [README](../README.md). If the oracle files change, the corpus is
 stale: compare their sha256 against `testdata/MANIFEST.json` →

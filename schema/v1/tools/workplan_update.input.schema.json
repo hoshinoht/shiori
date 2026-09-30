@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://shiori.invalid/schema/v1/tools/workplan_update.input.schema.json",
   "title": "workplan_update input (native surface)",
-  "description": "Update plan metadata, links, findings, dependencies or targeted phase/step fields, or explicitly recover a pending transaction.",
+  "description": "Update plan metadata, links, findings, dependencies or targeted phase/step fields, or explicitly recover a pending transaction. Pass expectedHash = the stateHash from your latest read or successful write.",
   "type": "object",
   "properties": {
     "id": {
@@ -527,7 +527,7 @@
     {
       "when": "always (native)",
       "path": "expectedHash",
-      "native": "Native existing-state writes require the current stateHash"
+      "native": "Native existing-state writes require the current stateHash — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first"
     },
     {
       "when": "recovery set and any key other than id/expectedHash/recovery has a non-undefined value (native counts replaceMarkdown, even false); core excludes workspaceRoot and replaceMarkdown=false",

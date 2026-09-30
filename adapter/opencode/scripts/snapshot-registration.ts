@@ -2,8 +2,9 @@
 // plugin so that the adapter registers byte-identical tool descriptions and
 // input schemas (same identities, argument shapes and model-facing text),
 // plus the approved D.1 addition (workplan_read includeNotes), the D.3
-// reset changes (wipe mode, previewToken, confirmation, accurate text) and
-// the D.4 compaction noteRollover selector.
+// reset changes (wipe mode, previewToken, confirmation, accurate text),
+// the D.4 compaction noteRollover selector and the D.4.1 expectedHash
+// sentence on the mutating tools' descriptions.
 //
 //   bun scripts/snapshot-registration.ts /path/to/workplan-tools/src/core > src/registration.json
 //
@@ -81,6 +82,25 @@ for (const name of ["workplan_compact", "workplan_compact_preview"]) {
   }
   input.properties = next;
 }
+// Approved design change D.4.1 (docs/contracts.md §16, 2026-10-01): one
+// sentence about expectedHash on each mutating tool's description. Each
+// change records the previous value (the reference text, or the D.3 text
+// for workplan_reset) so the test can restore it before the d3 changes.
+const hashSentence = "pass expectedHash = the stateHash from your latest read or successful write.";
+const d41Sentences: Array<[string, string]> = [
+  ["workplan_create", `With overwrite=true, ${hashSentence}`],
+  ["workplan_update", `P${hashSentence.slice(1)}`],
+  ["workplan_patch", `P${hashSentence.slice(1)}`],
+  ["workplan_reset", `P${hashSentence.slice(1)}`],
+  ["workplan_checkpoint", `P${hashSentence.slice(1)}`],
+  ["workplan_compact", `In apply mode, ${hashSentence}`],
+];
+const d41Changes: Array<{ tool: string; path: string[]; previous: unknown }> = [];
+for (const [name, sentence] of d41Sentences) {
+  const tool = tools.find((t) => t.name === name)!;
+  d41Changes.push({ tool: name, path: ["description"], previous: tool.description });
+  tool.description = `${tool.description} ${sentence}`;
+}
 console.log(JSON.stringify({
   source: "reference workplan-tools native registration (generated; do not edit)",
   tools,
@@ -97,5 +117,9 @@ console.log(JSON.stringify({
   d4: {
     note: "Approved design change D.4 (docs/contracts.md §15, 2026-09-30): the note rollover selector of compaction (spec 06 P3). Removing this key with the d1/d3 keys, every listed addition, and restoring each d3 change reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
     additions: [{ tool: "workplan_compact", property: "noteRollover" }, { tool: "workplan_compact_preview", property: "noteRollover" }],
+  },
+  d4_1: {
+    note: "Approved design change D.4.1 (docs/contracts.md §16, 2026-10-01): one sentence about expectedHash on the six mutating tools' descriptions. Restoring each listed change to its previous value (before the d3 changes), then applying the d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    changes: d41Changes,
   },
 }, null, 2));

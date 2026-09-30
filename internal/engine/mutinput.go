@@ -385,8 +385,13 @@ func ParseMutationInput(tool string, v ojson.Value, s Surface) (ojson.Value, err
 	return data, nil
 }
 
+// nativeHashGuidance is appended to the native missing-expectedHash
+// refusal (D.4.1, contracts §16): it names where the hash comes from
+// without echoing the current one, so an agent re-reads before retrying.
+const nativeHashGuidance = " — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first"
+
 const (
-	msgNativeHash       = "Native existing-state writes require the current stateHash"
+	msgNativeHash       = "Native existing-state writes require the current stateHash" + nativeHashGuidance
 	msgCoreOverwrite    = "overwrite requires the current stateHash"
 	msgRecoveryExcl     = "recovery is mutually exclusive with ordinary update fields"
 	msgApplyConfirm     = "Apply requires confirmation=ARCHIVE_SELECTED_HISTORY"

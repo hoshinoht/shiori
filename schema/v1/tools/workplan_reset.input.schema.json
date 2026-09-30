@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://shiori.invalid/schema/v1/tools/workplan_reset.input.schema.json",
   "title": "workplan_reset input (native surface)",
-  "description": "Reset a plan's statuses to draft (keeping its content), wipe its phases/findings/notes after a preview and confirmation (archiving the originals), or regenerate only its Markdown.",
+  "description": "Reset a plan's statuses to draft (keeping its content), wipe its phases/findings/notes after a preview and confirmation (archiving the originals), or regenerate only its Markdown. Pass expectedHash = the stateHash from your latest read or successful write.",
   "type": "object",
   "properties": {
     "id": {
@@ -57,7 +57,7 @@
     {
       "when": "always (native)",
       "path": "expectedHash",
-      "native": "Native existing-state writes require the current stateHash"
+      "native": "Native existing-state writes require the current stateHash — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first"
     },
     {
       "when": "previewToken or confirmation present and mode is not wipe (D.3)",
