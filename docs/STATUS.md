@@ -19,17 +19,18 @@ sections below keep the full record.
 | D.2 dependency graph drives work (X6) | done | `e47e667` |
 | D.3 safe reset, corrupt-plan repair, host degradation | done | `83a3414` |
 | D.3.1 step gate, repair archive, resume diagnostics | done | `df74f35` (pushed) |
-| D.4 compaction advisor (P2) and note rollover (P3) | done, in the working tree | the owner adds the id on commit |
+| D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
 
 **Live.** hoshi-opencode2 (`~/.config/opencode`, remote
 `git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
-tools: git submodule `vendor/shiori` pinned to `df74f35` (D.3.1), plugin
+tools: git submodule `vendor/shiori` pinned to `02d2333` (D.4), plugin
 entry `./vendor/shiori/adapter/opencode` with option `bin:
 {env:HOME}/.config/opencode/vendor/shiori/shiori` (a locally built
 binary, not tracked). The reference plugin `./packages/workplan-tools` is
 the rollback (swap back once `workplan_doctor` shows no pending journal;
-never register both). D.4 is not live until the owner bumps the submodule,
-rebuilds `vendor/shiori/shiori` and restarts OpenCode. Nothing in
+never register both). After each future stage: bump the submodule,
+rebuild `vendor/shiori/shiori`, run hoshi-opencode2 `bun test` and restart
+OpenCode. Nothing in
 `~/.config/opencode` is changed by Shiori stages.
 
 **Queue, in order** (each needs its own owner approval):
@@ -1247,7 +1248,7 @@ before and after. Before is `83a3414` (D.3), after is the working tree.
    classified as generated either way). Stage E's one-writer-per-root rule
    is unchanged.
 
-## Stage D.4 — compaction advisor and note rollover: DONE (uncommitted, for owner review)
+## Stage D.4 — compaction advisor and note rollover: DONE (committed 02d2333)
 
 Base `df74f35`. Nothing was committed. The pinned `vendor/shiori` copy
 (`df74f35`) that the owner's OpenCode uses and everything under
