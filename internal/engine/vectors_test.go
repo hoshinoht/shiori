@@ -126,6 +126,12 @@ func runTool(t *testing.T, e *Engine, tool string, input ojson.Value) (string, e
 		}
 		_, text, err := e.Resume(in)
 		return text, err
+	case "workplan_compact":
+		data, err := ParseMutationInput("compact", input, SurfaceCore)
+		if err != nil {
+			return "", err
+		}
+		return pretty(e.CompactPreview(data))
 	}
 	return "", errDeferred
 }
@@ -494,23 +500,25 @@ func backslashValidate(v *vector, got string) error {
 }
 
 var divergences = map[string]divergence{
-	"tools/legacy-fields/legacy-plan--read":             {"D4 exact unknown-number spelling", legacyNumbers},
-	"tools/legacy-fields/legacy-plan--read-no-markdown": {"D4 exact unknown-number spelling", legacyNumbers},
-	"tools/list-mixed/list":                             {"D6 UTF-16 order (list is compared as a set)", unorderedList},
-	"tools/list-mixed/doctor":                           {"D6 UTF-16 order (plans/sidecars compared as sets)", unorderedList},
-	"tools/list-mixed/doctor-limit2":                    {"D6 UTF-16 order changes which plans fill a limited page", limitedDoctor},
-	"tools/list-mixed/a-10--doctor":                     {"D6 sidecars sorted by name", unorderedList},
-	"tools/list-mixed/a-9--doctor":                      {"D6 sidecars sorted by name", unorderedList},
-	"tools/list-mixed/a-plan--doctor":                   {"D6 sidecars sorted by name", unorderedList},
-	"tools/list-mixed/b-plan--doctor":                   {"D6 sidecars sorted by name", unorderedList},
-	"tools/list-mixed/broken--doctor":                   {"D6 sidecars sorted by name", unorderedList},
-	"tools/list-mixed/Bad Name--doctor":                 {"D6 sidecars sorted by name", unorderedList},
-	"tools/list-mixed/UPPER--doctor":                    {"D6 sidecars sorted by name", unorderedList},
-	"tools/pending-journal/list":                        {"D6 sidecars sorted by name", unorderedList},
-	"tools/pending-journal/doctor":                      {"D6 sidecars sorted by name", unorderedList},
-	"tools/pending-journal/tx-plan--doctor":             {"D6 sidecars sorted by name", unorderedList},
-	"tools/pending-journal-precreate/list":              {"D6 sidecars sorted by name", unorderedList},
-	"tools/pending-journal-precreate/doctor":            {"D1 journal-only interrupted stateHash (+D6 order)", journalOnlyDoctor},
-	"tools/pending-journal-precreate/tx-new--doctor":    {"D1 journal-only interrupted stateHash (+D6 order)", journalOnlyDoctor},
-	"tools/unicode/unicode-plan--validate":              {"D5 ambiguous backslash spec path diagnosed", backslashValidate},
+	"tools/legacy-fields/legacy-plan--read":               {"D4 exact unknown-number spelling", legacyNumbers},
+	"tools/legacy-fields/legacy-plan--read-no-markdown":   {"D4 exact unknown-number spelling", legacyNumbers},
+	"tools/list-mixed/list":                               {"D6 UTF-16 order (list is compared as a set)", unorderedList},
+	"tools/list-mixed/doctor":                             {"D6 UTF-16 order (plans/sidecars compared as sets)", unorderedList},
+	"tools/list-mixed/doctor-limit2":                      {"D6 UTF-16 order changes which plans fill a limited page", limitedDoctor},
+	"tools/list-mixed/a-10--doctor":                       {"D6 sidecars sorted by name", unorderedList},
+	"tools/list-mixed/a-9--doctor":                        {"D6 sidecars sorted by name", unorderedList},
+	"tools/list-mixed/a-plan--doctor":                     {"D6 sidecars sorted by name", unorderedList},
+	"tools/list-mixed/b-plan--doctor":                     {"D6 sidecars sorted by name", unorderedList},
+	"tools/list-mixed/broken--doctor":                     {"D6 sidecars sorted by name", unorderedList},
+	"tools/list-mixed/Bad Name--doctor":                   {"D6 sidecars sorted by name", unorderedList},
+	"tools/list-mixed/UPPER--doctor":                      {"D6 sidecars sorted by name", unorderedList},
+	"tools/pending-journal/list":                          {"D6 sidecars sorted by name", unorderedList},
+	"tools/pending-journal/doctor":                        {"D6 sidecars sorted by name", unorderedList},
+	"tools/pending-journal/tx-plan--doctor":               {"D6 sidecars sorted by name", unorderedList},
+	"tools/pending-journal-precreate/list":                {"D6 sidecars sorted by name", unorderedList},
+	"tools/pending-journal-precreate/doctor":              {"D1 journal-only interrupted stateHash (+D6 order)", journalOnlyDoctor},
+	"tools/pending-journal-precreate/tx-new--doctor":      {"D1 journal-only interrupted stateHash (+D6 order)", journalOnlyDoctor},
+	"tools/unicode/unicode-plan--validate":                {"D5 ambiguous backslash spec path diagnosed", backslashValidate},
+	"tools/large-paging/big-plan--compact-preview":        {"D10 root-independent preview token and Shiori removals digest", comparePreview},
+	"tools/checkpoint-stale-v2/cp-stale--compact-preview": {"D10 root-independent preview token and Shiori removals digest", comparePreview},
 }

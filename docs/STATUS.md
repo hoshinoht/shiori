@@ -2,7 +2,9 @@
 
 ## Authorization
 
-The owner has authorized implementation of stages A–D (spec 05 §2). Stages E–G
+The owner has authorized implementation of stages A–D (spec 05 §2).
+Stage C owner decisions (contracts §9): D1 recovery accepted; D10 changed
+to a root-independent preview token. Stages E–G
 are still unauthorized. So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
 
@@ -70,11 +72,7 @@ Licensing: the oracle (partly GPL-2.0, by other authors) was executed only. Its
 outputs are data. No reference source was copied or paraphrased. The harness
 scripts live outside this repository, and only their fingerprints are recorded.
 
-## Stage B — read-only Go core: DONE (uncommitted, for owner review)
-
-Nothing was committed. All stage B changes are in the working tree:
-`go.mod`, `go.sum`, `cmd/`, `internal/`, `testdata/perf/go-baseline-results.json`
-and edits to `README.md`, `docs/contracts.md`, `docs/baseline.md` and this file.
+## Stage B — read-only Go core: DONE (committed `7a899e5`)
 
 ### What exists
 
@@ -175,7 +173,7 @@ and edits to `README.md`, `docs/contracts.md`, `docs/baseline.md` and this file.
 | D11 | Done | Contracts §6.2 prefix rule. The Go parser emits its own detail. |
 | D12 | Stage C | Reset. |
 
-### Open issues for stage C (and owner decisions)
+### Open issues from stage B (resolved at stage C; see contracts §10a)
 
 1. The resume list-cap cut-over between `maxChars` 4097 and 11999 is not
    pinned by the corpus; Go uses 8192 (contracts §10). A vector at, say,
@@ -205,13 +203,141 @@ and edits to `README.md`, `docs/contracts.md`, `docs/baseline.md` and this file.
    table before optimizing further. Profiling shows large-buffer page
    faulting and the parse as the dominant costs.
 
+## Stage C — transactional Go core: DONE (uncommitted, for owner review)
+
+Nothing was committed. All stage C changes are in the working tree (new
+`internal/storage/`, new engine/cli files, and edits listed by `git status`).
+
+### What exists
+
+| Package / file | Role |
+| --- | --- |
+| `internal/storage` | Prepared `Intent` (exact read preconditions, write/delete/archive targets with before/after digests and modes, staging, journal, lock-protocol paths, directories; `Digest()` binds an approval); locks with lock-owner-v1 metadata; `Commit` (workspace lock → plan lock → locked recheck → exclusive same-directory staging with fsync → durable journal → atomic publication → directory sync → journal removal → release); explicit recovery reuses the same engine; fault-injection points |
+| `internal/engine/mutinput.go` | Strict input parsing for the 7 mutating tools on both surfaces, including every `x-shiori-rules` refinement; unknown keys reject at every level (D2) |
+| `internal/engine/{create,update,patch,reset,checkpoint,compact,recovery}.go` | Preparation for each writer (no filesystem side effects); `Execute` = authorize exactly that intent, then commit |
+| `internal/engine/mutate.go` | `Authorizer` interface, `Prepared`, workspace linkage (pending-journal claims, Markdown ownership), D4 refusal, stale-hash check |
+| `internal/cli/mutate.go` | CLI mutations: prints the prepared intent, TTY `yes` prompt or `--yes`, `--expected-hash`/`--legacy-unhashed`, compact `--apply --preview-token --confirm`, `update --recovery` |
+
+Every writer — create, update (including dependencies and recovery),
+patch, reset, checkpoint and compaction apply — goes through `Prepare` →
+`Authorizer` → `storage.Commit`; there is no other write path (S01).
+Compaction preview is read-only (checked by the corpus read-only gate).
+
+### Evidence (darwin/arm64, Go 1.27.1)
+
+- `go vet ./...` (darwin and `GOOS=linux`): clean. `go test ./...` and
+  `go test -race ./...`: all packages pass.
+- Vector parity:
+
+  | Category (vector files) | Pass | Approved divergence | Fail |
+  | --- | --- | --- | --- |
+  | validation/input, mutating tools (39) | 38 | 1 (D2) | 0 |
+  | mutations (70) | 63 | 7 | 0 |
+  | tools (199, incl. 2 compact-preview) | 178 | 21 (19 stage B + 2 D10) | 0 |
+  | resume (87), paging (74) | 161 | 0 | 0 |
+
+  The 7 mutation divergences, each checked by a comparator proving only
+  the approved difference: `update-legacy-preserve` and
+  `reset-legacy-no-specfiles` (D4 refusal, no write, no prompt);
+  `update-duplicate-step-ids` (D7 path text); `reset-markdown-only-generated`
+  (D12, zero authorizations); `update-recovery-precreate-resume` (D1:
+  recovers with the doctor hash); `create-over-precreate-journal` (same
+  refusal, raised before authorization); `compact-apply-valid` (D10: every
+  written byte identical after substituting token, archive name and
+  removals digest). The two compact-preview vectors are identical except
+  the token, digest and lock-protocol auxiliary paths.
+- Fault injection (S04/S08): 8 writers (create, create-overwrite, update
+  with move, update with dependencies, patch, reset, checkpoint, compaction)
+  × 12 fault points (directories, locked, each staging, journal staged,
+  journal published, journal synced, each publication, directory sync,
+  cleanup) × resume/rollback: 172 runs pass, 20 skip (point not reached).
+  Before the journal the artifacts are the old state; after it the error is
+  `recovery_required`, doctor and read report it, and both `resume` and
+  `rollback` restore exactly the new or the old state with no lock or
+  staging file left.
+- Separate-process barriers (S02): create/create on one absent destination
+  (same plan, and three different plans sharing one Markdown path),
+  move/move of three plans onto one destination, four same-plan updates
+  with the same expectedHash: exactly one winner each, losers refused, no
+  duplicate ownership, no lost update. Pending-journal claims are enforced
+  at preparation and under the lock; an unreadable journal fails closed.
+- Locks (S11): live, reused-PID, foreign-host, ambiguous and empty owners
+  are never reclaimed however old; a dead owner is not reclaimed within the
+  grace or while the file is fresh; a proven-dead owner past the grace is
+  reclaimed (also with a real dead PID); release never unlinks a replacement
+  owner's lock; reclaim verifies the nonce; waiting honours cancellation.
+- Cancellation/denial (S03): for all 8 writers, preparation alone, denial,
+  cancellation before authorization and a late approval after cancellation
+  leave the root byte-, mode- and mtime-identical; prepared intents are
+  single-use. Cancellation after the durable journal stops publication and
+  reports an uncertain, recovery-required outcome.
+- Recovery validation (S05–S07): foreign plan/arbitrary/escaping targets,
+  workplanId mismatch, duplicate targets, operation-kind mismatch, unknown
+  operation, invented Markdown link, deleted Markdown, overwritten or
+  foreign archive, move without its new Markdown, move overwriting an
+  existing file, move keeping its old Markdown, and third-state edits are
+  all rejected before authorization in both modes, with nothing written.
+- C01/D4 positive case: an unrelated update keeps unknown members with
+  exact number spelling (`12345678901234567890`, `1.0`, `1e+21`) and leaves
+  an absent legacy `specFiles` absent. D5 refusals and symlink refusal
+  tested.
+- Real-plan comparison (owner's 13-phase plan; two fresh `cp -Rp` copies of
+  the read-only fixture per operation; the reference run as a black box on
+  one, Shiori on the other, both with the same frozen clock):
+  - Byte-identical output and resulting files: list, read, read without
+    Markdown, read of one step, inspect, validate, doctor, doctor with id,
+    update (step status change), update (appended note), patch (one
+    localized Markdown insertion), checkpoint.
+  - Resume at 4096/12000/64000: initially different; this found three
+    stage B bugs (overflow flag, recentValidation danger class, summary
+    truncation order), now fixed and byte-identical.
+  - Compact preview: identical except the D10 token/digest and the
+    lock-protocol auxiliary paths (after one fix: preserved Markdown is not
+    a compaction target).
+  - The fixture's bytes were unchanged afterwards; all temporary copies and
+    captured outputs were deleted. Nothing from it is in the repository.
+- Stage B fixes found during stage C: `.MD` plan files are rejected (as in
+  the reference); dependency validation texts; resume caps (contracts §10a).
+
+### D-fixes: disposition after stage C
+
+| # | Stage C |
+| --- | --- |
+| D1 | Done: journal-only plans are recoverable with the doctor hash as expectedHash; create over a pre-create journal is refused before authorization |
+| D2 | Done: unknown nested input keys reject with their path (`phases.0.steps.0: Unrecognized key: "extra"`) |
+| D4 | Done: plans with repeated member names are refused by every writer; unknown members keep raw bytes and number spelling on writes |
+| D5 | Done: new links containing `\` are refused with a field path |
+| D7 | Done: unrenderable ids are reported as `phases.<i>.id: Must not be empty` (or the step path) by update and reset |
+| D10 | Done (owner change): root-independent token and archive name |
+| D12 | Done: unchanged Markdown-only reset (and any byte-identical mutation) prepares no intent and asks for no authorization |
+
+### Remaining issues for stage D (and owner decisions)
+
+1. The native OpenCode authorizer (actual-host permission requests for the
+   intent's exact resources, identity/signal binding, P01–P07) and the
+   `shiori serve --stdio` protocol are stage D. The intent's `Resources()`
+   and `Digest()` are the inputs it needs.
+2. Resume display-cap selection for plans with very many truncated strings
+   (contracts §10a item 1) differs from the reference on some budgets; the
+   packet invariants hold. Needs an owner decision or stage F work.
+3. The compaction removals digest and token are Shiori-defined (D10 and
+   §10a item 5); a token from the TypeScript engine is not accepted by Go
+   and vice versa.
+4. Mixed TypeScript/Go writers on one root are not proven interoperable
+   (lock auxiliary paths differ; journals are format-compatible). Stage E
+   must select one writer per root.
+5. Linux/amd64 write validation has not been run (only `GOOS=linux go vet`);
+   contracts §5.6 requires the same suites on Linux before claiming writes
+   there.
+6. `schema/index.json` still says "PROPOSED — frozen for review" (unchanged).
+
 ## Resume after maintenance
 
 1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
    needed.
-2. Inspect `git status`. Stage A and the specifications are committed
-   (`fdadfd4`). Stage B exists only in the working tree until the owner
-   commits it. Preserve any user edits.
+2. Inspect `git status`. Stages A and B are committed (`fdadfd4`, `7a899e5`).
+   Stage C exists only in the working tree until the owner commits it.
+   Preserve any user edits.
 3. If the oracle files change, the corpus is stale. Compare their sha256 against
    `testdata/MANIFEST.json` → `oracle.files`.
 

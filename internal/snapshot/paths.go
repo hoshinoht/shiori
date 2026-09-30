@@ -59,7 +59,7 @@ func NormalizePlanFile(root, raw string) (string, error) {
 	if !strings.HasPrefix(rel, WorkplanDir+"/") {
 		return "", fmt.Errorf("Plan file must stay under .opencode/workplan/: %s", raw)
 	}
-	if !strings.HasSuffix(strings.ToLower(rel), ".md") {
+	if !strings.HasSuffix(rel, ".md") {
 		return "", fmt.Errorf("Plan file must be Markdown under .opencode/workplan/: %s", raw)
 	}
 	return rel, nil
@@ -100,4 +100,29 @@ func withinRoot(root, target string) bool {
 		}
 		p = parent
 	}
+}
+
+// CheckWritable refuses a write target that is not a clean in-root path,
+// or whose existing path components (below the root) include a symlink:
+// writers never follow or replace symlinks (spec 01 §4).
+func CheckWritable(root, rel string) error {
+	clean, ok := relInRoot(root, rel)
+	if !ok || clean != rel {
+		return fmt.Errorf("Workplan write target must be a clean path inside the workspace root: %s", rel)
+	}
+	p := root
+	for _, seg := range strings.Split(rel, "/") {
+		p = filepath.Join(p, seg)
+		st, err := os.Lstat(p)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("Refusing to write through a symlink: %s", p)
+		}
+	}
+	return nil
 }

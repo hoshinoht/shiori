@@ -229,16 +229,27 @@ func ValidateDependencies(ix *Plan, d *model.Dependencies) []string {
 		}
 		return false
 	}
+	sources := map[StepKey]bool{}
 	for i, e := range d.Entries {
 		from := StepKey{e.PhaseID, e.StepID}
 		if !exists(from) {
-			out = append(out, fmt.Sprintf("dependencies.%d: Step %s does not exist", i, from))
+			out = append(out, fmt.Sprintf("dependencies.%d: Source step %s does not exist", i, from))
 		}
+		if sources[from] {
+			out = append(out, fmt.Sprintf("dependencies.%d: Duplicate dependency source %s", i, from))
+		}
+		sources[from] = true
+		seen := map[StepKey]bool{}
 		for j, r := range e.DependsOn {
 			to := StepKey{r.PhaseID, r.StepID}
+			p := "dependencies." + strconv.Itoa(i) + ".dependsOn." + strconv.Itoa(j)
 			if !exists(to) {
-				out = append(out, "dependencies."+strconv.Itoa(i)+".dependsOn."+strconv.Itoa(j)+": Step "+to.String()+" does not exist")
+				out = append(out, p+": Step "+to.String()+" does not exist")
 			}
+			if seen[to] {
+				out = append(out, p+": Duplicate dependency")
+			}
+			seen[to] = true
 		}
 	}
 	for _, cyc := range BuildDAG(d).Cycles() {

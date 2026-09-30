@@ -326,7 +326,7 @@ would implement if approved.
 | D7 | Any `update` of a plan whose phase/step id normalizes to empty fails with `Workplan id must contain at least one letter or number`, with no field path, even for unrelated fields. The generated-Markdown check renders markers before any other check (`mutations/update-duplicate-step-ids` on `invalid-structure`) | 01 §3: exact field paths, and drafts stay diagnosable | Go reports `phases.<i>.id: Must not be empty` (or the step path) and refuses the mutation. The message changes; the refusal is the same |
 | D8 | Markdown markers are lossy for non-ASCII ids: `phase-𝒜-x` becomes `phase-x` and `step-été` becomes `step-t`, so distinct ids can share a marker (`tools/unicode/*--inspect`) | 03 §4: marker/heading index used for section retrieval | Keep the marker format (byte parity). The Go section index treats a marker collision as ambiguous and falls back to the heading plus ordinal, never "first match wins" |
 | D9 | `workplan_read` output has no bound. For the 1 MiB plan it is 3.0 M chars; for 10 MiB it is 30.1 M chars (baseline) | 02 §2: bounded frames | Response frame 64 MiB (section 5.2). A larger read fails with `unsupported_capability` and a pointer to `includeMarkdown=false`, `inspect` or `resume`. Declared divergence only above the limit |
-| D10 | The compact `previewToken` and `archivePath` depend on the absolute canonical root. The same preview at a different root path gives a different token (`mutations/compact-apply-valid`) | 01 §7 lists what the token binds; the root is not named | Accept and document: the token also binds the canonical root. No change |
+| D10 | The compact `previewToken` and `archivePath` depend on the absolute canonical root. The same preview at a different root path gives a different token (`mutations/compact-apply-valid`) | 01 §7 lists what the token binds; the root is not named | **Superseded at stage C (owner):** the token and archive name must not depend on the absolute root. Shiori's token binds workplan id, stateHash, reason, exact selection, removals digest and Markdown treatment (§10 stage C) |
 | D11 | Engine- and library-specific message text leaks into diagnostics (the JSC JSON parser, zod) | 01 §3 exact paths; 02 §7 error classes | Section 6.2 |
 | D12 | `reset {mode: "markdown-only"}` on already-generated Markdown asks for permission and "commits" identical bytes, so no file changes (`mutations/reset-markdown-only-generated`) | S03-adjacent: avoid needless authorization | Go returns an unchanged result without preparing an intent. Declared difference: zero prompts |
 
@@ -404,6 +404,16 @@ The owner approved, on 2026-09-30:
    binary. Its regexp engine is Go RE2 with `\uXXXX` escapes translated;
    no further dependency.
 
+### Stage C owner decisions (2026-09-30)
+
+4. D1's doctor addition (`{id, valid:false, issues, stateHash,
+   recoveryRequired:true}` for a journal-only plan) is accepted, and
+   `update {recovery}` accepts that `stateHash` as its `expectedHash`.
+5. D10 is changed from "accept and document" to a fix: the compact preview
+   token and the archive path must not depend on the absolute project root.
+6. The native OpenCode host authorizer is stage D; stage C provides the
+   `Authorizer` interface and the standalone CLI implementation (§5.5).
+
 ## 10. Stage B findings (OBSERVED, pinned by the corpus)
 
 These reference behaviours were not written down at stage A. The Go core
@@ -448,3 +458,96 @@ reproduces them byte-for-byte; the vectors named are the evidence.
   `read UPPER` normalizes to `upper` and opens `UPPER.json`; the vectors
   record that. The same call on a case-sensitive Linux filesystem reports
   `Workplan file not found`.
+
+## 10a. Stage B open-issue decisions and stage C findings
+
+Recorded at stage C. Everything here keeps the original workplan design
+(formats, layout, tool identities, argument shapes, hash algorithm and
+generated Markdown). "Measured" means the reference was executed as a black
+box on copies of the corpus fixtures; its source was not read.
+
+**Stage B open issues.**
+
+1. *Resume caps between the corpus budgets* (measured). The pinned-list cap
+   is `clamp(floor(maxChars/900), 4, 8)`; the listed `truncatedFields` cap
+   is `min(floor(maxChars/256), 32)`; the display-string cap ladder is
+   512, 256, 128, 64, 32, 21, 10, **4**, 2, 1 (the reference uses 4, not 5).
+   Also measured and fixed: `safety.overflow` is true when any display
+   field was truncated (not only danger fields); `checkpoint.recentValidation`
+   truncations count as danger fields; `checkpoint.summary` is truncated
+   before the current position. With these, every sampled budget
+   (4096–12000, step 37/53, plus 15000–64000) of the large-paging and
+   full-valid fixtures and the owner's real plan is byte-identical, and the
+   corpus still passes. **Residual:** for a plan with very many truncated
+   strings (resume-stress) the reference chooses display caps that are not
+   a fixed ladder (3, 7, 8, 16 observed); 88 of 154 sampled budgets pick a
+   different display cap. Every packet still fits its budget with all
+   machine ids, hashes, counts and pointers intact (R01/R02 hold). Open for
+   stage F or an owner decision.
+2. *Resume cannot fit (very long machine ids).* Kept as a fail-closed error:
+   machine ids are never truncated. Writers cannot create such ids (every
+   create/update id is normalized to at most 80 code units), so the case is
+   limited to hand-edited plans. No format change.
+3. *D1 recovery.* Done (owner decision 4). The expectedHash of a journal-only
+   plan is the doctor hash: `workplan-state-v1` over the missing primary,
+   the journal's in-root targets and the id's sidecars. Recovery reports
+   `planHash`/`stateHash` of the recovered state (for a rolled-back create:
+   the same interrupted-plan definition, primary missing).
+4. *D4/D5 in mutation preparation.* Done. A stored plan with repeated
+   member names is readable, but every writer refuses it before
+   authorization: `Workplan <id> has duplicate JSON member names: <paths>.
+   Remove the duplicates before mutating the plan.` New `planFile`,
+   `specFiles` or `addSpecFiles` links containing `\` are refused with
+   `<field>.<i>: Linked path contains a backslash and has an ambiguous
+   manifest identity: <raw>`.
+5. *Mutating vectors and compact token parity.* Done: the 39 mutating input
+   vectors, 70 mutation vectors and 2 compact-preview vectors run in CI
+   (STATUS has the table). The token is compared as an opaque value bound to
+   its inputs (D10 fix). The reference's `removals.digest` preimage could
+   not be recovered by black-box probing (it is root-independent and
+   depends only on the removed content); Shiori defines
+   `SHA256("workplan-compact-removals-v1\n" + compact JSON of the removed
+   object + "\n")`, and the token is `"v1-" + SHA256("workplan-compact-token-v1\n" +
+   compact JSON {workplanId, stateHash, archiveReason, canonicalSelection,
+   removalsDigest, linkedMarkdownTreatment} + "\n")`. The `v1-` prefix and
+   64-hex shape, the archive name `state-<stateHash:12>-<token:12>.json` and
+   the transaction id `<token:16>` are unchanged.
+6. *Case-insensitive filesystems.* Ids are normalized to lowercase, so plan
+   and sidecar names never differ by case. Linked Markdown ownership and
+   pending-journal claims compare case-folded paths, and journal validation
+   rejects case-folded duplicate targets, so aliasing links fail closed on
+   every platform (stricter than necessary on case-sensitive Linux, never
+   weaker on APFS). Reads still inherit the filesystem's lookup (§10).
+
+**Stage C findings.**
+
+- *Pre-authorization rejection.* The reference detects several refusals
+  only under the lock, after prompting: an existing sidecar or pending
+  pre-create journal on create, a move onto an existing file, destinations
+  owned by another plan or claimed by a pending journal, and recovery
+  third-state edits. Shiori checks them during preparation (same message,
+  no authorization request, S06/S07) and again under the lock.
+- *Unchanged results.* When a mutation would not change any byte (D12, and
+  the same principle for any writer), no intent is prepared and no
+  authorization is requested; the result is identical.
+- *Plan-file extension.* The linked Markdown must end in lowercase `.md`
+  on read and write (the reference rejects `.MD`; stage B accepted it).
+- *Dependency validation text* (measured): `dependencies.<i>: Source step
+  <p>/<s> does not exist`, `dependencies.<i>: Duplicate dependency source
+  <p>/<s>`, `dependencies.<i>.dependsOn.<j>: Duplicate dependency`; a
+  replacement drops existing `terminalSummaries`.
+- *Compaction* (measured): only generated Markdown is refreshed and listed
+  in the intent; preserved Markdown is not a target. Apply prunes dependency
+  entries whose source was archived and records terminal summaries for
+  archived prerequisites still referenced; the refreshed checkpoint keeps
+  its fields, appends the archive path to `references` (last 10 kept) and
+  writes `planHash`/`manifest`/`evidenceStatus` last.
+- *Lock protocol.* Lock files keep the reference names and lock-owner-v1
+  content. Shiori publishes owner metadata atomically (stage file + link),
+  reclaims only proven-dead same-host owners past the 5-minute grace under a
+  reclaim mutex, and releases by rename + nonce check (a replacement owner's
+  lock is restored, never unlinked). Its auxiliary paths differ from the
+  reference's (`<lock>.<tx>.stage`, `<lock>.reclaim.*`), so compact-preview
+  `writeIntent.resources` lists different lock-protocol paths; all other
+  resources match. Mixed TS/Go writers on one root are not proven
+  interoperable and must not be run together (stage E, spec 05 §3).

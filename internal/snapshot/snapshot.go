@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/hoshinoht/shiori/internal/model"
@@ -74,11 +75,20 @@ func SidecarRel(id, suffix string) string { return WorkplanDir + "/" + id + suff
 type Reader struct {
 	Root   string
 	Limits Limits
-	total  int64
+	// Overlay substitutes prospective contents (nil = absent) for paths,
+	// so a writer can compute post-commit hashes without touching disk.
+	Overlay map[string][]byte
+	total   int64
 }
 
 func (r *Reader) read(rel string) (Artifact, error) {
 	a := Artifact{Rel: rel, Path: abs(r.Root, rel)}
+	if data, ok := r.Overlay[rel]; ok {
+		if data != nil {
+			a.Bytes, a.Exists = data, true
+		}
+		return a, nil
+	}
 	f, err := os.Open(a.Path)
 	if err != nil {
 		// ENOENT, or ENOTDIR when a path component is a file, is "missing".
@@ -166,7 +176,13 @@ func (r *Reader) LoadPlanDocument(id string) (Artifact, *model.Plan, error) {
 
 // Load reads the complete artifact set for a normalized id.
 func Load(root, id string, limits Limits) (*Snapshot, error) {
-	r := &Reader{Root: root, Limits: limits}
+	return LoadOverlay(root, id, limits, nil)
+}
+
+// LoadOverlay is Load with prospective contents substituted (see
+// Reader.Overlay). A nil slice value marks the path absent.
+func LoadOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Snapshot, error) {
+	r := &Reader{Root: root, Limits: limits, Overlay: overlay}
 	s := &Snapshot{Root: root, ID: id}
 	var err error
 	s.JSON, s.Plan, err = r.LoadPlanDocument(id)
@@ -251,7 +267,43 @@ func Load(root, id string, limits Limits) (*Snapshot, error) {
 // primary is recorded as missing and only the journal's own targets and
 // the id's sidecars contribute.
 func InterruptedStateHash(root, id string, limits Limits, journalTargets []string) (string, error) {
-	r := &Reader{Root: root, Limits: limits}
+	_, sh, err := InterruptedHashes(root, id, limits, journalTargets, nil)
+	return sh, err
+}
+
+// InterruptedHashes returns the interrupted plan and state hashes of a
+// journal-only plan (optionally over an overlay): the plan manifest is the
+// primary JSON plus the journal's Markdown targets; the state manifest adds
+// every in-root journal target and the id's sidecars.
+func InterruptedHashes(root, id string, limits Limits, journalTargets []string, overlay map[string][]byte) (string, string, error) {
+	r := &Reader{Root: root, Limits: limits, Overlay: overlay}
+	var planEntries []Entry
+	primary, err := r.read(PlanRel(id))
+	if err != nil {
+		return "", "", err
+	}
+	planEntries = append(planEntries, EntryFor(ManifestPath(primary.Rel), primary.Bytes, primary.Exists))
+	for _, t := range journalTargets {
+		if !strings.HasSuffix(t, ".md") {
+			continue
+		}
+		if _, ok := relInRoot(root, t); !ok {
+			continue
+		}
+		a, err := r.read(t)
+		if err != nil {
+			return "", "", err
+		}
+		planEntries = append(planEntries, EntryFor(ManifestPath(t), a.Bytes, a.Exists))
+	}
+	sh, err := interruptedState(r, root, id, journalTargets)
+	if err != nil {
+		return "", "", err
+	}
+	return ManifestHash(PlanHashVersion, planEntries), sh, nil
+}
+
+func interruptedState(r *Reader, root, id string, journalTargets []string) (string, error) {
 	entries := []Entry{}
 	seen := map[string]bool{}
 	add := func(rel string) error {

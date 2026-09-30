@@ -1,7 +1,7 @@
 // Package cli implements the standalone `shiori` command. It runs the same
 // engine in-process (no child, no protocol) under local operator
-// authority. Stage B exposes read-only operations only; nothing here can
-// write an artifact.
+// authority. Reads never prompt or write; mutations (mutate.go) print the
+// prepared intent and require confirmation before committing it.
 package cli
 
 import (
@@ -20,35 +20,56 @@ import (
 )
 
 // Version is the CLI version (set with -ldflags at build time).
-var Version = "0.0.0-stage-b"
+var Version = "0.0.0-stage-c"
 
-const usage = `shiori — read-only workplan core (stage B)
+const usage = `shiori — workplan core (stage C)
 
 Usage:
   shiori <command> [flags] [id]
 
-Commands:
+Read commands (never prompt, never write):
   list                       List plans and classified sidecars
   read <id>                  Read a plan (normalized JSON, selection, Markdown)
   inspect <id>               Page stable phase/step ids and Markdown markers
   validate <id>              Validate structure, links, dependencies, recovery state
   resume <id>                Bounded continuation packet (UTF-16 budget)
   doctor [id]                Read-only diagnostics: roots, sidecars, locks, journals
+  compact <id> --reason R    Compaction preview (read-only without --apply)
+
+Mutating commands (print the prepared intent, then require confirmation):
+  create <id>                --goal G [--title --kind --status --plan-file --markdown-file F
+                             --append-note N --overwrite --replace-markdown]
+  update <id>                [--title --goal --status --plan-file --markdown-file F
+                             --append-note N --replace-markdown] | --recovery resume|rollback
+  patch <id>                 --patch-file F [--validate]
+  reset <id>                 [--mode draft|markdown-only --preserve-notes --replace-markdown]
+  checkpoint <id>            --summary S --next-action A [--phase --step --blocker
+                             --guardrail --reference --validation]
+  compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I]
+                             --preview-token T --confirm ARCHIVE_SELECTED_HISTORY
   version                    Print the version
 
 Common flags:
   --root DIR                 Project root (default: current directory)
   --json                     Machine output: the tool result object only, on stdout
-  --input JSON               Raw tool input object (core surface; overrides flags)
+  --input JSON               Raw core-surface tool input object (flags override its fields)
 
-Command flags:
+Mutation flags:
+  --expected-hash H          stateHash from the latest read (required for existing-state
+                             writes, including recovery and compaction apply)
+  --legacy-unhashed          Allow an existing-state write without --expected-hash
+                             (still rechecked under the lock)
+  --yes                      Confirm the printed intent (required off a terminal;
+                             never read from the environment)
+
+Read command flags:
   read:     --phase ID --step ID --no-markdown
   inspect:  --phase ID --limit N --cursor TOKEN
   resume:   --max-chars N --limit N --cursor TOKEN --phase ID --step ID
   doctor:   --limit N
 
-Exit status: 0 success; 1 operation error or (validate) an invalid plan;
-2 usage error. Reads never prompt and never write.
+Exit status: 0 success; 1 operation error, refusal, or (validate) an invalid
+plan; 2 usage error.
 `
 
 // Run executes the CLI and returns the process exit status.
@@ -67,6 +88,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
+		if mutationCommands[cmd] {
+			return runMutationCommand(cmd, rest, stdout, stderr)
+		}
 		fmt.Fprintf(stderr, "shiori: unknown command %q\n\n%s", cmd, usage)
 		return 2
 	}
@@ -266,6 +290,9 @@ func dispatch(e *engine.Engine, cmd string, input ojson.Value) (ojson.Value, str
 // ErrorClass maps an error to a protocol error class
 // (protocol-envelope-v1 errorClass).
 func ErrorClass(err error) string {
+	if c, ok := mutationErrorClass(err); ok {
+		return c
+	}
 	var ie *engine.InputError
 	var de *model.DecodeError
 	var nf *snapshot.NotFoundError

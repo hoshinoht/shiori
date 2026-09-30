@@ -29,13 +29,17 @@ type Plan struct {
 	PlanFile      string
 	SpecFiles     []string
 	HasSpecFiles  bool // false for legacy documents without the key
-	Phases        []Phase
-	Findings      []Finding
-	Notes         []string
-	Status        string
-	CreatedAt     string
-	UpdatedAt     string
-	Unknown       []ojson.Member
+	// SpecFilesAdded marks a legacy document whose specFiles key was set
+	// by a mutation; the writer then appends it after the unknown members
+	// (the reference's object-extension order).
+	SpecFilesAdded bool
+	Phases         []Phase
+	Findings       []Finding
+	Notes          []string
+	Status         string
+	CreatedAt      string
+	UpdatedAt      string
+	Unknown        []ojson.Member
 
 	// Duplicates lists repeated member names in the stored bytes. The
 	// document stays readable (JavaScript last-wins semantics); stage C
@@ -224,6 +228,44 @@ func decodeFinding(c *checker, path []string, v ojson.Value) Finding {
 	}
 	fd.Unknown = unknownMembers(ms, findingKnown)
 	return fd
+}
+
+// StoredValue renders the document as a writer persists it: like ToValue,
+// except that a legacy document without specFiles keeps it absent unless a
+// mutation set it (then it follows the unknown members).
+func (p *Plan) StoredValue() ojson.Value {
+	v := p.ToValue()
+	if p.HasSpecFiles || p.SpecFilesAdded {
+		return v
+	}
+	ms := v.Members()
+	return ojson.ObjectValue(ms[:len(ms)-1])
+}
+
+// EncodeStored is JSON.stringify(doc, null, 2) + "\n" of StoredValue.
+func (p *Plan) EncodeStored() []byte { return append(ojson.Pretty(p.StoredValue()), '\n') }
+
+// Clone returns a deep copy of the known fields (unknown member values
+// are immutable and shared).
+func (p *Plan) Clone() *Plan {
+	c := *p
+	c.Scope = append([]string(nil), p.Scope...)
+	c.NonGoals = append([]string(nil), p.NonGoals...)
+	c.Constraints = append([]string(nil), p.Constraints...)
+	c.RelevantFiles = append([]string(nil), p.RelevantFiles...)
+	c.SpecFiles = append([]string{}, p.SpecFiles...)
+	c.Notes = append([]string(nil), p.Notes...)
+	c.Findings = append([]Finding(nil), p.Findings...)
+	c.Phases = make([]Phase, len(p.Phases))
+	for i := range p.Phases {
+		c.Phases[i] = p.Phases[i]
+		c.Phases[i].Steps = append([]Step(nil), p.Phases[i].Steps...)
+	}
+	if p.Title != nil {
+		t := *p.Title
+		c.Title = &t
+	}
+	return &c
 }
 
 // ToValue renders the normalized document in the reference key order:

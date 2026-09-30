@@ -429,6 +429,8 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 
 	pathV := t.str("path", m.path, false)
 	planFileV := t.str("planFile", m.planFile, false)
+	// The summary is truncated (and listed) before the current position.
+	summaryV := t.ptr("checkpoint.summary", m.summary, false)
 	var current ojson.Value
 	if m.current == nil {
 		current = ojson.NullValue()
@@ -450,7 +452,7 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("fresh", ojson.BoolValue(m.cpFresh)).
 		Set("freshness", ojson.StringValue(m.freshness)).
 		Set("sourceUpdatedAt", ojson.NullableString(m.sourceUpdatedAt)).
-		Set("summary", t.ptr("checkpoint.summary", m.summary, false)).
+		Set("summary", summaryV).
 		Set("current", current).
 		Set("nextAction", t.ptr("checkpoint.nextAction", m.nextAction, false)).
 		Set("blockers", t.list("checkpoint.blockers", m.blockers, L, true)).
@@ -459,7 +461,7 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("guardrailsTotal", ojson.IntValue(int64(m.guardrailsTotal))).
 		Set("references", t.list("checkpoint.references", m.references, L, true)).
 		Set("referencesTotal", ojson.IntValue(int64(m.referencesTotal))).
-		Set("recentValidation", t.list("checkpoint.recentValidation", m.recentValidation, L, false)).
+		Set("recentValidation", t.list("checkpoint.recentValidation", m.recentValidation, L, true)).
 		Set("evidenceStatus", ojson.StringValue("unverified")).
 		Set("diagnostic", t.ptr("checkpoint.diagnostic", m.diagnostic, false)).Value()
 
@@ -567,7 +569,9 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 	for _, o := range omitted {
 		omittedSum += o
 	}
-	overflow := omittedSum > 0 || t.dangerCount > 0
+	// Overflow is any omitted danger item or any truncated display field
+	// (reference behaviour; a page that merely continues is not overflow).
+	overflow := omittedSum > 0 || t.dangerCount > 0 || len(t.danger)+len(t.other) > 0
 	pointers := []string{}
 	if overflow {
 		pointers = []string{"workplan_read:" + m.id, "workplan_inspect:" + m.id}
@@ -596,7 +600,7 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("overflowPointers", ojson.StringsValue(pointers)).Value()
 
 	all := append(append([]string{}, t.danger...), t.other...)
-	pathCap := 4 * L
+	pathCap := resumePathCap(m.maxChars)
 	listed := all
 	if len(listed) > pathCap {
 		listed = listed[:pathCap]
@@ -652,21 +656,38 @@ func chooseResume(m *resumeModel) (ojson.Value, string, error) {
 	return ojson.Value{}, "", fmt.Errorf("resume packet cannot fit maxChars=%d", m.maxChars)
 }
 
-// resumeStringCaps is the display-string cap ladder. It was derived from
-// the golden corpus: every resume vector is reproduced byte-exactly by
-// this ladder, and the vectors exclude caps 11-20, 22-31 and 33-58 (a
-// fitting packet at such a cap would have been chosen instead). Values
-// between the constrained ones follow the halving pattern.
-var resumeStringCaps = []int{512, 256, 128, 64, 32, 21, 10, 5, 2, 1}
+// resumeStringCaps is the display-string cap ladder. The golden corpus
+// requires 32, 21, 10, 2 and 1 and forbids 11-20, 22-31 and 33-58; a
+// stage C sweep of the reference over maxChars 4096..12000 (contracts
+// §10) additionally requires 4 and excludes 5. With this ladder every
+// sampled budget of the large-paging and full-valid fixtures is
+// byte-identical to the reference; plans with very many truncated strings
+// (resume-stress) can still select a different display cap (open issue).
+var resumeStringCaps = []int{512, 256, 128, 64, 32, 21, 10, 4, 2, 1}
 
-// resumeListCap is the pinned-list cap for a budget: 4 at the minimum
-// budget (4096) and 8 at 12000 and above (corpus-verified). The cut-over
-// between 4097 and 11999 is not covered by the corpus; 8192 is chosen.
+// resumeListCap is the pinned-list cap for a budget: floor(maxChars/900)
+// clamped to 4..8. The corpus pins 4 at 4096 and 8 at 12000 and 64000;
+// the values in between were measured on the reference (stage C,
+// contracts §10) by sweeping maxChars across 4096..12000.
 func resumeListCap(maxChars int) int {
-	if maxChars < 8192 {
+	l := maxChars / 900
+	if l < 4 {
 		return 4
 	}
-	return 8
+	if l > 8 {
+		return 8
+	}
+	return l
+}
+
+// resumePathCap bounds the listed truncatedFields paths: floor(maxChars/
+// 256), at most 32 (measured on the reference like resumeListCap).
+func resumePathCap(maxChars int) int {
+	c := maxChars / 256
+	if c > 32 {
+		return 32
+	}
+	return c
 }
 
 // resumeLadder lists degradation levels from richest to smallest: each

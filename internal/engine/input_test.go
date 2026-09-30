@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -200,5 +201,72 @@ func TestGeneratedClassification(t *testing.T) {
 				t.Fatalf("present=%v generated=%v want %v/%v", present, gen, *row.Present, row.Generated)
 			}
 		})
+	}
+}
+
+// TestMutationInputVectors checks the 39 mutating-tool input vectors on
+// both surfaces: accept/reject, exact messages, and the accepted data in
+// the reference's key order. The only divergence is D2 (unknown nested
+// keys reject), checked by its own comparator.
+func TestMutationInputVectors(t *testing.T) {
+	files, _ := filepath.Glob(testutil.Testdata("vectors", "validation", "input", "*.json"))
+	ran, diverged := 0, 0
+	for _, f := range files {
+		data, _ := os.ReadFile(f)
+		parsed, err := ojson.Parse(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vec := parsed.Value
+		tool, _ := vec.Get("tool")
+		if readOnlyTools[tool.Str()] {
+			continue
+		}
+		name := strings.TrimPrefix(tool.Str(), "workplan_")
+		id, _ := vec.Get("id")
+		input, _ := vec.Get("input")
+		expect, _ := vec.Get("expect")
+		ran++
+		t.Run(id.Str(), func(t *testing.T) {
+			for _, sf := range []struct {
+				name string
+				s    Surface
+			}{{"core", SurfaceCore}, {"native", SurfaceNative}} {
+				exp, _ := expect.Get(sf.name)
+				if exp.Kind() == ojson.Null || exp.IsUndefined() {
+					continue
+				}
+				got, err := ParseMutationInput(name, input, sf.s)
+				if id.Str() == "validation/input/create--unknown-nested-phase-key" {
+					// D2 (approved): nested unknown keys reject with their path.
+					want := `Invalid create input: phases.0.steps.0: Unrecognized key: "extra"; phases.0: Unrecognized key: "bogus"`
+					if err == nil || err.Error() != want {
+						t.Fatalf("%s: D2 error %v, want %q", sf.name, err, want)
+					}
+					continue
+				}
+				ok, _ := exp.Get("ok")
+				if !ok.Bool() {
+					msg, _ := exp.Get("message")
+					if err == nil || err.Error() != msg.Str() {
+						t.Fatalf("%s: error %v, want %q", sf.name, err, msg.Str())
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("%s: unexpected error %v", sf.name, err)
+				}
+				want, _ := exp.Get("data")
+				if g, w := string(ojson.Compact(got)), string(ojson.Compact(want)); g != w {
+					t.Fatalf("%s: data\n got %s\nwant %s", sf.name, g, w)
+				}
+			}
+		})
+		if id.Str() == "validation/input/create--unknown-nested-phase-key" {
+			diverged++
+		}
+	}
+	if ran != 39 || diverged != 1 {
+		t.Fatalf("ran %d mutating input vectors (want 39), %d divergences (want 1)", ran, diverged)
 	}
 }

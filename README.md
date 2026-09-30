@@ -5,11 +5,11 @@ engine: preserve the plan, execution state, safety boundaries and the next
 reliable action across workers and sessions.
 
 This repository contains the specifications, the approved stage A contract
-(machine schemas, a golden fixture corpus and a measured TypeScript baseline)
-and the stage B read-only Go core with its `shiori` CLI. The architecture is a
-Go core and CLI with a thin OpenCode JS/TS adapter (stage D). Stages A–D are
-authorized; automatic artifact migration, commits and remote publication are
-not. Nothing in stage B writes to a workspace.
+(machine schemas, a golden fixture corpus and a measured TypeScript baseline),
+the stage B read-only Go core, and the stage C transactional core with its
+`shiori` CLI. The architecture is a Go core and CLI with a thin OpenCode
+JS/TS adapter (stage D). Stages A–D are authorized; automatic artifact
+migration, commits and remote publication are not.
 
 ## Specifications
 
@@ -35,8 +35,8 @@ OpenCode preset. Shiori should retain its tested behavior and existing
 `.opencode/workplan/` V2 artifacts and `workplan_*` tool identities during
 migration, rather than rewriting plans or changing agent names automatically.
 
-Go module: `github.com/hoshinoht/shiori`. Binary: `shiori`. Stage B was built
-and validated with Go 1.27.1 on darwin/arm64 only. That is not evidence of
+Go module: `github.com/hoshinoht/shiori`. Binary: `shiori`. Stages B and C were
+built and validated with Go 1.27.1 on darwin/arm64 only. That is not evidence of
 cross-platform validation (contracts §5.6).
 
 ## Build and run
@@ -47,8 +47,9 @@ Requires Go 1.27.1 or newer. The binary has no runtime dependencies.
 CGO_ENABLED=0 go build -trimpath -o shiori ./cmd/shiori
 ```
 
-Stage B operations are all read-only. They never prompt, write, lock, repair
-or change a file's mtime.
+### Read operations
+
+Reads never prompt, write, lock, repair or change a file's mtime.
 
 ```sh
 shiori list     --root /path/to/project
@@ -57,15 +58,53 @@ shiori inspect  <id> [--phase ID] [--limit 1-500] [--cursor TOKEN]
 shiori validate <id>                       # exit 1 when the plan is invalid
 shiori resume   <id> [--max-chars 4096-64000] [--limit 1-100] [--cursor TOKEN] [--phase ID] [--step ID]
 shiori doctor   [id] [--limit 1-100]
+shiori compact  <id> --reason R [--archive-phase ID]... [--archive-note I]... [--archive-finding I]...   # preview only
 ```
+
+### Mutations
+
+Every mutation is prepared first (nothing is created: no file, lock or
+directory), the exact intent is printed to stderr (operation, every target
+with before/after sha256, journal, locks, staging count), and it is committed
+only after confirmation. The commit takes the workspace lock then the plan
+lock, rechecks every precondition, stages each file in the same directory
+with fsync, publishes a durable journal, replaces each artifact atomically,
+syncs directories and removes the journal. A failure after the journal
+leaves it in place and reports `recovery_required`.
+
+```sh
+H=$(shiori read my-plan --json --no-markdown | jq -r .stateHash)
+shiori create     my-plan --goal "Ship it" [--title T] [--plan-file .opencode/workplan/x.md] [--markdown-file F]
+shiori update     my-plan --expected-hash "$H" --status in_progress --append-note "started"
+shiori update     my-plan --expected-hash "$H" --input '{"updateSteps":[{"phaseId":"p","stepId":"s","status":"completed"}]}'
+shiori patch      my-plan --expected-hash "$H" --patch-file change.patch [--validate]
+shiori reset      my-plan --expected-hash "$H" [--mode draft|markdown-only] [--preserve-notes] [--replace-markdown]
+shiori checkpoint my-plan --expected-hash "$H" --summary S --next-action A [--phase ID --step ID] [--blocker B]...
+shiori compact    my-plan --reason tidy --archive-phase done-phase                 # preview: prints previewToken
+shiori compact    my-plan --reason tidy --archive-phase done-phase --apply \
+                  --preview-token TOKEN --confirm ARCHIVE_SELECTED_HISTORY --expected-hash "$H"
+shiori update     my-plan --recovery resume|rollback --expected-hash "$H"          # "$H" from doctor for a journal-only plan
+```
+
+- Confirmation: on a terminal, type `yes`; off a terminal, pass `--yes`.
+  `--yes` is a flag only (never an environment variable or config file) and
+  never bypasses the stale-hash, lock, journal or scope checks.
+- Existing-state writes (everything except a fresh `create` and a compaction
+  preview) require `--expected-hash` unless `--legacy-unhashed` is given;
+  the state is still rechecked under the lock.
+- `--input '<json>'` accepts any core-surface tool input; flags override its
+  fields.
+
+### Common
 
 - `--root` defaults to the current directory.
 - `--json` prints exactly the result text that the corresponding `workplan_*`
-  tool returns. Errors print `{"ok": false, "error": {class, message, issues?}}`
-  with a protocol error class.
-- `--input '<json>'` passes a raw core-surface tool input object instead of
-  flags.
-- Exit status: 0 success; 1 operation error, or an invalid plan for
+  tool returns (for `patch`: `{"output", "metadata"}`). Errors print
+  `{"ok": false, "error": {class, message, issues?}}` with a protocol error
+  class (`invalid_input`, `stale_state`, `lock_unavailable`,
+  `ownership_conflict`, `recovery_required`, `external_edit_conflict`,
+  `permission_denied`, `cancelled`, ...).
+- Exit status: 0 success; 1 operation error, refusal, or an invalid plan for
   `validate`; 2 usage error.
 
 ## Test
@@ -83,8 +122,14 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 - `TestCorpusParity` runs every `tools/`, `resume/` and `paging/` vector at a
   root of the generation root's length, under `/private/tmp`, and fails on
   any byte, mode, mtime or file-set change.
-- The declared divergences (contracts §7 fixes D1, D4, D5, D6) are checked by
-  dedicated comparators; see [STATUS](docs/STATUS.md).
+- `TestMutationVectors` runs all 70 mutation vectors with a frozen clock and
+  compares output, authorization count and the exact changed files;
+  `TestMutationInputVectors` covers the 39 mutating-tool input vectors.
+- Declared divergences (contracts §7, §10a) are checked by dedicated
+  comparators; see [STATUS](docs/STATUS.md).
+- `TestFaultInjection`, `TestNoSideEffectsBeforeCommit`, the `TestBarrier*`
+  separate-process tests, `internal/storage` lock tests and
+  `TestRecoveryRejectsForgedJournals` cover spec 05 S01–S11.
 - The JSON Schema validator is a test-only dependency and is not linked into
   the binary.
 
@@ -92,7 +137,7 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit stage B (see [STATUS](docs/STATUS.md)). The next stage is C,
-the transactional core: prepared intents, locks, journals, recovery and
-compaction. Worktree orchestration and alternative storage remain later,
-explicitly gated stages.
+Review and commit stage C (see [STATUS](docs/STATUS.md)). The next stage is
+D, the native adapter: the existing thirteen `workplan_*` identities over the
+Go protocol with the actual host's permission engine. Worktree orchestration
+and alternative storage remain later, explicitly gated stages.
