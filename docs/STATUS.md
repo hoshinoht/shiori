@@ -21,7 +21,7 @@ sections below keep the full record.
 | D.3.1 step gate, repair archive, resume diagnostics | done | `df74f35` (pushed) |
 | D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
-| D.4.2 | done | (owner adds id) |
+| D.4.2 | done | `cdcaa24` (pushed) |
 
 **Live.** hoshi-opencode2 (`~/.config/opencode`, remote
 `git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
