@@ -20,7 +20,7 @@ sections below keep the full record.
 | D.3 safe reset, corrupt-plan repair, host degradation | done | `83a3414` |
 | D.3.1 step gate, repair archive, resume diagnostics | done | `df74f35` (pushed) |
 | D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
-| D.4.1 expectedHash guidance (error text, tool descriptions) | done | (owner adds id) |
+| D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
 
 **Live.** hoshi-opencode2 (`~/.config/opencode`, remote
 `git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
@@ -1391,7 +1391,7 @@ after. Before is `df74f35` (D.3.1), after is the working tree.
 2. Mixed writers: the reference plugin has no advice and no
    `noteRollover`; stage E's one-writer-per-root rule is unchanged.
 
-## Stage D.4.1 — expectedHash guidance: DONE (owner adds id)
+## Stage D.4.1 — expectedHash guidance: DONE (committed 422ef05)
 
 Base `470e52d` (D.4 = `02d2333`). Nothing was committed. The pinned
 `vendor/shiori` copy (`02d2333`) that the owner's OpenCode uses and
