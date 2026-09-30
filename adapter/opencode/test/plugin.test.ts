@@ -69,6 +69,19 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
+  it("differs from the reference registration only by the approved D.1 additions", () => {
+    const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
+    const reg = JSON.parse(text);
+    expect(reg.d1.additions).toEqual([{ tool: "workplan_read", property: "includeNotes" }]);
+    const read = reg.tools.find((t: any) => t.name === "workplan_read");
+    expect(read.input.properties.includeNotes.type).toBe("boolean");
+    const { d1, ...rest } = reg;
+    for (const a of d1.additions) delete rest.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    const reference = JSON.stringify(rest, null, 2) + "\n";
+    expect(createHash("sha256").update(reference).digest("hex")).toBe(d1.referenceSha256);
+    expect(d1.referenceSha256).toBe("f4dd36c8a942cebbd26945e53ca580839c4eeee9ffaf4398a8b4397f477e6935");
+  });
+
   it("fails closed at registration on an unverified host version", async () => {
     const root = tempRoot();
     roots.push(root);

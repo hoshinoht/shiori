@@ -202,6 +202,8 @@ func TestCorpusParity(t *testing.T) {
 	for _, n := range tl.notes {
 		t.Log(n)
 	}
+	d1Write(t, "tools/", "resume/", "paging/")
+	t.Logf("D.1 listed vectors: %s", d1Summary(d1Expectations(t)))
 }
 
 func runVector(t *testing.T, v *vector) (outcome, string) {
@@ -232,6 +234,9 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 			body = "ERROR: " + root.Normalize(runErr.Error())
 		}
 		os.WriteFile(filepath.Join(dir, name+".out"), []byte(body), 0o644)
+	}
+	if runErr == nil && d1Candidate(t, v, root.Normalize(text)) {
+		return checkD1(t, v, root, text)
 	}
 	if div, ok := divergences[v.ID]; ok {
 		if runErr != nil {

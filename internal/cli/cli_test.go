@@ -49,6 +49,22 @@ func TestJSONOutputMatchesVectors(t *testing.T) {
 				t.Fatalf("CLI wrote: %v", d)
 			}
 			got := root.Normalize(strings.TrimSuffix(out, "\n"))
+			// D.1 (contracts §11) vectors are pinned in testdata/d1.
+			var d1 struct {
+				Vectors map[string]struct {
+					OutputSha256 string `json:"outputSha256"`
+				} `json:"vectors"`
+			}
+			testutil.ReadJSON(t, testutil.Testdata("d1", "expectations.json"), &d1)
+			if x, ok := d1.Vectors[strings.TrimSuffix(c.vector, ".json")]; ok {
+				if !root.SameLength() && strings.HasPrefix(c.vector, "resume/") {
+					t.Skip("budget-sensitive vector needs a generation-length root")
+				}
+				if sum := sha256hex(got); sum != x.OutputSha256 {
+					t.Fatalf("D.1 sha %s want %s", sum, x.OutputSha256)
+				}
+				return
+			}
 			if v.Expect.OutputText != nil && got != *v.Expect.OutputText {
 				t.Fatalf("resume text differs")
 			}
@@ -92,6 +108,22 @@ func TestExitCodesAndErrors(t *testing.T) {
 	code, out, _ = run("read", "--input", `{"id":"broken-plan","includeMarkdown":false}`, "--json", "--root", root.Path)
 	if code != 0 || !strings.Contains(out, `"selection"`) || strings.Contains(out, `"content"`) {
 		t.Fatalf("--input: %d %s", code, out)
+	}
+}
+
+// TestReadSliceFlags covers the D.1 filtered-read flags.
+func TestReadSliceFlags(t *testing.T) {
+	root := testutil.NewRoot(t, "full-valid")
+	code, out, _ := run("read", "full-plan", "--phase", "phase-b", "--json", "--root", root.Path)
+	if code != 0 || strings.Contains(out, `"content"`) || strings.Contains(out, `"reviewFindings"`) || !strings.Contains(out, `"slice"`) {
+		t.Fatalf("slice: %d %s", code, out)
+	}
+	code, out, _ = run("read", "full-plan", "--phase", "phase-b", "--notes", "--markdown", "--json", "--root", root.Path)
+	if code != 0 || !strings.Contains(out, `"content"`) || !strings.Contains(out, `"reviewFindings"`) || !strings.Contains(out, `"notesIncluded": true`) {
+		t.Fatalf("slice with notes and Markdown: %d %s", code, out)
+	}
+	if code, _, _ := run("read", "full-plan", "--markdown", "--no-markdown", "--root", root.Path); code != 2 {
+		t.Fatal("--markdown with --no-markdown must be a usage error")
 	}
 }
 

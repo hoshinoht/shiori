@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -93,17 +94,31 @@ func TestReadResponseLimit(t *testing.T) {
 }
 
 // TestResumeBudgetSweep is R01: every accepted budget produces a packet
-// whose complete text fits, for the stress fixtures, with and without
-// paging.
+// whose complete text fits, for the stress fixtures and a synthetic
+// 13-phase/38-step roadmap, with and without paging. D.1 (contracts §11
+// item A) adds: every page progresses, a packet with more than one page
+// item never shortens text below the readable minimums or shortens a
+// protected path/reference, and a page below the target size only
+// carries floor-level item prose (text shrinks before the page).
 func TestResumeBudgetSweep(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	budgets := []int{4096, 4097, 5000, 8191, 8192, 12000, 20000, 64000}
+	budgets := []int{4096, 4097, 5000, 6000, 8191, 8192, 12000, 20000, 64000}
 	for i := 0; i < 24; i++ {
 		budgets = append(budgets, 4096+rng.Intn(64000-4096+1))
 	}
+	type target struct {
+		e  *Engine
+		id string
+	}
+	var targets []target
 	for _, fx := range []struct{ fixture, id string }{{"resume-stress", "stress-plan"}, {"large-paging", "big-plan"}, {"unicode", "unicode-plan"}, {"full-valid", "full-plan"}} {
 		root := testutil.NewRoot(t, fx.fixture)
-		e := mustEngine(t, root.Path)
+		targets = append(targets, target{mustEngine(t, root.Path), fx.id})
+	}
+	re, _ := seedRoadmap(t)
+	targets = append(targets, target{re, "roadmap"})
+	for _, fx := range targets {
+		e := fx.e
 		for _, b := range budgets {
 			for _, limit := range []int{1, 7, 20, 100} {
 				b, limit := b, limit
@@ -120,6 +135,10 @@ func TestResumeBudgetSweep(t *testing.T) {
 					pg, _ := v.Get("page")
 					ret, _ := pg.Get("returned")
 					r, _ := ret.Float()
+					if r > 1 {
+						checkReadable(t, fmt.Sprintf("%s budget %d limit %d page %d", fx.id, b, limit, page), v)
+					}
+					checkTargetOrder(t, fmt.Sprintf("%s budget %d limit %d page %d", fx.id, b, limit, page), v, b, limit)
 					seen += int(r)
 					next, _ := pg.Get("nextCursor")
 					if next.Kind() != ojson.String {

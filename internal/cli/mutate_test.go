@@ -134,3 +134,27 @@ func TestCompactCLI(t *testing.T) {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
 }
+
+// D.1 status gate: the CLI error carries the exact field-path issues and
+// nothing is prepared or written.
+func TestStatusGateCLI(t *testing.T) {
+	root := testutil.NewRoot(t, "empty-workspace")
+	before := testutil.Fingerprint(t, root.Path)
+	withPrompt(t, false, "")
+	code, out, _ := run("create", "--input", `{"id":"gated","goal":"g","status":"in_progress","phases":[{"id":"p","title":"P","steps":[{"id":"s","title":"S","action":"a"}]}]}`,
+		"--yes", "--json", "--root", root.Path)
+	var e struct {
+		Error struct {
+			Class  string `json:"class"`
+			Issues []struct{ Path, Message string }
+		} `json:"error"`
+	}
+	json.Unmarshal([]byte(out), &e)
+	if code != 1 || e.Error.Class != "invalid_structure" || len(e.Error.Issues) != 1 ||
+		e.Error.Issues[0].Path != "phases.0.steps.0.validation" || e.Error.Issues[0].Message != "Required for executable workplans" {
+		t.Fatalf("gate: %d %s", code, out)
+	}
+	if d := testutil.DiffFingerprints(before, testutil.Fingerprint(t, root.Path)); len(d) > 0 {
+		t.Fatalf("gate wrote: %v", d)
+	}
+}

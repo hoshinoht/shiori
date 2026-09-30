@@ -5,7 +5,11 @@
 The owner has authorized implementation of stages A–D (spec 05 §2).
 Stage C owner decisions (contracts §9): D1 recovery accepted; D10 changed
 to a root-independent preview token. Stage D owner decision (contracts §9
-item 7): the resume display-cap residual is accepted as a divergence.
+item 7): the resume display-cap residual is accepted as a divergence
+(since superseded by D.1). D.1 owner decision (contracts §11, 2026-09-30):
+five design changes to behaviour inherited from the reference (resume
+budgeting, filtered read slice, Markdown drift warning, status gate and
+patch issue list, doctor stray artifacts) are approved and implemented.
 Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
 configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
@@ -327,9 +331,9 @@ Compaction preview is read-only (checked by the corpus read-only gate).
    there.
 6. `schema/index.json` still says "PROPOSED — frozen for review" (unchanged).
 
-## Stage D — native adapter: DONE (uncommitted, for owner review)
+## Stage D — native adapter: DONE (committed `4044539`)
 
-Nothing was committed. Stage D is in the working tree: new
+Stage D added: new
 `internal/protocol/`, `internal/cli/serve.go`, `internal/engine/errclass.go`
 (the error-class mapping moved from the CLI so the CLI and the protocol share
 it), `adapter/opencode/`, and small edits (doctor runtime-fact injection,
@@ -537,13 +541,156 @@ against it.
    from the reference (known since stage C, §10a); the adapter's permission
    request therefore names Shiori's lock auxiliary paths.
 
+## Stage D.1 — approved design changes: DONE (uncommitted, for owner review)
+
+Base `4044539`. Nothing was committed. The pinned copy of `4044539` that
+the owner's OpenCode uses and everything under `~/.config/opencode` were
+not touched. The decisions and exact behaviour are in
+[contracts §11](contracts.md#11-approved-design-changes-d1-approved-2026-09-30).
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| A resume | New degradation order around a target page of min(limit, 8/4/2) items (budget ≥12000 / ≥6000 / below): while the target fits, text shrinks first (uncapped → prose 240 / titles 80 → floor 120/80; current work keeps ≥512); below the target, fewer items at the floor, then current work at the floor, then fewer pinned-list entries; only then emergency caps below the minimums, then paths, then an empty page. Paths, references and the instruction are protected; kinds and severities are never truncated. (Rebalanced after coordinator review: the first version dropped items before any shortening and returned 2/44 at 12000) | `internal/engine/resume.go` (`chooseResume`, `resumeTargetPage`, `textClass`) |
+| B filtered read | `phaseId`/`stepId` return a slice: header without phases (and without findings/notes unless `includeNotes`), the selection, `plan` without content unless `includeMarkdown:true`, dependency entries touching the selection, hashes, and a `slice` descriptor. New input `includeNotes` (both surfaces; CLI `--notes`, plus `--markdown`) | `internal/engine/read.go`, `engine.go` (`sliceValue`), `input.go`, `internal/cli/cli.go`, `schema/v1/tools/workplan_read.input.schema.json`, `adapter/opencode/src/registration.json` (+ `scripts/snapshot-registration.ts`) |
+| C drift | `warnings` (only when nonempty) in validate, doctor plan entries and patch validation when the linked Markdown is not the generated rendering; `valid` unchanged | `internal/engine/validate.go` (`validationWarnings`), `doctor.go`, `patch.go`, CLI human output |
+| D gate | create/update refuse `in_progress`/`review`/`completed` while the structure rules fail on the resulting plan (`StatusGateError`, class `invalid_structure`, field-path `issues` in the CLI `--json` and protocol errors, before authorization); patch `validate` returns `validation.issues` | `internal/engine/planedit.go`, `create.go`, `update.go`, `errclass.go`, `patch.go`, `internal/protocol/server.go`, `internal/cli/cli.go` |
+| F strays | doctor `strayArtifacts`/`strayArtifactCount`/`omittedStrayArtifacts`/`warnings` (only when present) for orphaned checkpoint/dependency sidecars and unclassified root files (e.g. `*.patch`, unlinked `*.md`); suggests `archive/`, never moves or deletes | `internal/engine/doctor.go`, `list.go` (`dirListing.other`) |
+
+### Vector expectations
+
+The oracle corpus is unchanged. `testdata/d1/expectations.json` pins the
+new Go output (SHA-256 of the root-normalized text and UTF-16 length) of
+every vector that differs on purpose. Each one also passes a D.1
+comparator against the unchanged oracle vector
+(`internal/engine/d1_vectors_test.go`). A listed vector that becomes
+identical to the oracle, or an unlisted vector that diverges, fails.
+Re-pin after review with `SHIORI_D1_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
+
+| Category | Pass (oracle-exact) | Earlier approved divergence | D.1 divergence | Fail |
+| --- | --- | --- | --- | --- |
+| tools (199) | 168 | 10 | 21 (3 B filtered read, 18 C/F additive; 11 of these also carry D1/D6 and are checked by those comparators after the D.1 members are removed) | 0 |
+| resume (87) | 83 | 0 | 4 (A) | 0 |
+| paging (74) | 43 | 0 | 31 (A) | 0 |
+| mutations (70) | 62 | 7 | 1 (`patch-validate`, D/C) | 0 |
+
+The A comparator checks the following against the oracle packet. Every
+machine field matches: ids, hashes, counts, totals, freshness, retrieval.
+Every display string equals the oracle's or is a truncation of the same
+text. Page items are the same items in order. Page arithmetic and
+`omittedDangerCounts` are consistent, and every page progresses. With
+more than one item, no string is shortened below the minimums and no
+path is truncated.
+
+The B comparator checks that the slice equals the oracle document minus
+phases/findings/notes, the same selection, no Markdown, the oracle
+dependency view restricted to the selection, and a correct descriptor.
+
+The C/F comparator checks that removing the additive members yields the
+oracle bytes, or the earlier D1/D6 comparator result.
+
+### New tests
+
+- `d1_test.go`:
+  - `TestD1ResumeReadability`: a synthetic 13-phase/38-step roadmap at
+    64000/20000/12000/8000/6000, paged to the end. Minimums hold;
+    ≥20000 truncates nothing; current work keeps ≥512 at 12000; a page
+    below the target only has floor-level item prose; the default budget
+    returns at least 4 items. `TestD1ResumeTargetPage` pins the targets.
+  - `TestD1ResumeMinimumBudget`
+  - `TestD1FilteredRead`
+  - `TestD1MarkdownDrift`
+  - `TestD1StatusGate`: create and update, allowed statuses, same-call
+    completion, patch issue list.
+  - `TestD1DoctorStrays`
+- `TestResumeBudgetSweep`: extended with 6000, the synthetic roadmap and
+  the readability/protection/target-order invariants.
+- `TestResumeCapsBetweenCorpusBudgets`: now checks the unchanged caps
+  directly and on resume-stress.
+- CLI: `TestReadSliceFlags`, `TestStatusGateCLI`; `--json` vector checks
+  use the D.1 pins.
+- Protocol: `TestStatusGateAndPatchValidateIssues`.
+- Adapter: registration differs from the reference only by the `d1`
+  additions (`referenceSha256`).
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1` per package with timeouts: all pass
+  (engine 78 s). The protocol package also passes `-race -count=3`.
+- `bun test` in `adapter/opencode`: 48 pass, 1 skip (opt-in runtime smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+- Resume benchmark (`BenchmarkOps/*/resume`): 0.7 / 4.7 / 39 ms at
+  100 KiB / 1 MiB / 10 MiB, in line with the stage B–D figures.
+
+Owner-plan evidence ran on fresh `cp -Rp` copies of the read-only fixture;
+nothing from it is in the repository. Before is the `4044539` binary,
+after is the working tree. The fixture tree hash (bytes, modes, mtimes) was
+identical before and after, and the read-only operations left the copy
+unchanged.
+
+| Resume | Before (`4044539`) | After (D.1) |
+| --- | --- | --- |
+| 12000 | 11470 units, 20/44 items, 144 truncated fields; summary, next action, titles and actions all cut to 32 units; path truncated | 11802 units, 5/44 items, 36 truncated fields; summary 512 (current-work cap), next action 236 and current action 414 (full), item titles complete (median 51), item actions 120; all 8 constraints; paths intact |
+| 6000 | 5952 units, 17 items, every display string cut to **1** unit | 5814 units, 1 item; summary, next action and actions at 120, titles complete; 2 of 8 constraints shown (`omittedDangerCounts` 6), paths intact |
+| 4096 | 4020 units, 7 items, strings cut to 1 unit | 3843 units, 1 item, emergency cap 32 with every cut listed; paths intact |
+
+The 8-item target at 12000 is not reached on this plan: its pinned header
+(8 constraints, 6 scope, 5 non-goals, 8 relevant files, 3 guardrails, 3
+recent validations, current work at 512) leaves room for 5 items at the
+120 floor. A measured variant that also lets the pinned lists shrink to
+hold the target (before the page shrinks) gives 8 items at 12000 (summary
+120, 4 of 8 constraints) and 4 at 8000, but still 1 at 6000; it was not
+adopted because it trades safety-list breadth and current-work text for
+page size, which the review did not ask for.
+
+| Read of the 38-step plan | Before | After |
+| --- | --- | --- |
+| unfiltered | 227236 bytes | identical bytes |
+| `--phase core-bot` | 192517 bytes (whole document + Markdown) | 13714 bytes (33441 with `--notes`) |
+| `--phase core-bot --step context` | 185476 bytes | 6673 bytes |
+
+C, on the unmodified copy: `validate` returns `valid: true` plus the
+drift warning for `.opencode/workplan/kanade-v5-roadmap.md`, because the
+owner's Markdown is hand-edited. `doctor` repeats the warning on the plan
+entry. D, on a scratch copy: an update that sets `in_progress` and adds a
+step without validation is refused with
+`issues[{path: "phases.6.steps.7.validation"}]`, and `blocked` is
+accepted. F, on a scratch copy: with an orphan
+`kanade-v5-next.checkpoint.json` and a `rename.patch` added, doctor lists
+both with the `archive/` suggestion and changes nothing.
+
+### Remaining issues (D.1)
+
+1. **Page size at small budgets.** The target page is a preference, not a
+   guarantee: with a large pinned header the roadmap gets 5 items at 12000
+   and 1 at 6000/8000 (the synthetic plan about 4 at 12000). Reaching the
+   target there would need shrinking the pinned safety lists first (see
+   the variant above). Tiers, minimums and targets are constants in
+   `resume.go`.
+2. **Markdown default in filtered reads.** A filtered read omits the
+   Markdown unless `includeMarkdown` is explicitly true. The registered
+   `includeMarkdown` description ("defaults to true") is the reference
+   text and was left unchanged, because only the `includeNotes` addition
+   was approved. The `includeNotes` description states the filtered
+   behaviour.
+3. **Status gate scope.** The gate covers the plan status and the spec 01
+   §3 structure rules. It does not cover missing linked spec files, which
+   `validate` still reports, or phase/step statuses. It applies only when
+   the input sets a gated status. An existing invalid in-progress plan can
+   still be edited otherwise, so it stays repairable.
+4. Mixed writers: the D.1 Go core and the reference TypeScript plugin now
+   give different resume, filtered-read and doctor output. Stage E's
+   one-writer-per-root rule is unchanged.
+
 ## Resume after maintenance
 
 1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
    needed.
-2. Inspect `git status`. Stages A–C are committed (`fdadfd4`, `7a899e5`,
-   `9f66518`). Stage D exists only in the working tree until the owner
-   commits it. Preserve any user edits.
+2. Inspect `git status`. Stages A–D are committed (`fdadfd4`, `7a899e5`,
+   `9f66518`, `4044539`). D.1 exists only in the working tree until the
+   owner commits it. Preserve any user edits.
 3. If the oracle files change, the corpus is stale. Compare their sha256 against
    `testdata/MANIFEST.json` → `oracle.files`.
 

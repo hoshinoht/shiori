@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/model"
@@ -174,7 +175,8 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 		topIssues = []string{}
 	}
 	planCount := len(l.primary) + journalOnly
-	return ojson.NewObject(20).
+	strays := e.strayArtifacts(l)
+	out := ojson.NewObject(23).
 		Set("requestedRoot", ojson.StringValue(e.RequestedRoot)).
 		Set("canonicalRoot", ojson.StringValue(e.Root)).
 		Set("directory", ojson.StringValue(e.dir())).
@@ -192,8 +194,105 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 		Set("pendingTransactionCount", ojson.IntValue(int64(len(journals)))).
 		Set("omittedPendingTransactions", ojson.IntValue(int64(len(journals)-len(pendingValues)))).
 		Set("runtimeFacts", runtimeFacts(in.RuntimeFacts)).
-		Set("issues", ojson.StringsValue(topIssues)).
-		Set("readOnly", ojson.BoolValue(true)).Value(), nil
+		Set("issues", ojson.StringsValue(topIssues))
+	// D.1 (contracts §11 item F): non-failing stray-artifact warnings,
+	// present only when there are any. Nothing is moved or deleted.
+	if len(strays) > 0 {
+		listed := []ojson.Value{}
+		warnings := []string{}
+		for i, st := range strays {
+			if i < limit {
+				listed = append(listed, ojson.NewObject(3).
+					Set("name", ojson.StringValue(st.name)).
+					Set("kind", ojson.StringValue(st.kind)).
+					Set("suggestion", ojson.StringValue(st.suggestion)).Value())
+			}
+			warnings = append(warnings, st.warning())
+		}
+		if len(warnings) > limit {
+			warnings = warnings[:limit]
+		}
+		out.Set("strayArtifacts", ojson.ArrayValue(listed)).
+			Set("strayArtifactCount", ojson.IntValue(int64(len(strays)))).
+			Set("omittedStrayArtifacts", ojson.IntValue(int64(len(strays)-len(listed)))).
+			Set("warnings", ojson.StringsValue(warnings))
+	}
+	return out.Set("readOnly", ojson.BoolValue(true)).Value(), nil
+}
+
+// strayArtifact is a workplan-root file that belongs to no plan (D.1).
+type strayArtifact struct {
+	name, kind, suggestion string
+	id                     string // orphaned sidecar's plan id
+}
+
+func (s strayArtifact) warning() string {
+	if s.kind == "orphaned-sidecar" {
+		return "Orphaned sidecar " + snapshot.WorkplanDir + "/" + s.name + ": no primary plan " + s.id + ".json. " + s.suggestion
+	}
+	return "Unclassified file " + snapshot.WorkplanDir + "/" + s.name + " in the workplan root. " + s.suggestion
+}
+
+const straySuggestion = "If it is history, move it under " + snapshot.WorkplanDir + "/archive/ (doctor never moves or deletes files)."
+
+// strayArtifacts lists, in UTF-16 order, checkpoint/dependency sidecars
+// without a primary plan and root-level files that classify as nothing
+// and are not linked Markdown. Journals without a primary are recovery
+// state (D1), not strays; temporary and lock files are classified.
+func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
+	primary := map[string]bool{}
+	for _, n := range l.primary {
+		primary[n] = true
+	}
+	var out []strayArtifact
+	for _, sc := range l.sidecars {
+		var suffix string
+		switch sc.kind {
+		case kindCheckpoint:
+			suffix = ".checkpoint.json"
+		case kindDependencies:
+			suffix = ".dependencies.json"
+		default:
+			continue
+		}
+		id := strings.TrimSuffix(sc.name, suffix)
+		if !primary[id] {
+			out = append(out, strayArtifact{name: sc.name, kind: "orphaned-sidecar", id: id, suggestion: straySuggestion})
+		}
+	}
+	var linked map[string]bool
+	for _, name := range l.other {
+		if strings.HasSuffix(name, ".md") {
+			if primary[strings.TrimSuffix(name, ".md")] {
+				continue
+			}
+			if linked == nil {
+				linked = e.linkedMarkdown(l.primary)
+			}
+			if linked[snapshot.WorkplanDir+"/"+name] {
+				continue
+			}
+		}
+		out = append(out, strayArtifact{name: name, kind: "unclassified", suggestion: straySuggestion})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return ojson.CompareUTF16(out[i].name, out[j].name) < 0 })
+	return out
+}
+
+// linkedMarkdown is the set of planFile links of the readable primary
+// plans (read-only; unreadable plans contribute nothing).
+func (e *Engine) linkedMarkdown(names []string) map[string]bool {
+	out := map[string]bool{}
+	for _, n := range names {
+		id, err := model.NormalizeID(n)
+		if err != nil || id != n {
+			continue
+		}
+		if s, err := e.load(id); err == nil {
+			out[s.Plan.PlanFile] = true
+		}
+	}
+	return out
 }
 
 // doctorPlan diagnoses one primary plan by its listed file name.
@@ -246,10 +345,14 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	if issues == nil {
 		issues = []string{}
 	}
-	return ojson.NewObject(9).
+	b := ojson.NewObject(10).
 		Set("id", ojson.StringValue(name)).
 		Set("valid", ojson.BoolValue(len(issues) == 0)).
-		Set("issues", ojson.StringsValue(issues)).
+		Set("issues", ojson.StringsValue(issues))
+	if w := validationWarnings(s); len(w) > 0 {
+		b.Set("warnings", ojson.StringsValue(w)) // D.1, additive
+	}
+	return b.
 		Set("workplan", p.Summary()).
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).

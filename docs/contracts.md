@@ -9,7 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out).
+spell out). Section 11 records the approved D.1 design changes, which
+deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -422,6 +423,7 @@ The owner approved, on 2026-09-30:
    budgets (88 of 154 sampled; §10a item 1). Every packet still fits its
    budget and keeps all machine ids, hashes, counts and retrieval pointers
    (R01/R02). This is accepted as-is; resume behaviour is not changed.
+   *Superseded by D.1 (§11 item A), which replaces the display-cap ladder.*
 
 ## 10. Stage B findings (OBSERVED, pinned by the corpus)
 
@@ -456,6 +458,8 @@ reproduces them byte-for-byte; the vectors named are the evidence.
   64 and 5 are unconstrained and follow the halving pattern. `truncatedFields`
   lists danger fields first, then the rest, in packet order, capped at 4·*L*.
   All 87 `resume/` and 74 `paging/` vectors reproduce exactly.
+  *D.1 (§11 item A) replaces this policy; 35 of those vectors now differ on
+  purpose and are pinned in `testdata/d1/`.*
 - **Checkpoint diagnostics.** A checkpoint that is JSON but matches neither
   version is `checkpoint: : Invalid input` in doctor and
   `Invalid workplan checkpoint document at <path>: : Invalid input` in resume
@@ -560,3 +564,157 @@ box on copies of the corpus fixtures; its source was not read.
   `writeIntent.resources` lists different lock-protocol paths; all other
   resources match. Mixed TS/Go writers on one root are not proven
   interoperable and must not be run together (stage E, spec 05 §3).
+
+## 11. Approved design changes D.1 (APPROVED 2026-09-30)
+
+A real-use round on the owner's 13-phase/38-step roadmap found five
+problems that every earlier stage had reproduced faithfully from the
+reference design. The owner approved changing that design on 2026-09-30.
+Everything not listed here stays as in sections 1–10: the V2
+plan/checkpoint/dependencies/journal formats, the `.opencode/workplan/`
+layout, the thirteen `workplan_*` identities, the hash algorithm, the
+generated Markdown bytes and every other argument shape. The only schema
+change is the new optional `includeNotes` boolean on `workplan_read`.
+
+The oracle corpus is not edited. Vectors whose output changes on purpose
+are listed in [`testdata/d1/expectations.json`](../testdata/d1/expectations.json)
+with the SHA-256 and UTF-16 length of the pinned Go output, and each one
+passes a comparator that proves only the approved change differs
+(`internal/engine/d1_vectors_test.go`). There are 56 such tool vectors
+(A: 35 resume/paging, B: 3 filtered reads, C/F: 18 validate/doctor) and
+one mutation vector (`mutations/patch-validate`, item D).
+
+**A. Resume budgeting prefers fewer items to shorter text.** The reference
+shortened every display string (down to one code unit) before it
+returned fewer page items. On the roadmap, the default 12000 budget gave
+20 items whose every string was cut to 32 code units, and 6000 gave one
+code unit. A first D.1 version returned fewer items before any shortening,
+which gave 2 of 44 items at 12000 and was too few for surveying work; the
+coordinator's review on 2026-09-30 rebalanced it to a target page. The
+order (see `chooseResume` in `internal/engine/resume.go`):
+
+1. **Target page** of min(limit, *T*) items: *T* = 8 at `maxChars` ≥ 12000,
+   4 at ≥ 6000, 2 below. While the target still fits, text shrinks first
+   through the tiers `{prose cap, title cap}`: uncapped, {2048, 512},
+   {1024, 256}, {512, 200}, {240, 80}, then the floor {120, 80}. Each tier
+   returns the largest page (at least the target) that fits. Current work
+   (checkpoint summary, next action, current step
+   target/action/validation) keeps a cap of at least 512 at these levels.
+   Pretty output is preferred unless compact output carries more items.
+2. **Below the target**, at the floor the page shrinks to one item (the
+   rest stays reachable through `nextCursor`). Then current work drops to
+   the floor. Then the pinned lists (scope, non-goals, constraints,
+   blockers, guardrails, references, recent validation, relevant files,
+   warnings, high findings, dependencies) show fewer entries, down to one
+   each. Every total and `omittedDangerCounts` entry that the packet has
+   stays exact, and `safety.overflow` is set. Recent validation and
+   relevant files have no total in the packet (shape unchanged); the
+   relevant files stay reachable as page references.
+3. Only when one page item (or the pinned packet alone, if nothing is left
+   to page) still does not fit, text goes below the minimums (caps 100,
+   80, 64, 48, 32, 24, 16, 10, 4, 2, 1). Then file paths and references
+   are shortened too, and last of all the page is dropped. Every shortened
+   string ends in `…` and is listed in `truncatedFields`.
+
+The minimums are 120 code units for prose (summary, next action, goal,
+target/action/validation, list entries, finding detail) and 80 for titles.
+At 120, a summary or next action still holds a full clause (about 20
+words). At 80, a step title keeps its distinguishing words: the roadmap's
+longest phase or step title is 69 code units. The 240 prose floor while
+the target page fits keeps a typical action or validation sentence whole
+(two to three clauses). A surrogate pair is never split, so a cut string
+can be one unit shorter.
+
+Some values are never shortened while one item fits: the path, planFile,
+relevant files, checkpoint and page references, and the instruction.
+Ids, hashes, enums (kind, severity, status), counts and retrieval
+pointers are never shortened at all.
+
+The output shape, field names, list caps
+(`clamp(floor(maxChars/900), 4, 8)`), the `truncatedFields` cap and the
+cursor format are unchanged. Every accepted budget still yields a packet
+within `maxChars`, and every page makes progress. A page smaller than the
+target only carries page-item prose at the 120 floor (text shrank first).
+`TestResumeBudgetSweep` checks this over 33 budgets × 4 page limits ×
+5 plans (including a synthetic 13-phase/38-step roadmap), paged to the
+end. It also checks that no packet with more than one item goes below the
+minimums or shortens a protected path, and that no page below the target
+carries item prose above the floor. The only failure left is still the
+§10a item 2 case, machine ids longer than the budget.
+
+This supersedes the display-cap ladder in §10 ("Resume budget policy")
+and the §9 item 7 residual. Resume output is no longer
+reference-identical whenever the reference would have truncated. On
+large plans the default budget pages with fewer, readable items per call.
+
+**B. A filtered `workplan_read` returns a slice.** With `phaseId` and/or
+`stepId`, the result is:
+
+- `path`;
+- `workplan`: the document without `phases`, and without `reviewFindings`
+  and `notes` unless `includeNotes: true`. Unknown top-level metadata is
+  kept;
+- `selection` (unchanged);
+- `plan` with `path`/`exists`. Its `content` is included only on an
+  explicit `includeMarkdown: true`; with a filter the default becomes
+  false;
+- `dependencies`: entries whose source is selected or that depend on a
+  selected step, the terminal summaries they reference, and all issues;
+- `planHash`, `stateHash`;
+- a new `slice` descriptor:
+  `{filtered, phaseCount, stepCount, findingCount, noteCount,
+  notesIncluded, markdownIncluded, dependenciesFiltered, full}`.
+
+An unfiltered read, with or without `includeNotes`, is byte-identical to
+the reference.
+
+`includeNotes` is added to `schema/v1/tools/workplan_read.input.schema.json`
+and to the adapter's registration snapshot
+(`adapter/opencode/src/registration.json`, key `d1`). Removing the
+addition and the `d1` key reproduces the reference snapshot byte-for-byte
+(`referenceSha256`, checked by `plugin.test.ts`). This is the only
+difference between the model-facing tool surface and the reference.
+
+**C. Markdown drift warning.** `workplan_validate`, each `workplan_doctor`
+plan entry and `workplan_patch {validate:true}` report a non-failing
+warning when the linked Markdown exists, is nonblank and is not
+byte-identical to the generated rendering of the stored JSON. In that
+case later JSON changes (status, notes, findings, compaction) do not reach
+the Markdown. The warning names the file and the explicit regeneration
+path (`workplan_reset` `markdown-only` with `replaceMarkdown=true`).
+The new `warnings` member appears only when nonempty, so outputs without
+warnings are unchanged. `valid` and `issues` are unchanged.
+
+**D. Status gate and patch issue list.** `workplan_create` and
+`workplan_update` refuse to set the plan status to `in_progress`,
+`review` or `completed` while the executable-structure rules (spec 01
+§3, `x-shiori-structure-rules`, applied to the resulting plan) fail. The
+refusal comes before authorization, so nothing is prepared, prompted or
+written. The error class is `invalid_structure`. The message lists every
+`path: message`, and the CLI `--json` error and the protocol error carry
+`issues[{path, message}]`. `draft`, `blocked` and `cancelled` stay
+allowed with incomplete structure. An update that does not set a gated
+status is not gated (the `"draft"` placeholder is still a no-op). An
+update that sets a gated status and completes the structure in the same
+call is accepted.
+
+`workplan_patch {validate:true}` (CLI and native) now returns
+`metadata.validation.issues`, the full ordered issue list of
+`workplan_validate`, next to `valid`/`issueCount`, plus `warnings`
+when present.
+
+**F. Stray artifacts in doctor.** `workplan_doctor` reports root-level
+files of `.opencode/workplan/` that belong to no plan:
+
+- `orphaned-sidecar`: `<id>.checkpoint.json` or `<id>.dependencies.json`
+  with no `<id>.json`;
+- `unclassified`: any other file that is not a plan, sidecar, lock,
+  temporary or stage file and not a plan's linked Markdown, for example
+  `*.patch`.
+
+Journals without a primary JSON remain D1 recovery state, not strays.
+Each entry suggests moving the file under `.opencode/workplan/archive/`.
+Doctor never moves or deletes anything. The new members
+`strayArtifacts[{name, kind, suggestion}]` (bounded by `limit`),
+`strayArtifactCount`, `omittedStrayArtifacts` and `warnings` appear only
+when there is at least one stray. `workplan_list` is unchanged.

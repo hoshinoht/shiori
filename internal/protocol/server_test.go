@@ -914,6 +914,52 @@ func TestErrorsCarryStructuredFields(t *testing.T) {
 	}
 }
 
+// D.1 (contracts §11 item D) on the native path: the status gate is an
+// invalid_structure error with field-path issues and prepares nothing;
+// patch validate returns the issue list after commit.
+func TestStatusGateAndPatchValidateIssues(t *testing.T) {
+	root := fixtureRoot(t, "draft-empty")
+	h := start(t, Options{})
+	h.handshake()
+	hash := readHash(t, h, root, "draft-plan")
+	before := fingerprint(t, root)
+	r := h.call("g", "workplan_update", root, map[string]any{"id": "draft-plan", "expectedHash": hash, "status": "in_progress"})
+	if r.errClass() != "invalid_structure" || r.obj("prepared") != nil {
+		t.Fatalf("gate: %v", r)
+	}
+	var paths []string
+	for _, is := range r.obj("error")["issues"].([]any) {
+		paths = append(paths, is.(map[string]any)["path"].(string))
+	}
+	if strings.Join(paths, ",") != "goal,phases" {
+		t.Fatalf("issue paths %v", paths)
+	}
+	sameFingerprint(t, before, fingerprint(t, root))
+	patch := "*** Begin Patch\n*** Update File: .opencode/workplan/draft-plan.md\n@@\n-# draft-plan\n+# draft-plan (edited)\n*** End Patch"
+	r = h.call("p", "workplan_patch", root, map[string]any{"id": "draft-plan", "expectedHash": hash, "patchText": patch, "validate": true})
+	p := r.obj("prepared")
+	if p == nil {
+		t.Fatalf("patch: %v", r)
+	}
+	c := h.call("c", "shiori.commit", root, commitInput(p))
+	var out struct {
+		Metadata struct {
+			Validation struct {
+				IssueCount int      `json:"issueCount"`
+				Issues     []string `json:"issues"`
+				Warnings   []string `json:"warnings"`
+			} `json:"validation"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal([]byte(c.text()), &out); err != nil || !c.ok() {
+		t.Fatalf("commit: %v %v", c, err)
+	}
+	v := out.Metadata.Validation
+	if v.IssueCount == 0 || len(v.Issues) != v.IssueCount || !strings.HasPrefix(v.Issues[0], "goal: ") || len(v.Warnings) != 1 {
+		t.Fatalf("validation %+v", v)
+	}
+}
+
 func TestConcurrentRequestsAreMultiplexed(t *testing.T) {
 	root := fixtureRoot(t, "full-valid")
 	h := start(t, Options{})

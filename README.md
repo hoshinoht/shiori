@@ -7,10 +7,11 @@ reliable action across workers and sessions.
 This repository contains the specifications, the approved stage A contract
 (machine schemas, a golden fixture corpus and a measured TypeScript baseline),
 the stage B read-only Go core, the stage C transactional core with its
-`shiori` CLI, and the stage D native OpenCode adapter (`shiori serve --stdio`
-plus `adapter/opencode/`). The architecture is a Go core and CLI with a thin
-OpenCode JS/TS adapter. Stages A–D are authorized; enabling the adapter in a
-real OpenCode configuration (stage E), automatic artifact migration, commits
+`shiori` CLI, the stage D native OpenCode adapter (`shiori serve --stdio`
+plus `adapter/opencode/`), and the D.1 approved design changes
+([contracts §11](docs/contracts.md#11-approved-design-changes-d1-approved-2026-09-30)).
+The architecture is a Go core and CLI with a thin OpenCode JS/TS adapter.
+Stages A–D and D.1 are authorized. Automatic artifact migration, commits
 and remote publication are not.
 
 ## Specifications
@@ -25,7 +26,8 @@ Read in this order:
 
 Stage A contract:
 
-- [Frozen contract v1 (APPROVED 2026-09-30)](docs/contracts.md)
+- [Frozen contract v1 (APPROVED 2026-09-30)](docs/contracts.md), including the
+  approved D.1 design changes (§11)
 - [Machine schemas](schema/index.json) and [golden corpus](testdata/MANIFEST.json)
 - [TypeScript reference baseline and Go stage B results](docs/baseline.md)
 
@@ -58,9 +60,27 @@ fully static binary.
 
 Reads never prompt, write, lock, repair or change a file's mtime.
 
+D.1 behaviour of the read operations (contracts §11):
+
+- `resume` keeps text readable around a target page (8 items at budgets
+  of 12000 or more, 4 at 6000 or more, 2 below). While the target fits it
+  shortens text first, down to 240 code units for prose and 80 for titles
+  (the current step, summary and next action keep at least 512), then to
+  120. Below the target it returns fewer items (the cursor carries the
+  rest). File paths and references are not shortened. Only when a single
+  item cannot fit does text go below 120/80, and every cut is marked with
+  `…` and listed in `truncatedFields`.
+- `read --phase/--step` returns a slice: the plan header, the hashes and
+  the selected phase/step. Findings and notes are added only with
+  `--notes` (`includeNotes`), and the Markdown only with `--markdown`.
+- `validate` and `doctor` warn, without failing, when the linked Markdown
+  is not the generated rendering. `doctor` also lists orphaned sidecars
+  and unclassified files in `.opencode/workplan/`. It never moves or
+  deletes them.
+
 ```sh
 shiori list     --root /path/to/project
-shiori read     <id> [--phase ID] [--step ID] [--no-markdown]
+shiori read     <id> [--phase ID] [--step ID] [--no-markdown | --markdown] [--notes]
 shiori inspect  <id> [--phase ID] [--limit 1-500] [--cursor TOKEN]
 shiori validate <id>                       # exit 1 when the plan is invalid
 shiori resume   <id> [--max-chars 4096-64000] [--limit 1-100] [--cursor TOKEN] [--phase ID] [--step ID]
@@ -101,6 +121,10 @@ shiori update     my-plan --recovery resume|rollback --expected-hash "$H"       
   the state is still rechecked under the lock.
 - `--input '<json>'` accepts any core-surface tool input; flags override its
   fields.
+- `create`/`update` refuse to set the status to `in_progress`, `review` or
+  `completed` while the executable-structure rules fail. The error lists
+  every field path. `draft`, `blocked` and `cancelled` are always allowed.
+  `patch --validate` returns the full issue list (D.1).
 
 ### Common
 
@@ -132,7 +156,7 @@ expected state, a single-use capability) and touches nothing; only
 same trusted invocation identity, writes. Cancel frames, disconnects and a
 second commit expire it; nothing is replayed after a reconnect. The child exits
 on stdin EOF, SIGTERM or after 10 minutes with no request and no prepared
-intent. See [STATUS](docs/STATUS.md#stage-d--native-adapter-done-uncommitted-for-owner-review)
+intent. See [STATUS](docs/STATUS.md#stage-d--native-adapter-done-committed-4044539)
 and `schema/v1/protocol-envelope-v1.schema.json`.
 
 ## OpenCode adapter
@@ -208,7 +232,10 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 - `TestCorpusParity` runs every `tools/`, `resume/` and `paging/` vector at a
   root of the generation root's length, under `/private/tmp`, and fails on
-  any byte, mode, mtime or file-set change.
+  any byte, mode, mtime or file-set change. Vectors that D.1 changes on
+  purpose are pinned in `testdata/d1/expectations.json`, and each one also
+  passes a comparator against the unchanged oracle vector. Re-pin them
+  after review with `SHIORI_D1_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
 - `TestMutationVectors` runs all 70 mutation vectors with a frozen clock and
   compares output, authorization count and the exact changed files;
   `TestMutationInputVectors` covers the 39 mutating-tool input vectors.
@@ -224,8 +251,7 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit stage D (see [STATUS](docs/STATUS.md)). The next stage is
-E, the opt-in switch of one real OpenCode configuration from the reference
-plugin to this adapter, with rollback; its exact change and prerequisites are
-in STATUS. Worktree orchestration and alternative storage remain later,
-explicitly gated stages.
+Review and commit D.1 (see [STATUS](docs/STATUS.md)). Updating the pinned
+copy the owner's OpenCode uses is a separate step for the owner. Worktree
+orchestration and alternative storage remain later, explicitly gated
+stages.

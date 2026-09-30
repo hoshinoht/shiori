@@ -136,6 +136,38 @@ func (v depView) value() ojson.Value {
 		Set("issues", ojson.StringsValue(issues)).Value()
 }
 
+// sliceValue is value() restricted to entries whose source step is
+// selected or that depend on a selected step, and the terminal summaries
+// those entries reference (D.1 filtered read). Issues stay complete.
+func (v depView) sliceValue(sel map[model.StepRef]bool) ojson.Value {
+	if v.deps == nil {
+		return v.value()
+	}
+	d := *v.deps
+	d.Entries = nil
+	refs := map[model.StepRef]bool{}
+	for _, en := range v.deps.Entries {
+		keep := sel[model.StepRef{PhaseID: en.PhaseID, StepID: en.StepID}]
+		for _, r := range en.DependsOn {
+			keep = keep || sel[r]
+		}
+		if keep {
+			d.Entries = append(d.Entries, en)
+			for _, r := range en.DependsOn {
+				refs[r] = true
+			}
+		}
+	}
+	d.TerminalSummaries = nil
+	for _, ts := range v.deps.TerminalSummaries {
+		if refs[model.StepRef{PhaseID: ts.PhaseID, StepID: ts.StepID}] || sel[model.StepRef{PhaseID: ts.PhaseID, StepID: ts.StepID}] {
+			d.TerminalSummaries = append(d.TerminalSummaries, ts)
+		}
+	}
+	v.deps = &d
+	return v.value()
+}
+
 // Checkpoint freshness classes (contracts §7).
 const (
 	FreshnessMissing = "missing"

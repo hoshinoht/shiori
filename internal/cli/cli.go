@@ -63,7 +63,7 @@ Mutation flags:
                              never read from the environment)
 
 Read command flags:
-  read:     --phase ID --step ID --no-markdown
+  read:     --phase ID --step ID --no-markdown --markdown --notes
   inspect:  --phase ID --limit N --cursor TOKEN
   resume:   --max-chars N --limit N --cursor TOKEN --phase ID --step ID
   doctor:   --limit N
@@ -105,6 +105,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	phase := fs.String("phase", "", "phase id")
 	step := fs.String("step", "", "step id")
 	noMD := fs.Bool("no-markdown", false, "omit linked Markdown")
+	withMD := fs.Bool("markdown", false, "include linked Markdown in a filtered read")
+	withNotes := fs.Bool("notes", false, "include findings and notes in a filtered read")
 	limit := fs.Int("limit", 0, "page size")
 	cursor := fs.String("cursor", "", "cursor from the previous page")
 	maxChars := fs.Int("max-chars", 0, "resume budget in UTF-16 code units")
@@ -158,8 +160,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		case "read":
 			str("phase", "phaseId", *phase)
 			str("step", "stepId", *step)
+			if *noMD && *withMD {
+				fmt.Fprintln(stderr, "shiori read: --markdown and --no-markdown are mutually exclusive")
+				return 2
+			}
 			if *noMD {
 				b.Set("includeMarkdown", ojson.BoolValue(false))
+			}
+			if *withMD {
+				b.Set("includeMarkdown", ojson.BoolValue(true))
+			}
+			if *withNotes {
+				b.Set("includeNotes", ojson.BoolValue(true))
 			}
 		case "inspect":
 			str("phase", "phaseId", *phase)
@@ -227,7 +239,7 @@ func flagAllowed(cmd, name string) bool {
 		return true
 	}
 	allowed := map[string][]string{
-		"read":    {"phase", "step", "no-markdown"},
+		"read":    {"phase", "step", "no-markdown", "markdown", "notes"},
 		"inspect": {"phase", "limit", "cursor"},
 		"resume":  {"max-chars", "limit", "cursor", "phase", "step"},
 		"doctor":  {"limit"},
@@ -304,11 +316,14 @@ func fail(stdout, stderr io.Writer, jsonOut bool, err error) int {
 	var issues []model.Issue
 	var ie *engine.InputError
 	var de *model.DecodeError
+	var gate *engine.StatusGateError
 	switch {
 	case errors.As(err, &ie):
 		issues = ie.Issues
 	case errors.As(err, &de):
 		issues = de.Issues
+	case errors.As(err, &gate):
+		issues = gate.StructuredIssues()
 	}
 	if len(issues) > 0 {
 		out := make([]ojson.Value, len(issues))

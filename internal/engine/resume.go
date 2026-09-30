@@ -92,12 +92,16 @@ type resumeModel struct {
 	instruction         string
 }
 
-// resumeParams is one degradation level.
+// resumeParams is one degradation level. Caps are UTF-16 code units
+// including the trailing ellipsis; 0 means the class is not truncated.
 type resumeParams struct {
-	listCap int // pinned list length cap
-	strCap  int // display string cap (UTF-16 code units incl. ellipsis)
-	items   int // page items to include
-	compact bool
+	listCap   int // pinned list length cap
+	titleCap  int // titles (plan, phase, step, finding)
+	longCap   int // goal, page-item target/action/validation, list entries
+	pinnedCap int // current work: summary, next action, current step prose
+	protCap   int // file paths, references, instruction
+	items     int // page items to include
+	compact   bool
 }
 
 // Resume implements workplan_resume: a bounded continuation packet whose
@@ -353,27 +357,44 @@ func findingOf(p *model.Plan, i int) findingView {
 		status: status, metadataOmitted: len(f.Unknown) > 0}
 }
 
+// textClass selects the display cap of a packet string (D.1, contracts
+// §11). Protected strings are file paths, references and the fixed
+// instruction; ids, hashes, enums, counts and retrieval pointers are never
+// passed through truncation at all.
+type textClass int
+
+const (
+	clsProtected textClass = iota
+	clsTitle
+	clsLong
+	clsPinned // current work: summary, next action, current target/action/validation
+)
+
 // truncState records truncated display fields in traversal order.
 type truncState struct {
-	cap         int
+	caps        [4]int // per textClass; 0 = no cap
 	danger      []string
 	other       []string
 	dangerCount int
 }
 
-func (t *truncState) str(path, s string, danger bool) ojson.Value {
-	out, cut := ojson.TruncateUTF16(s, t.cap)
+func (t *truncState) str(path, s string, cls textClass, danger bool) ojson.Value {
+	c := t.caps[cls]
+	if c <= 0 {
+		return ojson.StringValue(s)
+	}
+	out, cut := ojson.TruncateUTF16(s, c)
 	if cut {
 		t.record(path, danger)
 	}
 	return ojson.StringValue(out)
 }
 
-func (t *truncState) ptr(path string, s *string, danger bool) ojson.Value {
+func (t *truncState) ptr(path string, s *string, cls textClass, danger bool) ojson.Value {
 	if s == nil {
 		return ojson.NullValue()
 	}
-	return t.str(path, *s, danger)
+	return t.str(path, *s, cls, danger)
 }
 
 func (t *truncState) record(path string, danger bool) {
@@ -385,14 +406,14 @@ func (t *truncState) record(path string, danger bool) {
 	}
 }
 
-func (t *truncState) list(path string, items []string, cap int, danger bool) ojson.Value {
+func (t *truncState) list(path string, items []string, cap int, cls textClass, danger bool) ojson.Value {
 	n := len(items)
 	if n > cap {
 		n = cap
 	}
 	out := make([]ojson.Value, n)
 	for i := 0; i < n; i++ {
-		out[i] = t.str(path+"["+strconv.Itoa(i)+"]", items[i], danger)
+		out[i] = t.str(path+"["+strconv.Itoa(i)+"]", items[i], cls, danger)
 	}
 	return ojson.ArrayValue(out)
 }
@@ -407,13 +428,13 @@ func shown(total, cap int) int {
 func (t *truncState) finding(path string, f findingView, withKind bool, danger bool) ojson.Value {
 	b := ojson.NewObject(9)
 	if withKind {
-		b.Set("kind", t.str(path+".kind", "finding", false))
+		b.Set("kind", ojson.StringValue("finding"))
 	}
 	b.Set("index", ojson.IntValue(int64(f.index))).
-		Set("severity", t.str(path+".severity", f.severity, danger)).
-		Set("title", t.str(path+".title", f.title, danger)).
-		Set("detail", t.ptr(path+".detail", f.detail, danger)).
-		Set("source", t.ptr(path+".source", f.source, danger)).
+		Set("severity", ojson.StringValue(f.severity)).
+		Set("title", t.str(path+".title", f.title, clsTitle, danger)).
+		Set("detail", t.ptr(path+".detail", f.detail, clsLong, danger)).
+		Set("source", t.ptr(path+".source", f.source, clsLong, danger)).
 		Set("status", ojson.StringValue(f.status)).
 		Set("metadataOmitted", ojson.BoolValue(f.metadataOmitted))
 	if f.metadataOmitted {
@@ -424,13 +445,13 @@ func (t *truncState) finding(path string, f findingView, withKind bool, danger b
 
 // build renders the packet for one degradation level.
 func (m *resumeModel) build(pr resumeParams) ojson.Value {
-	t := &truncState{cap: pr.strCap}
+	t := &truncState{caps: [4]int{pr.protCap, pr.titleCap, pr.longCap, pr.pinnedCap}}
 	L := pr.listCap
 
-	pathV := t.str("path", m.path, false)
-	planFileV := t.str("planFile", m.planFile, false)
+	pathV := t.str("path", m.path, clsProtected, false)
+	planFileV := t.str("planFile", m.planFile, clsProtected, false)
 	// The summary is truncated (and listed) before the current position.
-	summaryV := t.ptr("checkpoint.summary", m.summary, false)
+	summaryV := t.ptr("checkpoint.summary", m.summary, clsPinned, false)
 	var current ojson.Value
 	if m.current == nil {
 		current = ojson.NullValue()
@@ -438,14 +459,14 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		c := m.current
 		current = ojson.NewObject(9).
 			Set("phaseId", ojson.StringValue(c.phaseID)).
-			Set("phaseTitle", t.str("checkpoint.current.phaseTitle", c.phaseTitle, false)).
+			Set("phaseTitle", t.str("checkpoint.current.phaseTitle", c.phaseTitle, clsTitle, false)).
 			Set("phaseStatus", ojson.StringValue(c.phaseStatus)).
 			Set("stepId", ojson.StringValue(c.stepID)).
-			Set("stepTitle", t.str("checkpoint.current.stepTitle", c.stepTitle, false)).
+			Set("stepTitle", t.str("checkpoint.current.stepTitle", c.stepTitle, clsTitle, false)).
 			Set("stepStatus", ojson.StringValue(c.stepStatus)).
-			Set("target", t.ptr("checkpoint.current.target", c.target, false)).
-			Set("action", t.ptr("checkpoint.current.action", c.action, false)).
-			Set("validation", t.ptr("checkpoint.current.validation", c.validation, false)).Value()
+			Set("target", t.ptr("checkpoint.current.target", c.target, clsPinned, false)).
+			Set("action", t.ptr("checkpoint.current.action", c.action, clsPinned, false)).
+			Set("validation", t.ptr("checkpoint.current.validation", c.validation, clsPinned, false)).Value()
 	}
 	checkpoint := ojson.NewObject(20).
 		Set("exists", ojson.BoolValue(m.cpExists)).
@@ -454,35 +475,35 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("sourceUpdatedAt", ojson.NullableString(m.sourceUpdatedAt)).
 		Set("summary", summaryV).
 		Set("current", current).
-		Set("nextAction", t.ptr("checkpoint.nextAction", m.nextAction, false)).
-		Set("blockers", t.list("checkpoint.blockers", m.blockers, L, true)).
+		Set("nextAction", t.ptr("checkpoint.nextAction", m.nextAction, clsPinned, false)).
+		Set("blockers", t.list("checkpoint.blockers", m.blockers, L, clsLong, true)).
 		Set("blockersTotal", ojson.IntValue(int64(m.blockersTotal))).
-		Set("guardrails", t.list("checkpoint.guardrails", m.guardrails, L, true)).
+		Set("guardrails", t.list("checkpoint.guardrails", m.guardrails, L, clsLong, true)).
 		Set("guardrailsTotal", ojson.IntValue(int64(m.guardrailsTotal))).
-		Set("references", t.list("checkpoint.references", m.references, L, true)).
+		Set("references", t.list("checkpoint.references", m.references, L, clsProtected, true)).
 		Set("referencesTotal", ojson.IntValue(int64(m.referencesTotal))).
-		Set("recentValidation", t.list("checkpoint.recentValidation", m.recentValidation, L, true)).
+		Set("recentValidation", t.list("checkpoint.recentValidation", m.recentValidation, L, clsLong, true)).
 		Set("evidenceStatus", ojson.StringValue("unverified")).
-		Set("diagnostic", t.ptr("checkpoint.diagnostic", m.diagnostic, false)).Value()
+		Set("diagnostic", t.ptr("checkpoint.diagnostic", m.diagnostic, clsLong, false)).Value()
 
 	var titleV ojson.Value
 	if m.title == nil {
 		titleV = ojson.NullValue()
 	} else {
-		titleV = t.str("workplan.title", *m.title, false)
+		titleV = t.str("workplan.title", *m.title, clsTitle, false)
 	}
 	workplan := ojson.NewObject(12).
 		Set("id", ojson.StringValue(m.id)).
 		Set("title", titleV).
-		Set("goal", t.str("workplan.goal", m.goal, false)).
+		Set("goal", t.str("workplan.goal", m.goal, clsLong, false)).
 		Set("status", ojson.StringValue(m.status)).
-		Set("scope", t.list("workplan.scope", m.scope, L, true)).
+		Set("scope", t.list("workplan.scope", m.scope, L, clsLong, true)).
 		Set("scopeTotal", ojson.IntValue(int64(len(m.scope)))).
-		Set("nonGoals", t.list("workplan.nonGoals", m.nonGoals, L, true)).
+		Set("nonGoals", t.list("workplan.nonGoals", m.nonGoals, L, clsLong, true)).
 		Set("nonGoalsTotal", ojson.IntValue(int64(len(m.nonGoals)))).
-		Set("constraints", t.list("workplan.constraints", m.constraints, L, true)).
+		Set("constraints", t.list("workplan.constraints", m.constraints, L, clsLong, true)).
 		Set("constraintsTotal", ojson.IntValue(int64(len(m.constraints)))).
-		Set("relevantFiles", t.list("workplan.relevantFiles", m.relevantFiles, L, false)).
+		Set("relevantFiles", t.list("workplan.relevantFiles", m.relevantFiles, L, clsProtected, false)).
 		Set("updatedAt", ojson.StringValue(m.updatedAt)).Value()
 
 	depRefs := make([]ojson.Value, 0, shown(len(m.currentDeps), L))
@@ -499,7 +520,7 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 	for i := 0; i < shown(len(m.high), L); i++ {
 		high = append(high, t.finding("safety.highFindings["+strconv.Itoa(i)+"]", m.high[i], false, true))
 	}
-	warnings := t.list("safety.unverifiedWarnings", m.warnings, L, true)
+	warnings := t.list("safety.unverifiedWarnings", m.warnings, L, clsLong, true)
 
 	omitted := [8]int{
 		len(m.constraints) - shown(len(m.constraints), L),
@@ -528,23 +549,23 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		switch it.kind {
 		case "active-work":
 			items = append(items, ojson.NewObject(10).
-				Set("kind", t.str(base+".kind", it.kind, false)).
+				Set("kind", ojson.StringValue(it.kind)).
 				Set("phaseId", ojson.StringValue(it.phaseID)).
-				Set("phaseTitle", t.str(base+".phaseTitle", it.phaseTitle, false)).
+				Set("phaseTitle", t.str(base+".phaseTitle", it.phaseTitle, clsTitle, false)).
 				Set("phaseStatus", ojson.StringValue(it.phaseStatus)).
 				Set("stepId", ojson.StringValue(it.stepID)).
-				Set("title", t.str(base+".title", it.title, false)).
+				Set("title", t.str(base+".title", it.title, clsTitle, false)).
 				Set("status", ojson.StringValue(it.status)).
-				Set("target", t.ptr(base+".target", it.target, false)).
-				Set("action", t.ptr(base+".action", it.action, false)).
-				Set("validation", t.ptr(base+".validation", it.validation, false)).Value())
+				Set("target", t.ptr(base+".target", it.target, clsLong, false)).
+				Set("action", t.ptr(base+".action", it.action, clsLong, false)).
+				Set("validation", t.ptr(base+".validation", it.validation, clsLong, false)).Value())
 		case "finding":
 			items = append(items, t.finding(base, it.finding, true, false))
 		default:
 			items = append(items, ojson.NewObject(3).
-				Set("kind", t.str(base+".kind", it.kind, false)).
-				Set("reference", t.str(base+".reference", it.reference, false)).
-				Set("source", t.str(base+".source", it.source, false)).Value())
+				Set("kind", ojson.StringValue(it.kind)).
+				Set("reference", t.str(base+".reference", it.reference, clsProtected, false)).
+				Set("source", ojson.StringValue(it.source)).Value())
 		}
 	}
 	next := ojson.NullValue()
@@ -563,7 +584,7 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 		Set("items", ojson.ArrayValue(items)).
 		Set("nextCursor", next).Value()
 
-	instruction := t.str("instruction", m.instruction, false)
+	instruction := t.str("instruction", m.instruction, clsProtected, false)
 
 	omittedSum := 0
 	for _, o := range omitted {
@@ -643,27 +664,181 @@ func (m *resumeModel) render(pr resumeParams) (ojson.Value, []byte) {
 	return v, ojson.Pretty(v)
 }
 
+// Resume budget policy (D.1, approved 2026-09-30; contracts §11 item A).
+//
+// The reference shortened every display string (down to 1 code unit)
+// before it returned fewer page items, so a default-budget packet for a
+// long roadmap carried ~30-character fragments. D.1 balances readable
+// text against a useful page: a target page of min(limit, T) items, T = 8
+// at maxChars >= 12000, 4 at >= 6000 and 2 below.
+//
+//  1. While the page can still hold the target, text shrinks first:
+//     readability tiers from uncapped down to prose 240 / titles 80, then
+//     the floor prose 120 / titles 80; each tier returns the largest page
+//     (>= target) that fits. Current work (checkpoint summary, next
+//     action, current step target/action/validation) keeps at least 512.
+//  2. Below the target, the existing order continues: at the floor the
+//     page shrinks to one item (the cursor carries the rest), then current
+//     work drops to the floor, then the pinned lists (scope, constraints,
+//     guardrails, ...) show fewer entries, down to one each; the totals
+//     and omittedDangerCounts that exist stay exact and overflow is set.
+//  3. Only when not even one page item (or, with nothing left to page,
+//     the pinned packet alone) fits that way, text shortens below the
+//     minimums (emergency caps), then paths/references too.
+//     Every shortened string ends in "…" and is listed in
+//     truncatedFields, and safety.overflow is set.
+//  4. As a last resort the page is dropped (zero items).
+//
+// File paths, references and the instruction are never shortened before
+// step 3; ids, hashes, enums, counts and retrieval pointers never are.
+// Within a level the pretty packet is preferred unless the compact one
+// carries more page items. Every accepted budget still yields a packet
+// within maxChars unless machine ids alone exceed it (contracts §10a
+// item 2, unchanged).
+const (
+	resumeMinTitle   = 80
+	resumeMinLong    = 120
+	resumeTargetLong = 240 // prose floor while the page is above target
+	resumePinnedMin  = 512 // current-work cap while the page is at target
+)
+
+// resumeTiers are the readability tiers {longCap, titleCap} used while
+// the target page still fits; 0 = uncapped.
+var resumeTiers = [][2]int{{0, 0}, {2048, 512}, {1024, 256}, {512, 200}, {resumeTargetLong, resumeMinTitle}, {resumeMinLong, resumeMinTitle}}
+
+// resumeEmergencyCaps apply below the readability minimums (step 3).
+var resumeEmergencyCaps = []int{100, 80, 64, 48, 32, 24, 16, 10, 4, 2, 1}
+
+// resumeTargetPage is the page size text shrinks to protect (step 1).
+func resumeTargetPage(maxChars, limit int) int {
+	t := 2
+	switch {
+	case maxChars >= 12000:
+		t = 8
+	case maxChars >= 6000:
+		t = 4
+	}
+	if limit < t {
+		return limit
+	}
+	return t
+}
+
 // chooseResume applies the budget policy: the first degradation level
 // whose complete text fits maxChars (UTF-16 code units).
 func chooseResume(m *resumeModel) (ojson.Value, string, error) {
-	fits := func(b []byte) bool { return ojson.UTF16LenBytes(b) <= m.maxChars }
-	for _, pr := range resumeLadder(m) {
+	L := resumeListCap(m.maxChars)
+	remaining := len(m.items) - m.offset
+	if remaining < 0 {
+		remaining = 0
+	}
+	maxN := m.limit
+	if maxN > remaining {
+		maxN = remaining
+	}
+	target := resumeTargetPage(m.maxChars, m.limit)
+	if target > maxN {
+		target = maxN
+	}
+	try := func(pr resumeParams) (ojson.Value, []byte, bool) {
 		v, b := m.render(pr)
-		if fits(b) {
+		return v, b, ojson.UTF16LenBytes(b) <= m.maxChars
+	}
+	// fitN is the largest page size in 1..maxN that fits (0 if none).
+	// Packet length grows with the page except that the last page drops
+	// its cursor, so maxN is tried first and the rest is bisected.
+	fitN := func(base resumeParams) int {
+		base.items = maxN
+		if _, _, ok := try(base); ok {
+			return maxN
+		}
+		lo, hi := 0, maxN-1
+		for lo < hi {
+			mid := (lo + hi + 1) / 2
+			base.items = mid
+			if _, _, ok := try(base); ok {
+				lo = mid
+			} else {
+				hi = mid - 1
+			}
+		}
+		return lo
+	}
+	pinned := func(long int) int {
+		if long == 0 || long >= resumePinnedMin {
+			return long
+		}
+		return resumePinnedMin
+	}
+	type level struct{ long, title, pinned, list, min int }
+	var levels []level
+	for _, tier := range resumeTiers {
+		levels = append(levels, level{tier[0], tier[1], pinned(tier[0]), L, target})
+	}
+	levels = append(levels,
+		level{resumeMinLong, resumeMinTitle, resumePinnedMin, L, 1},
+		level{resumeMinLong, resumeMinTitle, resumeMinLong, L, 1})
+	for l := L - 1; l >= 1; l-- {
+		levels = append(levels, level{resumeMinLong, resumeMinTitle, resumeMinLong, l, 1})
+	}
+	for _, lv := range levels {
+		base := resumeParams{listCap: lv.list, longCap: lv.long, titleCap: lv.title, pinnedCap: lv.pinned}
+		if maxN == 0 {
+			for _, compact := range []bool{false, true} {
+				base.compact = compact
+				if v, b, ok := try(base); ok {
+					return v, string(b), nil
+				}
+			}
+			continue
+		}
+		nP := fitN(base)
+		nC := 0
+		if nP < maxN {
+			cb := base
+			cb.compact = true
+			nC = fitN(cb)
+		}
+		min := lv.min
+		if min < 1 {
+			min = 1
+		}
+		if nP < min && nC < min {
+			continue
+		}
+		if nP >= nC {
+			base.items = nP
+		} else {
+			base.items, base.compact = nC, true
+		}
+		v, b := m.render(base)
+		return v, string(b), nil
+	}
+	one := maxN
+	if one > 1 {
+		one = 1
+	}
+	for _, protect := range []bool{true, false} {
+		for _, c := range resumeEmergencyCaps {
+			pr := resumeParams{listCap: 1, longCap: c, titleCap: c, pinnedCap: c, items: one}
+			if !protect {
+				pr.protCap = c
+			}
+			for _, compact := range []bool{false, true} {
+				pr.compact = compact
+				if v, b, ok := try(pr); ok {
+					return v, string(b), nil
+				}
+			}
+		}
+	}
+	for _, compact := range []bool{false, true} {
+		if v, b, ok := try(resumeParams{listCap: 1, longCap: 1, titleCap: 1, pinnedCap: 1, protCap: 1, compact: compact}); ok {
 			return v, string(b), nil
 		}
 	}
 	return ojson.Value{}, "", fmt.Errorf("resume packet cannot fit maxChars=%d", m.maxChars)
 }
-
-// resumeStringCaps is the display-string cap ladder. The golden corpus
-// requires 32, 21, 10, 2 and 1 and forbids 11-20, 22-31 and 33-58; a
-// stage C sweep of the reference over maxChars 4096..12000 (contracts
-// §10) additionally requires 4 and excludes 5. With this ladder every
-// sampled budget of the large-paging and full-valid fixtures is
-// byte-identical to the reference; plans with very many truncated strings
-// (resume-stress) can still select a different display cap (open issue).
-var resumeStringCaps = []int{512, 256, 128, 64, 32, 21, 10, 4, 2, 1}
 
 // resumeListCap is the pinned-list cap for a budget: floor(maxChars/900)
 // clamped to 4..8. The corpus pins 4 at 4096 and 8 at 12000 and 64000;
@@ -688,19 +863,4 @@ func resumePathCap(maxChars int) int {
 		return 32
 	}
 	return c
-}
-
-// resumeLadder lists degradation levels from richest to smallest: each
-// string cap first pretty then compact with the full page; then, at the
-// smallest cap, progressively fewer page items.
-func resumeLadder(m *resumeModel) []resumeParams {
-	L := resumeListCap(m.maxChars)
-	var out []resumeParams
-	for _, c := range resumeStringCaps {
-		out = append(out, resumeParams{L, c, m.limit, false}, resumeParams{L, c, m.limit, true})
-	}
-	for items := m.limit - 1; items >= 0; items-- {
-		out = append(out, resumeParams{L, 1, items, false}, resumeParams{L, 1, items, true})
-	}
-	return out
 }

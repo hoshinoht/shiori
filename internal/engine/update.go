@@ -283,6 +283,11 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		depsAfter = model.EncodeDependencies(d)
 	}
 	p.UpdatedAt = nowISO()
+	if v, ok := statusUpdate(data); ok {
+		if err := statusGate(v, p); err != nil {
+			return nil, err
+		}
+	}
 
 	// Linked Markdown.
 	gen, err := e.generatedMarkdown(s)

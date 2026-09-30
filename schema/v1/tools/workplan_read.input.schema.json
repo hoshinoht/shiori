@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://shiori.invalid/schema/v1/tools/workplan_read.input.schema.json",
   "title": "workplan_read input (native surface)",
-  "description": "Read one plan, optionally filtered to a phase/step, with its linked Markdown.",
+  "description": "Read one plan, optionally filtered to a phase/step, with its linked Markdown. A filtered read (D.1) returns the plan header, hashes, the selected phase/step and the dependency entries touching it; findings/notes only with includeNotes=true and Markdown only with includeMarkdown=true.",
   "type": "object",
   "properties": {
     "id": {
@@ -18,7 +18,11 @@
       "type": "string"
     },
     "includeMarkdown": {
-      "description": "Include linked Markdown content (default true).",
+      "description": "Include linked Markdown content (default true; default false when phaseId or stepId is given, D.1).",
+      "type": "boolean"
+    },
+    "includeNotes": {
+      "description": "D.1 (approved 2026-09-30): with phaseId/stepId, also return reviewFindings and notes in the slice (default false). Ignored by an unfiltered read, which always returns the whole document.",
       "type": "boolean"
     }
   },

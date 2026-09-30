@@ -58,6 +58,9 @@ type dirListing struct {
 	exists   bool
 	primary  []string // plan file names without ".json", UTF-16 order
 	sidecars []dirEntry
+	// other are root-level files that classify as nothing (not listed by
+	// list; doctor reports those that are not linked Markdown, D.1).
+	other []string
 }
 
 // scanDir enumerates .opencode/workplan without following or modifying
@@ -80,6 +83,9 @@ func (e *Engine) scanDir() (dirListing, error) {
 		}
 		ent, ok := classifyName(de.Name(), isDir)
 		if !ok {
+			if !isDir {
+				l.other = append(l.other, de.Name())
+			}
 			continue
 		}
 		if ent.kind == "" {
@@ -90,6 +96,7 @@ func (e *Engine) scanDir() (dirListing, error) {
 	}
 	sort.SliceStable(l.primary, func(i, j int) bool { return ojson.CompareUTF16(l.primary[i], l.primary[j]) < 0 })
 	sort.SliceStable(l.sidecars, func(i, j int) bool { return ojson.CompareUTF16(l.sidecars[i].name, l.sidecars[j].name) < 0 })
+	sort.SliceStable(l.other, func(i, j int) bool { return ojson.CompareUTF16(l.other[i], l.other[j]) < 0 })
 	return l, nil
 }
 

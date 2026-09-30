@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -43,6 +45,26 @@ func (e *Engine) validationIssues(s *snapshot.Snapshot, requested string) ([]str
 	return issues, dv
 }
 
+// msgMarkdownDrift is the D.1 non-failing warning for linked Markdown that
+// is not the generated rendering of the plan JSON (contracts §11 item C).
+const msgMarkdownDrift = "planFile: Linked Markdown is not the generated rendering of the plan JSON (handwritten or edited): %s. " +
+	"Later JSON changes (status, notes, findings, compaction) are not written into it. " +
+	"To regenerate it from the JSON (discarding the edits) use workplan_reset with mode \"markdown-only\" and replaceMarkdown=true; otherwise keep it in sync by hand."
+
+// validationWarnings are non-failing diagnostics (D.1); they never change
+// "valid". A missing or empty Markdown is an issue, not a warning, and a
+// plan whose ids cannot render is diagnosed by the structure rules.
+func validationWarnings(s *snapshot.Snapshot) []string {
+	if !s.Markdown.Exists || model.Blank(string(s.Markdown.Bytes)) {
+		return nil
+	}
+	out, err := model.RenderMarkdown(s.Plan)
+	if err != nil || string(out) == string(s.Markdown.Bytes) {
+		return nil
+	}
+	return []string{fmt.Sprintf(msgMarkdownDrift, s.Markdown.Rel)}
+}
+
 // Validate implements workplan_validate. Load failures are reported as a
 // single issue instead of an error.
 func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
@@ -61,12 +83,18 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 			Set("issues", ojson.StringsValue([]string{err.Error()})).Value(), nil
 	}
 	issues, dv := e.validationIssues(s, in.ID)
-	return ojson.NewObject(10).
+	b := ojson.NewObject(11).
 		Set("path", ojson.StringValue(s.JSON.Path)).
 		Set("planPath", ojson.StringValue(s.Markdown.Path)).
 		Set("valid", ojson.BoolValue(len(issues) == 0)).
 		Set("issueCount", ojson.IntValue(int64(len(issues)))).
-		Set("issues", ojson.StringsValue(issues)).
+		Set("issues", ojson.StringsValue(issues))
+	// D.1: additive, present only when there is something to report, so
+	// outputs without warnings stay byte-identical to the reference.
+	if w := validationWarnings(s); len(w) > 0 {
+		b.Set("warnings", ojson.StringsValue(w))
+	}
+	return b.
 		Set("workplan", s.Plan.Summary()).
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).

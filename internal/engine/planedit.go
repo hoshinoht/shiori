@@ -310,3 +310,42 @@ type D7Error struct{ Issues []string }
 func (e *D7Error) Error() string {
 	return strings.Join(e.Issues, "; ")
 }
+
+// gatedStatuses require a structurally executable plan (D.1).
+var gatedStatuses = map[string]bool{"in_progress": true, "review": true, "completed": true}
+
+// StatusGateError is the D.1 status gate refusal (contracts §11 item D):
+// create/update may not set the plan status to in_progress, review or
+// completed while the executable-structure rules (spec 01 §3,
+// x-shiori-structure-rules) fail on the resulting plan. draft, blocked and
+// cancelled stay allowed with incomplete structure.
+type StatusGateError struct {
+	Status string
+	Issues []model.Issue
+}
+
+func (e *StatusGateError) Error() string {
+	return "Refusing to set workplan status to " + e.Status + " while executable-structure validation fails: " +
+		model.JoinIssues(e.Issues) + ". Complete the listed fields first; draft, blocked and cancelled are allowed with incomplete structure."
+}
+
+// StructuredIssues exposes the field-path issues to the CLI and protocol.
+func (e *StatusGateError) StructuredIssues() []model.Issue { return e.Issues }
+
+// statusGate checks the resulting plan when the input sets a gated status.
+func statusGate(status string, p *model.Plan) error {
+	if !gatedStatuses[status] {
+		return nil
+	}
+	id := p.ID
+	strs := model.ValidateStructure(p, &id)
+	if len(strs) == 0 {
+		return nil
+	}
+	issues := make([]model.Issue, len(strs))
+	for i, s := range strs {
+		path, msg, _ := strings.Cut(s, ": ")
+		issues[i] = model.Issue{Path: []string{path}, Message: msg}
+	}
+	return &StatusGateError{Status: status, Issues: issues}
+}

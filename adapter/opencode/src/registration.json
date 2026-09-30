@@ -873,6 +873,10 @@
           "includeMarkdown": {
             "description": "Include the linked Markdown content; defaults to true",
             "type": "boolean"
+          },
+          "includeNotes": {
+            "description": "Only with phaseId/stepId: also return reviewFindings and notes (default false). A filtered read returns the plan header, hashes and the selected phase/step; linked Markdown only with includeMarkdown=true",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1241,5 +1245,15 @@
         "additionalProperties": false
       }
     }
-  ]
+  ],
+  "d1": {
+    "note": "Approved design change D.1 (docs/contracts.md §11 item B, 2026-09-30). Removing this key and every listed addition reproduces the reference snapshot byte-for-byte (sha256 below).",
+    "referenceSha256": "f4dd36c8a942cebbd26945e53ca580839c4eeee9ffaf4398a8b4397f477e6935",
+    "additions": [
+      {
+        "tool": "workplan_read",
+        "property": "includeNotes"
+      }
+    ]
+  }
 }

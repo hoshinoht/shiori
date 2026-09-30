@@ -89,6 +89,10 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		fmt.Fprintf(w, "%s  [%s]  %s\n", str(get(wp, "id")), str(get(wp, "status")), str(get(wp, "title")))
 		fmt.Fprintf(w, "goal:      %s\nplanFile:  %s\nplanHash:  %s\nstateHash: %s\n",
 			oneLine(str(get(wp, "goal")), 200), str(get(wp, "planFile")), str(get(v, "planHash")), str(get(v, "stateHash")))
+		if sl := get(v, "slice"); sl.Kind() == ojson.Object {
+			fmt.Fprintf(w, "slice of %s phases / %s steps (findings %s, notes %s: included=%s)\n",
+				str(get(sl, "phaseCount")), str(get(sl, "stepCount")), str(get(sl, "findingCount")), str(get(sl, "noteCount")), str(get(sl, "notesIncluded")))
+		}
 		for pi, ph := range get(v, "selection", "phases").Elems() {
 			fmt.Fprintf(w, "%d. [%s] %s  %s\n", pi+1, str(get(ph, "status")), str(get(ph, "id")), str(get(ph, "title")))
 			for _, st := range get(ph, "steps").Elems() {
@@ -122,6 +126,9 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 			fmt.Fprintf(w, "INVALID (%s issues)\n", str(get(v, "issueCount")))
 		}
 		issues(w, "  ", get(v, "issues"))
+		for _, x := range get(v, "warnings").Elems() {
+			fmt.Fprintf(w, "  warning: %s\n", x.Str())
+		}
 		if h := get(v, "stateHash"); h.Kind() == ojson.String {
 			fmt.Fprintf(w, "planHash:  %s\nstateHash: %s\n", str(get(v, "planHash")), h.Str())
 		}
@@ -176,6 +183,9 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 			}
 			fmt.Fprintf(w, "  %-24s %-8s checkpoint=%s stateHash=%s\n", str(get(p, "id")), state, str(get(p, "checkpointFreshness")), str(get(p, "stateHash")))
 			issues(w, "      ", get(p, "issues"))
+			for _, x := range get(p, "warnings").Elems() {
+				fmt.Fprintf(w, "      warning: %s\n", x.Str())
+			}
 		}
 		for _, l := range get(v, "locks").Elems() {
 			fmt.Fprintf(w, "  lock %s  %s\n", str(get(l, "path")), str(get(l, "diagnostic")))
@@ -186,6 +196,10 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		if is := get(v, "issues").Elems(); len(is) > 0 {
 			fmt.Fprintln(w, "issues:")
 			issues(w, "  ", get(v, "issues"))
+		}
+		if ws := get(v, "warnings").Elems(); len(ws) > 0 {
+			fmt.Fprintln(w, "warnings:")
+			issues(w, "  ", get(v, "warnings"))
 		}
 	}
 }

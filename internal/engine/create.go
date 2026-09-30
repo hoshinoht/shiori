@@ -61,6 +61,9 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	} else {
 		p.PlanFile = snapshot.WorkplanDir + "/" + id + ".md"
 	}
+	if err := statusGate(p.Status, p); err != nil {
+		return nil, err
+	}
 	explicitMD, hasMD := getStr(data, "planMarkdown")
 	replaceMD := false
 	if v, ok := data.Get("replaceMarkdown"); ok {

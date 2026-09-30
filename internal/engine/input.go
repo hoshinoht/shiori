@@ -174,6 +174,9 @@ type ReadInput struct {
 	PhaseID         *string
 	StepID          *string
 	IncludeMarkdown *bool
+	// IncludeNotes (D.1) adds findings and notes to a filtered read; an
+	// unfiltered read always carries the whole document.
+	IncludeNotes *bool
 }
 
 type ListInput struct{ WorkspaceRoot *string }
@@ -219,7 +222,7 @@ func deref(p *string) string {
 
 // ParseReadInput validates workplan_read input.
 func ParseReadInput(v ojson.Value, s Surface) (ReadInput, error) {
-	p, err := newInputParser("read", v, s, "id", "phaseId", "stepId", "includeMarkdown")
+	p, err := newInputParser("read", v, s, "id", "phaseId", "stepId", "includeMarkdown", "includeNotes")
 	if err != nil {
 		return ReadInput{}, err
 	}
@@ -231,6 +234,7 @@ func ParseReadInput(v ojson.Value, s Surface) (ReadInput, error) {
 	in.PhaseID = p.optString("phaseId")
 	in.StepID = p.optString("stepId")
 	in.IncludeMarkdown = p.optBool("includeMarkdown")
+	in.IncludeNotes = p.optBool("includeNotes")
 	if e := p.finish(); e != nil {
 		return ReadInput{}, e
 	}

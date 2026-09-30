@@ -34,6 +34,10 @@ func init() {
 		reason: "D1: a journal-only plan is recoverable; resume publishes the journal's after-images and removes the journal (reference: 'Workplan file not found')",
 		run:    checkPrecreateResume,
 	}
+	mutationDivergences["mutations/patch-validate"] = mutationDivergence{
+		reason: "D.1 (contracts §11 D/C): patch validate returns the issue list (metadata.validation.issues) and the non-failing Markdown drift warning; output text, files and every other metadata member are identical",
+		run:    checkPatchValidateD1,
+	}
 	mutationDivergences["mutations/compact-apply-valid"] = mutationDivergence{
 		reason: "D10: the preview token (and so the archive name and transaction id) no longer depends on the absolute root, and the removals digest is Shiori-defined; everything else is byte-identical after substituting token, archive name and digest",
 		run:    checkCompactApply,
@@ -298,3 +302,45 @@ func containsStr(list []string, s string) bool {
 	}
 	return false
 }
+
+// checkPatchValidateD1: removing validation.issues (empty here) and the
+// drift warning must give the oracle metadata; everything else is
+// compared as usual.
+func checkPatchValidateD1(t *testing.T, v *mutationVector, root testutil.Root, e *Engine) {
+	input, _ := ojson.Parse(v.Call.Input)
+	before := snapshotFiles(t, root.Path)
+	auth := &countingAuth{}
+	out, err := runMutation(context.Background(), e, v.Call.Tool, input.Value, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.n != len(v.Prompts) {
+		t.Fatalf("authorizations %d want %d", auth.n, len(v.Prompts))
+	}
+	if got := root.Normalize(out.String()); got != *v.Expect.OutputText {
+		t.Fatalf("output %q", got)
+	}
+	val, _ := out.Metadata.Get("validation")
+	issues, _ := val.Get("issues")
+	if issues.Kind() != ojson.Array || len(issues.Elems()) != 0 {
+		t.Fatalf("validation.issues = %s, want []", ojson.Compact(issues))
+	}
+	warnings, _ := val.Get("warnings")
+	if len(warnings.Elems()) != 1 || !strings.HasPrefix(warnings.Elems()[0].Str(), "planFile: Linked Markdown is not the generated rendering of the plan JSON (handwritten or edited): .opencode/workplan/minimal.md.") {
+		t.Fatalf("validation.warnings = %s", ojson.Compact(warnings))
+	}
+	var ms []ojson.Member
+	for _, m := range out.Metadata.Members() {
+		if m.Key == "validation" {
+			m.Value = ojson.NewObject(2).Set("valid", mustGet(val, "valid")).Set("issueCount", mustGet(val, "issueCount")).Value()
+		}
+		ms = append(ms, m)
+	}
+	p, _ := ojson.Parse(v.Expect.Metadata)
+	if g, w := string(ojson.Compact(ojson.ObjectValue(ms))), string(ojson.Compact(p.Value)); g != w {
+		t.Fatalf("metadata without the D.1 members\n got %s\nwant %s", g, w)
+	}
+	checkChanged(t, v, before, snapshotFiles(t, root.Path))
+}
+
+func mustGet(v ojson.Value, k string) ojson.Value { x, _ := v.Get(k); return x }

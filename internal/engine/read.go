@@ -27,25 +27,57 @@ func (e *Engine) Read(in ReadInput) (ojson.Value, error) {
 	if err != nil {
 		return ojson.Value{}, err
 	}
+	filtered := in.PhaseID != nil || in.StepID != nil
+	// D.1 (approved 2026-09-30, contracts §11 item B): a filtered read is a
+	// slice. Linked Markdown is included only on an explicit
+	// includeMarkdown=true; an unfiltered read keeps the default true.
+	includeMD := in.IncludeMarkdown == nil || *in.IncludeMarkdown
+	if filtered {
+		includeMD = in.IncludeMarkdown != nil && *in.IncludeMarkdown
+	}
 	plan := ojson.NewObject(3).
 		Set("path", ojson.StringValue(s.Markdown.Path)).
 		Set("exists", ojson.BoolValue(s.Markdown.Exists))
-	if in.IncludeMarkdown == nil || *in.IncludeMarkdown {
+	if includeMD {
 		if s.Markdown.Exists {
 			plan.Set("content", ojson.StringValue(bytesToString(s.Markdown.Bytes)))
 		} else {
 			plan.Set("content", ojson.NullValue())
 		}
 	}
-	out := ojson.NewObject(7).
-		Set("path", ojson.StringValue(s.JSON.Path)).
-		Set("workplan", p.ToValue()).
-		Set("selection", selection).
-		Set("plan", plan.Value()).
-		Set("dependencies", e.dependencies(s, nil).value()).
-		Set("planHash", ojson.StringValue(s.PlanHash)).
-		Set("stateHash", ojson.StringValue(s.StateHash)).
-		Value()
+	var out ojson.Value
+	if !filtered {
+		out = ojson.NewObject(7).
+			Set("path", ojson.StringValue(s.JSON.Path)).
+			Set("workplan", p.ToValue()).
+			Set("selection", selection).
+			Set("plan", plan.Value()).
+			Set("dependencies", e.dependencies(s, nil).value()).
+			Set("planHash", ojson.StringValue(s.PlanHash)).
+			Set("stateHash", ojson.StringValue(s.StateHash)).
+			Value()
+	} else {
+		notes := in.IncludeNotes != nil && *in.IncludeNotes
+		out = ojson.NewObject(8).
+			Set("path", ojson.StringValue(s.JSON.Path)).
+			Set("workplan", planHeader(p, notes)).
+			Set("selection", selection).
+			Set("plan", plan.Value()).
+			Set("dependencies", e.dependencies(s, nil).sliceValue(selectedSteps(p, in.PhaseID, in.StepID))).
+			Set("planHash", ojson.StringValue(s.PlanHash)).
+			Set("stateHash", ojson.StringValue(s.StateHash)).
+			Set("slice", ojson.NewObject(9).
+				Set("filtered", ojson.BoolValue(true)).
+				Set("phaseCount", ojson.IntValue(int64(len(p.Phases)))).
+				Set("stepCount", ojson.IntValue(int64(p.StepCount()))).
+				Set("findingCount", ojson.IntValue(int64(len(p.Findings)))).
+				Set("noteCount", ojson.IntValue(int64(len(p.Notes)))).
+				Set("notesIncluded", ojson.BoolValue(notes)).
+				Set("markdownIncluded", ojson.BoolValue(includeMD)).
+				Set("dependenciesFiltered", ojson.BoolValue(true)).
+				Set("full", ojson.StringValue("workplan_read id="+p.ID)).Value()).
+			Value()
+	}
 	// D9: the reference returns unbounded output; Go refuses above the
 	// response frame limit. Estimate cheaply before measuring exactly.
 	est := 3*len(s.JSON.Bytes) + 2*len(s.Markdown.Bytes)
@@ -53,6 +85,44 @@ func (e *Engine) Read(in ReadInput) (ojson.Value, error) {
 		return e.checkResponse(out, "workplan_read", id)
 	}
 	return out, nil
+}
+
+// planHeader is the document without its phases (the selection carries
+// the selected slice) and, unless includeNotes, without reviewFindings and
+// notes. Every other member, including unknown metadata, is kept in order.
+func planHeader(p *model.Plan, includeNotes bool) ojson.Value {
+	ms := p.ToValue().Members()
+	kept := make([]ojson.Member, 0, len(ms))
+	for _, m := range ms {
+		switch m.Key {
+		case "phases":
+			continue
+		case "reviewFindings", "notes":
+			if !includeNotes {
+				continue
+			}
+		}
+		kept = append(kept, m)
+	}
+	return ojson.ObjectValue(kept)
+}
+
+// selectedSteps lists the (phaseId, stepId) keys of a valid selection.
+func selectedSteps(p *model.Plan, phaseID, stepID *string) map[model.StepRef]bool {
+	out := map[model.StepRef]bool{}
+	for i := range p.Phases {
+		ph := &p.Phases[i]
+		if phaseID != nil && ph.ID != *phaseID {
+			continue
+		}
+		for j := range ph.Steps {
+			if stepID != nil && ph.Steps[j].ID != *stepID {
+				continue
+			}
+			out[model.StepRef{PhaseID: ph.ID, StepID: ph.Steps[j].ID}] = true
+		}
+	}
+	return out
 }
 
 // bytesToString decodes UTF-8 with U+FFFD replacement (TextDecoder).
