@@ -25,6 +25,34 @@ const (
 	instructionStale = "Checkpoint guidance is not fresh. Reconfirm unverified guardrails, blockers and references before relying on them; nextAction is withheld."
 )
 
+// instructionWithheld is the D.4.3 stale/legacy instruction (contracts §18
+// item 1): the D.1 stale text, then where the withheld fields are and how
+// to refresh the checkpoint without losing them. workplan_read does not
+// return the checkpoint, so it names the sidecar file.
+func instructionWithheld(checkpointRel string) string {
+	return instructionStale + " Fields in checkpoint.withheld are hidden, not empty: never copy null/[] into a checkpoint. Full checkpoint: " +
+		checkpointRel + " (workplan_read omits it). Refresh via workplan_checkpoint merge=true."
+}
+
+// withheldFields names the stored checkpoint fields a non-fresh resume
+// packet does not show (D.4.3, contracts §18 item 1): summary and
+// nextAction always (a stored checkpoint never has them blank), and each
+// of guardrails, references and recentValidation that has entries.
+// Blockers are shown, so they are never withheld.
+func withheldFields(cp *model.Checkpoint) []string {
+	out := []string{"summary", "nextAction"}
+	if len(cp.Guardrails) > 0 {
+		out = append(out, "guardrails")
+	}
+	if len(cp.References) > 0 {
+		out = append(out, "references")
+	}
+	if len(cp.RecentValidation) > 0 {
+		out = append(out, "recentValidation")
+	}
+	return out
+}
+
 type currentView struct {
 	phaseID, phaseTitle, phaseStatus string
 	stepID, stepTitle, stepStatus    string
@@ -100,6 +128,7 @@ type resumeModel struct {
 	planFresh           bool
 	cpExists, cpFresh   bool
 	freshness           string
+	withheld            []string // D.4.3: stored fields not shown (non-fresh)
 	sourceUpdatedAt     *string
 	summary, nextAction *string
 	current             *currentView
@@ -258,6 +287,10 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		} else {
 			warnings = append(warnings, cv.issue)
 			d2At = 1
+			// D.4.3 (contracts §18 item 1): name what is withheld.
+			if !e.noD43 {
+				m.withheld = withheldFields(cv.cp)
+			}
 			// D.3.1 (contracts §14 item 3): a stale checkpoint names what
 			// changed, compactly (the doctor issue has the full detail).
 			if cv.freshness == FreshnessStale && !e.noD31 {
@@ -280,9 +313,12 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		warnings = append(warnings, d)
 		d2At = 1
 	}
-	if m.cpFresh {
+	switch {
+	case m.cpFresh:
 		m.instruction = instructionFresh
-	} else {
+	case m.withheld != nil:
+		m.instruction = instructionWithheld(snapshot.SidecarRel(p.ID, ".checkpoint.json"))
+	default:
 		m.instruction = instructionStale
 	}
 
@@ -585,10 +621,15 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 			Set("action", t.ptr("checkpoint.current.action", c.action, clsPinned, false)).
 			Set("validation", t.ptr("checkpoint.current.validation", c.validation, clsPinned, false)).Value()
 	}
-	checkpoint := ojson.NewObject(20).
+	cpb := ojson.NewObject(21).
 		Set("exists", ojson.BoolValue(m.cpExists)).
 		Set("fresh", ojson.BoolValue(m.cpFresh)).
-		Set("freshness", ojson.StringValue(m.freshness)).
+		Set("freshness", ojson.StringValue(m.freshness))
+	if m.withheld != nil {
+		// D.4.3: field names, never shortened (like enums).
+		cpb.Set("withheld", ojson.StringsValue(m.withheld))
+	}
+	checkpoint := cpb.
 		Set("sourceUpdatedAt", ojson.NullableString(m.sourceUpdatedAt)).
 		Set("summary", summaryV).
 		Set("current", current).

@@ -9,8 +9,9 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Sections 11–17 record the approved D.1, D.2, D.3, D.3.1, D.4,
-D.4.1 and D.4.2 design changes, which deliberately depart from the reference.
+spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
+D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
+reference.
 
 ## 1. Sources of truth
 
@@ -1435,3 +1436,130 @@ still runs every read vector with the advice on and off).
 `TestD4ComparatorOnCorpus` (lowered thresholds) now applies the
 comparator to every advised resume packet, small budgets included, with
 no budget-cost exemption.
+
+## 18. Approved design changes D.4.3 (APPROVED 2026-10-01)
+
+D.4.3, approved 2026-10-01: checkpoint safety after a real-use incident. A
+plan's checkpoint was stale, so `workplan_resume` withheld its summary,
+next action, guardrails, references and recent validation (summary and
+next action rendered as `null`, the lists empty, the totals present, the
+guardrails as unverified warnings). A model rebuilt the checkpoint from
+that view, and because `workplan_checkpoint` replaces every field, it
+stored the summary `null DEPLOYED …`, one validation line and empty
+guardrails and references. Everything not listed here stays as in
+sections 1–17: the V2 plan/checkpoint formats (a checkpoint is still
+schema version 2 bound to the current plan manifest), the thirteen
+identities, error classes, and D.1–D.4.2's resume budget rules and their
+order.
+
+**1. Resume names withheld fields.** When the checkpoint is readable but
+not fresh (`stale` or `legacy-unverified`), the resume `checkpoint`
+object adds `withheld` right after `freshness`: the names of the stored
+fields the packet does not show, in the order `summary`, `nextAction`
+(always: a stored checkpoint never has them blank), then `guardrails`,
+`references` and `recentValidation`, each only when the stored list has
+entries. Blockers are shown, so they are never withheld; the stored
+phase/step position is not shown either (the packet's `current` is the
+plan's), but it is not listed. The existing `null`/`[]` values and totals
+are unchanged for compatibility. The instruction becomes the D.1 stale text
+followed by ` Fields in checkpoint.withheld are hidden, not empty: never
+copy null/[] into a checkpoint. Full checkpoint: <.opencode/workplan/<id>.checkpoint.json>
+(workplan_read omits it). Refresh via workplan_checkpoint merge=true.`
+`workplan_read` does not return the checkpoint (checked; its output is
+unchanged), so the sentence names the sidecar file. Missing and invalid
+checkpoints withhold nothing: no member, the D.1 text. The member is a
+pinned safety item like the D.3.1 stale diagnostic: field names are never
+shortened, the instruction is protected text, and the packet is chosen by
+the unchanged D.1–D.3.1 levels with the member present, so it can cost page
+content at a tight budget. On the synthetic 13-phase/38-step roadmap with a
+stale checkpoint and every list set (`TestD43ResumeBudget`, 951 packets
+from 4096 to 16000 with limits 1, 8 and 20) every packet fits, 383 keep the
+D.4.3-off level exactly, and 42 carry one page item fewer; the rest use a
+lower text tier. The human `shiori resume` output adds a `withheld:` line.
+
+**2. Checkpoint write guard.**
+
+- *Refusal.* `workplan_checkpoint` refuses a `summary` or `nextAction`
+  whose trimmed text is exactly `null` or `undefined` or starts with
+  `null ` or `undefined ` (case-sensitive), on both surfaces, as an input
+  rule (class `invalid_input`, before preparation and authorization, path
+  `summary` or `nextAction`): `Checkpoint <field> starts with
+  null/undefined, which is how workplan_resume shows a withheld field of a
+  stale or legacy checkpoint, not its value — read the stored checkpoint
+  first (the file named in the resume instruction), or pass merge=true and
+  omit <field> to keep the stored value` (no `; `, so the issue list stays
+  separable). `nullable …`, `Null …` and `NULL …` are accepted.
+- *Warnings.* When a readable checkpoint (fresh, stale or legacy) exists,
+  the result adds `warnings` (after `directorySync`, only when nonempty)
+  with one entry per list that loses stored entries, in the order
+  guardrails, references, recentValidation, blockers: `<list>: <before> →
+  <after> (<n> previous entr(y|ies) not kept; merge=true keeps omitted
+  fields)`, where before/after are the list lengths and n counts stored
+  entries absent from the new list (so a same-length replacement warns
+  too). A shorter summary or next action is not a warning; a blank one
+  never reaches the comparison because it is refused (`Checkpoint summary
+  cannot be empty`, unchanged). The write still happens: the warning is
+  after the fact, the refusal and merge mode are the prevention.
+
+**3. Merge mode.** `workplan_checkpoint` accepts optional `merge`
+(boolean) and `appendValidation` (a string or an array of strings); the
+CLI adds `--merge` and repeatable `--append-validation`. With
+`merge: true`:
+
+- `summary` and `nextAction` become optional; every omitted field keeps
+  the stored checkpoint's value: summary, nextAction, the phase/step
+  position, blockers, recentValidation, guardrails and references. Given
+  fields replace theirs (an explicit `[]` clears a list and warns).
+- The position: `phaseId`/`stepId` when given (the unchanged rules);
+  otherwise the stored position when it still resolves to an open step,
+  else it is re-derived as when omitted (for example after the stored step
+  was completed).
+- A stale checkpoint merges like a fresh one; a legacy v1 checkpoint's
+  fields are carried over into a v2 checkpoint. A missing or unreadable
+  checkpoint merges as an empty one: an omitted `summary` or `nextAction`
+  is then refused during preparation (class `invalid_input`, before
+  authorization): `merge=true keeps the stored <field>, but there is no
+  readable stored checkpoint — pass <field>`.
+- The written checkpoint binds the current plan state exactly like a
+  replacing write (fresh `planHash` and manifest, `createdAt` kept,
+  `updatedAt` now); `expectedHash` rules are unchanged.
+
+`appendValidation` (with or without merge) appends to the resulting
+`recentValidation` after merge or replacement: each line is trimmed, blank
+lines and exact duplicates of a line already present are skipped. There is
+no count limit on checkpoint lists, so none applies. Without `merge` (or
+with `merge: false`) `summary` and `nextAction` stay required with the
+reference message.
+
+**4. Model-facing description.** The `workplan_checkpoint` description
+(registration snapshot and `schema/v1/tools/workplan_checkpoint.input.schema.json`)
+states that without merge=true it replaces the whole checkpoint and that
+to update it one passes merge=true or reads the current checkpoint first.
+
+Schema: `workplan_checkpoint.input.schema.json` adds `merge` and
+`appendValidation`, requires only `id` plus `summary`/`nextAction` unless
+`merge` is `true` (`if`/`else`), and lists both refusals in
+`x-shiori-rules`; `TestCheckpointMergeSchemaAgreesWithParser` checks that
+the schema and the Go parser agree. The adapter registration snapshot
+(`adapter/opencode/src/registration.json`, key `d4_3`) lists the two
+additions and four changes with their previous values (description,
+`summary`/`nextAction` descriptions, `required` reduced to `["id"]`; no
+top-level conditional, which some model hosts reject); restoring them
+before the `d4_1` changes and then applying the earlier reversal
+reproduces the reference snapshot byte-for-byte (`d1.referenceSha256`,
+checked by `plugin.test.ts`).
+
+The oracle corpus is not edited. Every tools/resume/paging vector runs
+with the D.4.3 additions off (`Engine.noD43`, test-only), which must pass
+every earlier check unchanged, and with them on; mutation vectors run the
+earlier checks with them off and are then compared on against off.
+[`testdata/d4_3/expectations.json`](../testdata/d4_3/expectations.json)
+pins 7 vectors: the 6 resume vectors of `checkpoint-stale-v2` and
+`checkpoint-legacy-v1` (comparator: `withheld` equals the list restated
+from the raw checkpoint file, the instruction is the D.1 text plus the
+sentence, and removing both gives the D.4.3-off packet byte-for-byte —
+every corpus packet keeps its level) and `mutations/checkpoint-ok`
+(comparator: files and authorizations equal, the result differs only by
+`warnings`, restated from the fixture's stored checkpoint and the vector
+input). The input rules are not behind the flag: no corpus input uses
+`merge`, `appendValidation` or a `null …` text.

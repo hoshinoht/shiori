@@ -102,6 +102,9 @@ func TestMutationVectors(t *testing.T) {
 			// D.3.1 (contracts §14): the earlier checks run with the D.3.1
 			// changes off; checkD31Mutation then compares on against off.
 			e.noD31 = true
+			// D.4.3 (contracts §18): likewise off for the earlier checks;
+			// checkD43Mutation compares on against off.
+			e.noD43 = true
 			defer func() {
 				if !t.Failed() {
 					if note := checkD31Mutation(t, &v); note != "" {
@@ -109,6 +112,14 @@ func TestMutationVectors(t *testing.T) {
 						d31Mu.Lock()
 						d31Notes = append(d31Notes, note)
 						d31Mu.Unlock()
+					}
+				}
+				if !t.Failed() {
+					if note := checkD43Mutation(t, &v); note != "" {
+						t.Log(note)
+						d43MutationMu.Lock()
+						d43MutationNotes = append(d43MutationNotes, note)
+						d43MutationMu.Unlock()
 					}
 				}
 			}()
@@ -151,6 +162,12 @@ func TestMutationVectors(t *testing.T) {
 		t.Log(n)
 	}
 	d41Write(t, "mutations/")
+	sort.Strings(d43MutationNotes)
+	t.Logf("D.4.3 mutation vectors: %d", len(d43MutationNotes))
+	for _, n := range d43MutationNotes {
+		t.Log(n)
+	}
+	d43Write(t, "mutations/")
 }
 
 var d41MutationNotes []string

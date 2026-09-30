@@ -3,8 +3,9 @@
 // input schemas (same identities, argument shapes and model-facing text),
 // plus the approved D.1 addition (workplan_read includeNotes), the D.3
 // reset changes (wipe mode, previewToken, confirmation, accurate text),
-// the D.4 compaction noteRollover selector and the D.4.1 expectedHash
-// sentence on the mutating tools' descriptions.
+// the D.4 compaction noteRollover selector, the D.4.1 expectedHash
+// sentence on the mutating tools' descriptions and the D.4.3 checkpoint
+// merge mode.
 //
 //   bun scripts/snapshot-registration.ts /path/to/workplan-tools/src/core > src/registration.json
 //
@@ -101,6 +102,32 @@ for (const [name, sentence] of d41Sentences) {
   d41Changes.push({ tool: name, path: ["description"], previous: tool.description });
   tool.description = `${tool.description} ${sentence}`;
 }
+// Approved design change D.4.3 (docs/contracts.md §18, 2026-10-01):
+// workplan_checkpoint merge mode. Each change records its previous value
+// (the D.4.1 description, the reference otherwise) so the test can restore
+// it before the d4_1 changes; the two properties are appended.
+const checkpoint = tools.find((t) => t.name === "workplan_checkpoint")! as { description: string; input: any };
+const d43Changes: Array<{ tool: string; path: string[]; previous: unknown }> = [];
+const d43Change = (path: string[], value: unknown) => {
+  let cur: any = checkpoint;
+  for (const key of path.slice(0, -1)) cur = cur[key];
+  d43Changes.push({ tool: "workplan_checkpoint", path, previous: cur[path[path.length - 1]] });
+  cur[path[path.length - 1]] = value;
+};
+const mergeSentence = "Without merge=true it replaces the whole checkpoint (omitted fields become empty); to update it, pass merge=true (omitted fields keep their stored values) or read the current checkpoint first.";
+const checkpointHashSentence = `P${hashSentence.slice(1)}`;
+d43Change(["description"], `${checkpoint.description.slice(0, -checkpointHashSentence.length)}${mergeSentence} ${checkpointHashSentence}`);
+d43Change(["input", "properties", "summary", "description"], `${checkpoint.input.properties.summary.description} (required unless merge=true; never copy a null/withheld value from workplan_resume)`);
+d43Change(["input", "properties", "nextAction", "description"], `${checkpoint.input.properties.nextAction.description} (required unless merge=true)`);
+d43Change(["input", "required"], ["id"]);
+checkpoint.input.properties.merge = {
+  description: "Keep the stored checkpoint's value of every omitted field (summary, nextAction, phase/step, blockers, recentValidation, guardrails, references); given fields replace theirs",
+  type: "boolean",
+};
+checkpoint.input.properties.appendValidation = {
+  description: "Validation line(s) appended to recentValidation (exact duplicates skipped); use with merge=true to add evidence without rewriting the checkpoint",
+  anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+};
 console.log(JSON.stringify({
   source: "reference workplan-tools native registration (generated; do not edit)",
   tools,
@@ -121,5 +148,10 @@ console.log(JSON.stringify({
   d4_1: {
     note: "Approved design change D.4.1 (docs/contracts.md §16, 2026-10-01): one sentence about expectedHash on the six mutating tools' descriptions. Restoring each listed change to its previous value (before the d3 changes), then applying the d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
     changes: d41Changes,
+  },
+  d4_3: {
+    note: "Approved design change D.4.3 (docs/contracts.md §18, 2026-10-01): workplan_checkpoint merge mode. Removing the listed additions and restoring each listed change to its previous value (before the d4_1 changes), then applying the d4_1/d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    additions: [{ tool: "workplan_checkpoint", property: "merge" }, { tool: "workplan_checkpoint", property: "appendValidation" }],
+    changes: d43Changes,
   },
 }, null, 2));

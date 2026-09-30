@@ -94,6 +94,9 @@ shiori update my-plan --expected-hash "$H" --status in_progress --append-note "s
 H=$(shiori read my-plan --json --no-markdown | jq -r .stateHash)
 shiori checkpoint my-plan --expected-hash "$H" --summary "Plan created" \
   --next-action "Write the API" --phase build --step write-the-api
+# checkpoint replaces the whole checkpoint; --merge keeps every field you omit
+H=$(shiori read my-plan --json --no-markdown | jq -r .stateHash)
+shiori checkpoint my-plan --expected-hash "$H" --merge --append-validation "go test ./... passed"
 
 # 3. Read: never prompts, writes, locks or changes an mtime
 shiori list

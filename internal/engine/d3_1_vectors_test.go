@@ -387,6 +387,7 @@ func d31RunMutation(t *testing.T, v *mutationVector, off bool) d31Run {
 		t.Fatal(err)
 	}
 	e.noD31 = off
+	e.noD43 = true // D.4.3 is compared separately (checkD43Mutation)
 	before := snapshotFiles(t, root.Path)
 	out, runErr, n := runVectorMutation(t, v, e)
 	after := snapshotFiles(t, root.Path)

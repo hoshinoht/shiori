@@ -13,6 +13,8 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
 
@@ -173,6 +175,51 @@ func TestToolSchemasAgreeWithNativeParser(t *testing.T) {
 		verr := s.Validate(inst)
 		if (verr == nil) != v.Expect.Native.OK {
 			t.Errorf("%s: schema ok=%v, native ok=%v (%v)", v.ID, verr == nil, v.Expect.Native.OK, verr)
+		}
+	}
+}
+
+// TestCheckpointMergeSchemaAgreesWithParser (D.4.3, contracts §18 item 3):
+// the native checkpoint schema and the Go parser accept the same merge and
+// appendValidation shapes (the withheld-placeholder refusal is an
+// x-shiori-rules refinement, like the other cross-field rules).
+func TestCheckpointMergeSchemaAgreesWithParser(t *testing.T) {
+	c := compiler(t)
+	s, err := c.Compile(idBase + "tools/workplan_checkpoint.input.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := `"expectedHash":"` + strings.Repeat("a", 64) + `"`
+	cases := map[string]bool{
+		`{"id":"p","merge":true,` + h + `}`:                                          true,
+		`{"id":"p","merge":true,"appendValidation":"v",` + h + `}`:                   true,
+		`{"id":"p","merge":true,"appendValidation":["v","w"],` + h + `}`:             true,
+		`{"id":"p","summary":"s","nextAction":"n","appendValidation":"v",` + h + `}`: true,
+		`{"id":"p","summary":"s","nextAction":"n","merge":false,` + h + `}`:          true,
+		`{"id":"p",` + h + `}`:                                                                   false,
+		`{"id":"p","merge":false,` + h + `}`:                                                     false,
+		`{"id":"p","merge":true,"summary":"s",` + h + `}`:                                        true,
+		`{"id":"p","merge":"yes","summary":"s","nextAction":"n",` + h + `}`:                      false,
+		`{"id":"p","merge":true,"appendValidation":3,` + h + `}`:                                 false,
+		`{"id":"p","merge":true,"appendValidation":["v",3],` + h + `}`:                           false,
+		`{"id":"p","merge":true}`:                                                                false,
+		`{"id":"p","summary":"s","nextAction":"n",` + h + `}`:                                    true,
+		`{"id":"p","summary":"s","nextAction":"n","merge":true,"appendValidation":[],` + h + `}`: true,
+	}
+	for in, want := range cases {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Validate(inst) == nil; got != want {
+			t.Errorf("schema %s: ok=%v want %v", in, got, want)
+		}
+		v, err := ojson.Parse([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := engine.ParseMutationInput("checkpoint", v.Value, engine.SurfaceNative); (err == nil) != want {
+			t.Errorf("parser %s: ok=%v want %v (%v)", in, err == nil, want, err)
 		}
 	}
 }

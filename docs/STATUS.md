@@ -1,8 +1,8 @@
 # Maintenance-safe handoff — 2026-09-30
 
-## Resume point (paused after D.4.2)
+## Resume point (paused after D.4.3)
 
-The owner paused after stage D.4.2. Read this section first; the stage
+The owner paused after stage D.4.3. Read this section first; the stage
 sections below keep the full record.
 
 **State.** Every stage is done; the owner commits each one after review.
@@ -22,6 +22,7 @@ sections below keep the full record.
 | D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
 | D.4.2 | done | `cdcaa24` (pushed) |
+| D.4.3 | done | `31961fc` (pushed) |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
@@ -52,6 +53,8 @@ OpenCode. Nothing in
 
 - D.4 review items: resolved by D.4.2 (approved 2026-10-01; see
   "Owner decisions to review (D.4)" and contracts §17).
+- D.4.3 (approved 2026-10-01, contracts §18): review items listed under
+  "Owner decisions to review (D.4.3)".
 - Still to-review in spec 06: X1, X4, X5, X7, X8, X9, X10, P4, P5.
 - Stage E–G items beyond what the owner already enabled (release
   artifacts, cross-platform evidence, migration automation) remain
@@ -61,7 +64,7 @@ OpenCode. Nothing in
 
 - In the repository: the frozen oracle corpus and fixtures (`testdata/`,
   `testdata/MANIFEST.json` pins the oracle hashes), the stage pins
-  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4`, `d4_1`, `d4_2/expectations.json`), perf
+  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4`, `d4_1`, `d4_2`, `d4_3/expectations.json`), perf
   fixtures (`testdata/perf/*.tar.gz`, unpacked by the benchmarks into
   `$TMPDIR/shiori-perf-<go version>/`).
 - Owner-plan evidence (never copied into the repository): read-only
@@ -101,6 +104,10 @@ timestamps (both renderings are detected as generated).
 D.4 owner decision (contracts §15, 2026-09-30): the compaction advisor
 (P2) in resume and doctor and note rollover (P3) as a compaction selection
 mode; advice only, the compaction flow is unchanged.
+D.4.3 owner decision (contracts §18, 2026-10-01): resume names withheld
+checkpoint fields, checkpoint writes refuse a copied `null …` summary or
+next action and warn on dropped list entries, and `workplan_checkpoint`
+gains merge mode (`merge`, `appendValidation`).
 Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
 configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
@@ -1551,9 +1558,99 @@ working tree.
   (the third retained pointer is inside the latest 2), 2 eligible
   (one older pointer).
 
+## Stage D.4.3 — checkpoint safety and merge mode: DONE (owner commits)
+
+Base `31961fc`. Nothing was committed. Everything under
+`~/.config/opencode` (including the pinned `vendor/shiori` copy) was not
+touched; no OpenCode or `shiori serve` process was started, stopped or
+restarted (the adapter `bun test` runs its own temporary stdio children).
+Owner-approved 2026-10-01 after a real-use incident: a stale checkpoint's
+resume view (summary `null`, lists empty) was copied into a replacing
+`workplan_checkpoint`, which stored `null DEPLOYED …`, one validation line
+and empty guardrails and references. Exact behaviour in
+[contracts §18](contracts.md#18-approved-design-changes-d43-approved-2026-10-01).
+No V2 field, tool identity or error class changed; D.1–D.4.2 budget rules
+are unchanged.
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| a resume | a stale or legacy checkpoint adds `checkpoint.withheld` (after `freshness`): `summary`, `nextAction`, then `guardrails`/`references`/`recentValidation` when stored non-empty; the instruction appends that these are hidden, not empty, names `.opencode/workplan/<id>.checkpoint.json` (`workplan_read` does not return the checkpoint, checked) and `workplan_checkpoint merge=true`; null/empty values and totals kept; human `resume` prints a `withheld:` line | `internal/engine/resume.go` (`withheldFields`, `instructionWithheld`), `internal/cli/human.go` |
+| b write guard | `summary`/`nextAction` that trim to `null`/`undefined` or start with `null `/`undefined ` are refused on both surfaces as `invalid_input` before preparation; the result adds `warnings` (`<list>: <before> → <after> (<n> previous entr(y/ies) not kept; merge=true keeps omitted fields)`) for guardrails, references, recentValidation, blockers when stored entries are not kept | `internal/engine/mutinput.go` (`withheldPlaceholder`), `internal/engine/checkpoint.go` (`checkpointDropWarnings`) |
+| c merge | `merge: true` keeps every omitted field (summary, nextAction, position, the four lists; stored position re-derived when it no longer resolves to an open step); `appendValidation` (string or array) appends deduplicated lines; missing/unreadable checkpoint merges as empty (omitted summary/nextAction then refused, `invalid_input`); legacy v1 carried over into v2; binding unchanged. CLI `--merge`, `--append-validation` | `internal/engine/checkpoint.go`, `internal/engine/mutinput.go` (`checkpointMergeSpec`, `kStringOrList`), `internal/cli/mutate.go`, `internal/cli/cli.go` usage, README quick start |
+| d description | "Without merge=true it replaces the whole checkpoint …; to update it, pass merge=true … or read the current checkpoint first." | `adapter/opencode/src/registration.json` (key `d4_3`: 2 additions, 4 changes with previous values), `scripts/snapshot-registration.ts`, `schema/v1/tools/workplan_checkpoint.input.schema.json` (`merge`, `appendValidation`, `if`/`else` required, two `x-shiori-rules`) |
+
+### Vector expectations
+
+The oracle corpus is unchanged. `testdata/d4_3/expectations.json` pins 7
+vectors: the 6 resume vectors of `checkpoint-stale-v2` and
+`checkpoint-legacy-v1` (withheld list restated from the raw checkpoint
+file; removing it and restoring the D.1 instruction gives the D.4.3-off
+packet byte-for-byte, so every corpus packet keeps its level) and
+`mutations/checkpoint-ok` (the stored full-valid checkpoint loses 1
+guardrail, 1 reference, 1 validation line and 1 blocker; the result
+differs only by `warnings`, restated independently; files and
+authorizations equal). Tallies: tools 149 pass / 50 approved, resume 71 /
+16, paging 43 / 31, mutations 56 / 14, 0 fail. Earlier pins are
+unchanged: the D.4-and-earlier layers run with `noD43`, and the D.3.1
+mutation comparison runs with D.4.3 off.
+
+### New tests
+
+- `d4_3_test.go`: `TestD43ResumeWithheld` (stale, legacy, fresh, missing,
+  invalid; key order; `workplan_read` does not carry the checkpoint; the
+  on packet minus the change equals the off packet),
+  `TestD43ResumeBudget` (stale roadmap with every list set, 4096–16000 ×
+  limits 1/8/20: every packet fits and carries the full list; 383 of 951
+  at the D.4.3-off level, 42 with one page item fewer, the rest at a lower
+  text tier), `TestD43WithheldPlaceholderRefused` (6 refused and 7
+  accepted spellings, both fields, both surfaces, no authorization, no
+  byte changed), `TestD43DropWarnings`, `TestD43Merge` (refresh,
+  deduplicated append, partial replace, explicit `[]`, position fallback
+  and override, required without merge, type errors, missing and legacy
+  checkpoints), `TestD43IncidentSequence` (stale checkpoint → resume view
+  → naive `null …` rebuild refused with the checkpoint untouched → merge
+  refresh keeps every field and appends one line → naive rebuild without
+  the prefix is written with 3 warnings).
+- `d4_3_vectors_test.go`: the D.4.3 corpus layer for read and mutation
+  vectors (`SHIORI_D43_UPDATE=1` re-pins).
+- CLI `TestCheckpointMergeCLI`, protocol
+  `TestCheckpointMergeAndWithheldGuards`, schema
+  `TestCheckpointMergeSchemaAgreesWithParser` (14 inputs, schema and
+  native parser agree), adapter `plugin.test.ts` (the `d4_3` additions and
+  changes, then the full reversal to `d1.referenceSha256`).
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1 -timeout 20m` per package: all pass (engine
+  209 s).
+- `bun test` in `adapter/opencode`: 52 pass, 1 skip (opt-in runtime smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+- Not run: owner-plan evidence and CLI timing (no private plan was used;
+  the added work per call is one list comparison on checkpoint writes and
+  one small member on non-fresh resume packets).
+
+### Owner decisions to review (D.4.3)
+
+1. `withheld` names only the lists that have stored entries (plus summary
+   and nextAction, always), rather than a fixed list of five; the stored
+   phase/step position is not listed.
+2. No workplan tool returns the stored checkpoint, so the instruction
+   names the sidecar file and merge mode instead of `workplan_read`.
+   Adding the checkpoint to `workplan_read` (or a filtered read member)
+   would be a separate change.
+3. The drop warnings come after the write; the previous entries are not
+   echoed, so a model cannot restore them from the result alone. Listing
+   the dropped entries (bounded) in the warning is a possible follow-up.
+4. The withheld list and longer instruction are a pinned item: on the
+   synthetic stale roadmap 42 of 951 swept packets carry one page item
+   fewer than without them.
+
 ## Resume after maintenance
 
-See [Resume point](#resume-point-paused-after-d42) at the top. The Go
+See [Resume point](#resume-point-paused-after-d43) at the top. The Go
 toolchain observed is 1.27.1 darwin/arm64; build and test commands are in
 the [README](../README.md). If the oracle files change, the corpus is
 stale: compare their sha256 against `testdata/MANIFEST.json` →

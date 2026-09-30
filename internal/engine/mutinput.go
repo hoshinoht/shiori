@@ -27,7 +27,8 @@ const (
 	kIntList
 	kObject
 	kObjectList
-	kInt // integer within [min, max] (D.4 noteRollover.keepLatest)
+	kInt          // integer within [min, max] (D.4 noteRollover.keepLatest)
+	kStringOrList // a string or an array of strings (D.4.3 appendValidation)
 )
 
 type fspec struct {
@@ -115,6 +116,7 @@ var toolSpecs = map[string]*ospec{
 		str("phaseId"), str("stepId"),
 		strList("blockers"), strList("recentValidation"), strList("guardrails"), strList("references"),
 		hash("expectedHash"),
+		boolean("merge"), {key: "appendValidation", kind: kStringOrList}, // D.4.3
 	}},
 	"compact": {fields: []fspec{
 		{key: "id", kind: kID, required: true},
@@ -130,6 +132,19 @@ var toolSpecs = map[string]*ospec{
 		{key: "noteRollover", kind: kObject, obj: rolloverSpec}, // D.4
 	}},
 }
+
+// checkpointMergeSpec is the checkpoint spec with merge=true (D.4.3,
+// contracts §18 item 3): summary and nextAction may be omitted and then
+// keep the stored checkpoint's values.
+var checkpointMergeSpec = func() *ospec {
+	fields := append([]fspec(nil), toolSpecs["checkpoint"].fields...)
+	for i := range fields {
+		if fields[i].key == "summary" || fields[i].key == "nextAction" {
+			fields[i].required = false
+		}
+	}
+	return &ospec{fields: fields}
+}()
 
 type issueList struct{ issues []model.Issue }
 
@@ -205,6 +220,8 @@ func expectedType(k fkind) string {
 		return "object"
 	case kInt:
 		return "number"
+	case kStringOrList:
+		return "string or array"
 	default:
 		return "string"
 	}
@@ -313,6 +330,14 @@ func parseField(f fspec, v ojson.Value, path []string, l *issueList) (ojson.Valu
 			out = append(out, ojson.IntValue(int64(fl)))
 		}
 		return ojson.ArrayValue(out), ok
+	case kStringOrList:
+		if v.Kind() == ojson.String {
+			return v, true
+		}
+		if v.Kind() != ojson.Array {
+			return typeErr("string or array")
+		}
+		return parseField(fspec{key: f.key, kind: kStringList}, v, path, l)
 	case kObject:
 		return parseObject(f.obj, v, path, l, nil, nil)
 	case kInt:
@@ -373,6 +398,11 @@ func ParseMutationInput(tool string, v ojson.Value, s Surface) (ojson.Value, err
 					prefix = []ojson.Member{{Key: "workspaceRoot", Value: wr}}
 				}
 			}
+		}
+	}
+	if tool == "checkpoint" && v.Kind() == ojson.Object {
+		if mg, ok := v.Get("merge"); ok && mg.Kind() == ojson.Bool && mg.Bool() {
+			spec = checkpointMergeSpec
 		}
 	}
 	data, ok := parseObject(spec, v, nil, &l, extra, prefix)
@@ -441,6 +471,15 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 		if native && !has("expectedHash") {
 			l.add([]string{"expectedHash"}, msgNativeHash)
 		}
+		if tool == "checkpoint" {
+			// D.4.3 (contracts §18 item 2): a withheld resume value copied
+			// back as text.
+			for _, k := range []string{"summary", "nextAction"} {
+				if x, ok := data.Get(k); ok && withheldPlaceholder(x.Str()) {
+					l.add([]string{k}, msgWithheldPlaceholder(k))
+				}
+			}
+		}
 		if tool == "reset" {
 			// D.3 (contracts §13 item 1): the wipe apply fields.
 			mode, _ := data.Get("mode")
@@ -479,4 +518,19 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 			}
 		}
 	}
+}
+
+// withheldPlaceholder reports whether a checkpoint summary or nextAction
+// is the text of a withheld resume value (D.4.3, contracts §18 item 2):
+// trimmed, exactly "null" or "undefined", or starting with "null " or
+// "undefined " (case-sensitive).
+func withheldPlaceholder(s string) bool {
+	t := model.TrimJS(s)
+	return t == "null" || t == "undefined" || strings.HasPrefix(t, "null ") || strings.HasPrefix(t, "undefined ")
+}
+
+// msgWithheldPlaceholder explains the withheld-placeholder refusal. It
+// contains no "; " so the issue list stays separable.
+func msgWithheldPlaceholder(field string) string {
+	return "Checkpoint " + field + " starts with null/undefined, which is how workplan_resume shows a withheld field of a stale or legacy checkpoint, not its value — read the stored checkpoint first (the file named in the resume instruction), or pass merge=true and omit " + field + " to keep the stored value"
 }

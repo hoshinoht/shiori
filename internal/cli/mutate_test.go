@@ -293,3 +293,61 @@ func TestCompactionAdviceFlag(t *testing.T) {
 		}
 	}
 }
+
+// D.4.3 (contracts §18): checkpoint --merge keeps the stored fields and
+// --append-validation appends; the withheld-placeholder refusal and the
+// drop warnings reach the CLI unchanged.
+func TestCheckpointMergeCLI(t *testing.T) {
+	root := testutil.NewRoot(t, "full-valid")
+	if err := os.WriteFile(filepath.Join(root.Path, ".opencode/workplan/full-plan.md"), []byte("# edited by hand\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withPrompt(t, false, "")
+	hash := func() string {
+		code, out, errOut := run("read", "full-plan", "--json", "--no-markdown", "--root", root.Path)
+		if code != 0 {
+			t.Fatal(errOut)
+		}
+		var v struct{ StateHash string }
+		json.Unmarshal([]byte(out), &v)
+		return v.StateHash
+	}
+	if code, out, _ := run("resume", "full-plan", "--root", root.Path); code != 0 ||
+		!strings.Contains(out, "withheld:  summary, nextAction, guardrails, references, recentValidation (stored, not shown") {
+		t.Fatalf("human resume: %d %s", code, out)
+	}
+	before := testutil.Fingerprint(t, root.Path)
+	code, out, _ := run("checkpoint", "full-plan", "--summary", "null DEPLOYED", "--next-action", "x", "--expected-hash", hash(), "--yes", "--json", "--root", root.Path)
+	if code != 1 || !strings.Contains(out, `"class": "invalid_input"`) || !strings.Contains(out, "withheld field") {
+		t.Fatalf("null summary: %d %s", code, out)
+	}
+	if d := testutil.DiffFingerprints(before, testutil.Fingerprint(t, root.Path)); len(d) > 0 {
+		t.Fatalf("refusal wrote: %v", d)
+	}
+	if code, _, errOut := run("update", "full-plan", "--merge", "--expected-hash", hash(), "--root", root.Path); code != 2 || !strings.Contains(errOut, "--merge does not apply") {
+		t.Fatalf("--merge on update: %d %s", code, errOut)
+	}
+	code, out, errOut := run("checkpoint", "full-plan", "--merge", "--append-validation", "deploy ok", "--expected-hash", hash(), "--yes", "--json", "--root", root.Path)
+	var res struct {
+		Checkpoint struct {
+			Summary          string   `json:"summary"`
+			NextAction       string   `json:"nextAction"`
+			Guardrails       []string `json:"guardrails"`
+			RecentValidation []string `json:"recentValidation"`
+		} `json:"checkpoint"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || code != 0 {
+		t.Fatalf("merge: %d %s %s", code, out, errOut)
+	}
+	if res.Checkpoint.Summary != "Phase A done; B in progress" || res.Checkpoint.NextAction != "Finish step-b1" || len(res.Checkpoint.Guardrails) != 1 ||
+		strings.Join(res.Checkpoint.RecentValidation, "|") != "bun test: 3 passed|deploy ok" || res.Warnings != nil {
+		t.Fatalf("merged %+v", res)
+	}
+	code, out, _ = run("checkpoint", "full-plan", "--summary", "s", "--next-action", "n", "--guardrail", "do not touch adapter", "--expected-hash", hash(), "--yes", "--json", "--root", root.Path)
+	res.Warnings = nil
+	if err := json.Unmarshal([]byte(out), &res); err != nil || code != 0 || len(res.Warnings) != 3 ||
+		res.Warnings[0] != "references: 1 → 0 (1 previous entry not kept; merge=true keeps omitted fields)" {
+		t.Fatalf("warnings: %d %s", code, out)
+	}
+}

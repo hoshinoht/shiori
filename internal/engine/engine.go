@@ -45,6 +45,13 @@ type Engine struct {
 	// (contracts §15). Test-only, like noD31: every corpus vector must be
 	// byte-identical with and without it unless it is pinned.
 	noD4 bool
+	// noD43 turns off the D.4.3 read and result additions (contracts §18):
+	// the resume checkpoint.withheld list and its instruction, and the
+	// checkpoint write warnings. Test-only, like noD4: the corpus
+	// comparators prove that a D.4.3 output differs from the D.4.3-off
+	// output only by the approved change. The input rules (merge,
+	// appendValidation, the withheld-placeholder refusal) are not gated.
+	noD43 bool
 
 	// Compaction configures the D.4 compaction advisor thresholds (nil:
 	// DefaultCompactionThresholds). Set by the trusted caller (CLI or

@@ -69,9 +69,30 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1, D.3, D.4 and D.4.1 changes", () => {
+  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1 and D.4.3 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
+    // D.4.3 (contracts §18): workplan_checkpoint merge mode. Its changes are
+    // undone first, so the D.4.1 checks below see the D.4.1 text.
+    expect(reg.d4_3.additions).toEqual([{ tool: "workplan_checkpoint", property: "merge" }, { tool: "workplan_checkpoint", property: "appendValidation" }]);
+    expect(reg.d4_3.changes.map((c: any) => `${c.tool}:${c.path.join(".")}`)).toEqual([
+      "workplan_checkpoint:description", "workplan_checkpoint:input.properties.summary.description",
+      "workplan_checkpoint:input.properties.nextAction.description", "workplan_checkpoint:input.required",
+    ]);
+    const checkpoint = reg.tools.find((t: any) => t.name === "workplan_checkpoint");
+    expect(checkpoint.description).toContain("Without merge=true it replaces the whole checkpoint");
+    expect(checkpoint.description).toContain("pass merge=true");
+    expect(checkpoint.description).toContain("or read the current checkpoint first");
+    expect(checkpoint.input.required).toEqual(["id"]);
+    expect(checkpoint.input.properties.merge.type).toBe("boolean");
+    expect(checkpoint.input.properties.appendValidation.anyOf).toEqual([{ type: "string" }, { type: "array", items: { type: "string" } }]);
+    for (const a of reg.d4_3.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    for (const c of [...reg.d4_3.changes].reverse()) {
+      let cur = reg.tools.find((t: any) => t.name === c.tool);
+      for (const key of c.path.slice(0, -1)) cur = cur[key];
+      cur[c.path[c.path.length - 1]] = c.previous;
+    }
+    delete reg.d4_3;
     expect(reg.d1.additions).toEqual([{ tool: "workplan_read", property: "includeNotes" }]);
     expect(reg.d3.additions).toEqual([{ tool: "workplan_reset", property: "previewToken" }, { tool: "workplan_reset", property: "confirmation" }]);
     expect(reg.d3.changes.map((c: any) => c.path.join("."))).toEqual(["description", "input.properties.mode.description", "input.properties.mode.enum", "input.properties.preserveNotes.description"]);

@@ -111,7 +111,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	mdFile := fs.String("markdown-file", "", "file with explicit linked Markdown")
 	overwrite := fs.Bool("overwrite", false, "")
 	replaceMD := fs.Bool("replace-markdown", false, "")
-	var notes, blockers, guardrails, refs, validations, phases, noteIdx, findingIdx, pinNotes stringsFlag
+	var notes, blockers, guardrails, refs, validations, appendValidations, phases, noteIdx, findingIdx, pinNotes stringsFlag
 	fs.Var(&notes, "append-note", "")
 	fs.Var(&blockers, "blocker", "")
 	fs.Var(&guardrails, "guardrail", "")
@@ -129,6 +129,8 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	mode := fs.String("mode", "", "")
 	preserveNotes := fs.Bool("preserve-notes", false, "")
 	summary := fs.String("summary", "", "")
+	merge := fs.Bool("merge", false, "checkpoint: keep the stored checkpoint's omitted fields (D.4.3)")
+	fs.Var(&appendValidations, "append-validation", "checkpoint: line appended to recentValidation (D.4.3)")
 	nextAction := fs.String("next-action", "", "")
 	phase := fs.String("phase", "", "")
 	step := fs.String("step", "", "")
@@ -154,7 +156,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery"},
 		"patch":      {"patch-file", "validate"},
 		"reset":      {"mode", "preserve-notes", "replace-markdown", "preview-token", "confirm"},
-		"checkpoint": {"summary", "next-action", "phase", "step", "blocker", "guardrail", "reference", "validation"},
+		"checkpoint": {"summary", "next-action", "phase", "step", "blocker", "guardrail", "reference", "validation", "merge", "append-validation"},
 		"compact":    {"reason", "archive-phase", "archive-note", "archive-finding", "apply", "preview-token", "confirm", "rollover", "keep-notes", "pin-note"},
 	}
 	for name := range set {
@@ -268,6 +270,8 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	listFlag("guardrail", "guardrails", guardrails)
 	listFlag("reference", "references", refs)
 	listFlag("validation", "recentValidation", validations)
+	boolFlag("merge", "merge", *merge)
+	listFlag("append-validation", "appendValidation", appendValidations)
 	strFlag("reason", "archiveReason", *reason)
 	listFlag("archive-phase", "completedPhaseIds", phases)
 	if err := intsFlag("archive-note", "noteIndexes", noteIdx); err != nil {

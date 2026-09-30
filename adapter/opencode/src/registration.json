@@ -1027,7 +1027,7 @@
     },
     {
       "name": "workplan_checkpoint",
-      "description": "Write a concise, structured handoff checkpoint for the next session without replacing the full workplan. Include the current task, immediate next action, blockers, validation, and safety guardrails. Pass expectedHash = the stateHash from your latest read or successful write.",
+      "description": "Write a concise, structured handoff checkpoint for the next session without replacing the full workplan. Include the current task, immediate next action, blockers, validation, and safety guardrails. Without merge=true it replaces the whole checkpoint (omitted fields become empty); to update it, pass merge=true (omitted fields keep their stored values) or read the current checkpoint first. Pass expectedHash = the stateHash from your latest read or successful write.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1039,11 +1039,11 @@
             "pattern": "[a-z0-9]"
           },
           "summary": {
-            "description": "Concise summary of the current state",
+            "description": "Concise summary of the current state (required unless merge=true; never copy a null/withheld value from workplan_resume)",
             "type": "string"
           },
           "nextAction": {
-            "description": "The immediate next action for the next session",
+            "description": "The immediate next action for the next session (required unless merge=true)",
             "type": "string"
           },
           "phaseId": {
@@ -1086,12 +1086,28 @@
             "description": "The stateHash last read for this plan; the write is refused if the plan changed since",
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
+          },
+          "merge": {
+            "description": "Keep the stored checkpoint's value of every omitted field (summary, nextAction, phase/step, blockers, recentValidation, guardrails, references); given fields replace theirs",
+            "type": "boolean"
+          },
+          "appendValidation": {
+            "description": "Validation line(s) appended to recentValidation (exact duplicates skipped); use with merge=true to add evidence without rewriting the checkpoint",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
           }
         },
         "required": [
-          "id",
-          "summary",
-          "nextAction"
+          "id"
         ],
         "additionalProperties": false
       }
@@ -1421,6 +1437,60 @@
           "description"
         ],
         "previous": "Preview or archive explicitly selected workplan history. Apply mode requires a fresh checkpoint and exact confirmation; it snapshots the original JSON, linked Markdown, and checkpoint before removing only selected completed phases, notes, and explicitly resolved findings."
+      }
+    ]
+  },
+  "d4_3": {
+    "note": "Approved design change D.4.3 (docs/contracts.md §18, 2026-10-01): workplan_checkpoint merge mode. Removing the listed additions and restoring each listed change to its previous value (before the d4_1 changes), then applying the d4_1/d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    "additions": [
+      {
+        "tool": "workplan_checkpoint",
+        "property": "merge"
+      },
+      {
+        "tool": "workplan_checkpoint",
+        "property": "appendValidation"
+      }
+    ],
+    "changes": [
+      {
+        "tool": "workplan_checkpoint",
+        "path": [
+          "description"
+        ],
+        "previous": "Write a concise, structured handoff checkpoint for the next session without replacing the full workplan. Include the current task, immediate next action, blockers, validation, and safety guardrails. Pass expectedHash = the stateHash from your latest read or successful write."
+      },
+      {
+        "tool": "workplan_checkpoint",
+        "path": [
+          "input",
+          "properties",
+          "summary",
+          "description"
+        ],
+        "previous": "Concise summary of the current state"
+      },
+      {
+        "tool": "workplan_checkpoint",
+        "path": [
+          "input",
+          "properties",
+          "nextAction",
+          "description"
+        ],
+        "previous": "The immediate next action for the next session"
+      },
+      {
+        "tool": "workplan_checkpoint",
+        "path": [
+          "input",
+          "required"
+        ],
+        "previous": [
+          "id",
+          "summary",
+          "nextAction"
+        ]
       }
     ]
   }

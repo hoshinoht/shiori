@@ -149,6 +149,13 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		if d := get(cp, "diagnostic"); d.Kind() == ojson.String {
 			fmt.Fprintf(w, "stale:     %s\n", oneLine(d.Str(), 240))
 		}
+		if ws := get(cp, "withheld").Elems(); len(ws) > 0 {
+			names := make([]string, len(ws))
+			for i, x := range ws {
+				names[i] = x.Str()
+			}
+			fmt.Fprintf(w, "withheld:  %s (stored, not shown; see the instruction)\n", strings.Join(names, ", "))
+		}
 		if c := get(v, "criticalPath"); c.Kind() == ojson.Object {
 			fmt.Fprintf(w, "critical:  %s steps, next %s/%s\n", str(get(c, "length")), str(get(c, "nextStep", "phaseId")), str(get(c, "nextStep", "stepId")))
 		}

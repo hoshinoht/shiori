@@ -45,7 +45,9 @@ Mutating commands (print the prepared intent, then require confirmation):
                              wipe [--preserve-notes]: preview (read-only), then apply with
                              --preview-token T --confirm WIPE_PLAN_CONTENT (archives first)
   checkpoint <id>            --summary S --next-action A [--phase --step --blocker
-                             --guardrail --reference --validation]
+                             --guardrail --reference --validation --append-validation V]
+                             replaces the whole checkpoint; --merge keeps every omitted
+                             field (then --summary/--next-action are optional)
   compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I
                              | --rollover [--keep-notes N] [--pin-note I]...]
                              --preview-token T --confirm ARCHIVE_SELECTED_HISTORY

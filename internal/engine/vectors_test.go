@@ -212,6 +212,8 @@ func TestCorpusParity(t *testing.T) {
 	t.Logf("D.3.1 listed vectors: %s", d1Summary(d31Expectations(t)))
 	d4Write(t)
 	t.Logf("D.4 listed vectors: %s", d1Summary(d4Expectations(t)))
+	d43Write(t, "tools/", "resume/", "paging/")
+	t.Logf("D.4.3 listed vectors: %s", d1Summary(d43Expectations(t)))
 }
 
 func runVector(t *testing.T, v *vector) (outcome, string) {
@@ -243,6 +245,33 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 		}
 		os.WriteFile(filepath.Join(dir, name+".out"), []byte(body), 0o644)
 	}
+	// D.4.3 (contracts §18): a vector whose output changes with the D.4.3
+	// additions is judged in two steps, like D.2–D.4: the D.4.3-off output
+	// must pass every earlier check unchanged, and the D.4.3 output must
+	// differ from it only by the approved change.
+	if runErr == nil {
+		off43 := *e
+		off43.noD43 = true
+		off43Text, off43Err := runTool(t, &off43, v.Call.Tool, input.Value)
+		if off43Err != nil {
+			t.Fatalf("D.4.3-off run failed: %v", off43Err)
+		}
+		if d43Candidate(t, v, text, off43Text) {
+			_, note := judgeD4(t, v, root, &off43, input.Value, off43Text, nil)
+			d43note := checkD43(t, v, root, input.Value, text, off43Text)
+			if note != "" {
+				d43note += " (D.4.3-off: " + note + ")"
+			}
+			return outDivergence, d43note
+		}
+	}
+	return judgeD4(t, v, root, e, input.Value, text, runErr)
+}
+
+// judgeD4 is the D.4 split followed by the D.3.1 and earlier checks, for
+// an engine that may have the D.4.3 additions turned off.
+func judgeD4(t *testing.T, v *vector, root testutil.Root, e *Engine, input ojson.Value, text string, runErr error) (outcome, string) {
+	t.Helper()
 	// D.4 (contracts §15): a vector whose output changes with the D.4
 	// compaction advice is judged in two steps, like D.2–D.3.1: the
 	// D.4-off output must pass every earlier check unchanged, and the D.4
@@ -250,12 +279,12 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 	if runErr == nil {
 		off4 := *e
 		off4.noD4 = true
-		off4Text, off4Err := runTool(t, &off4, v.Call.Tool, input.Value)
+		off4Text, off4Err := runTool(t, &off4, v.Call.Tool, input)
 		if off4Err != nil {
 			t.Fatalf("D.4-off run failed: %v", off4Err)
 		}
 		if d4Candidate(t, v, text, off4Text) {
-			_, note := judgeD31(t, v, root, &off4, input.Value, off4Text, nil)
+			_, note := judgeD31(t, v, root, &off4, input, off4Text, nil)
 			d4note := checkD4(t, v, root, text, off4Text)
 			if note != "" {
 				d4note += " (D.4-off: " + note + ")"
@@ -263,7 +292,7 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 			return outDivergence, d4note
 		}
 	}
-	return judgeD31(t, v, root, e, input.Value, text, runErr)
+	return judgeD31(t, v, root, e, input, text, runErr)
 }
 
 // judgeD31 is the D.3.1 split followed by the D.3 and earlier checks, for

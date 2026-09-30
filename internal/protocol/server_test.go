@@ -1147,3 +1147,74 @@ func TestNoteRolloverPreviewThenPreparedApply(t *testing.T) {
 		t.Fatalf("commit: %v", c)
 	}
 }
+
+// D.4.3 (contracts §18) on the native path: resume names the withheld
+// fields of a stale checkpoint, a rebuild that copies the withheld null is
+// refused before anything is prepared, merge=true keeps every field and
+// appends a validation line, and a rebuild that drops entries warns.
+func TestCheckpointMergeAndWithheldGuards(t *testing.T) {
+	root := fixtureRoot(t, "full-valid")
+	if err := os.WriteFile(filepath.Join(root, ".opencode/workplan/full-plan.md"), []byte("# edited by hand\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, Options{})
+	h.handshake()
+	r := h.call("r", "workplan_resume", root, map[string]any{"id": "full-plan"})
+	var packet struct {
+		Checkpoint struct {
+			Withheld []string `json:"withheld"`
+			Summary  *string  `json:"summary"`
+		} `json:"checkpoint"`
+		Instruction string `json:"instruction"`
+	}
+	if err := json.Unmarshal([]byte(r.text()), &packet); err != nil || !r.ok() {
+		t.Fatalf("resume: %v %v", r, err)
+	}
+	if strings.Join(packet.Checkpoint.Withheld, ",") != "summary,nextAction,guardrails,references,recentValidation" || packet.Checkpoint.Summary != nil ||
+		!strings.Contains(packet.Instruction, ".opencode/workplan/full-plan.checkpoint.json") {
+		t.Fatalf("packet %+v", packet)
+	}
+	hash := readHash(t, h, root, "full-plan")
+	before := fingerprint(t, root)
+	r = h.call("n", "workplan_checkpoint", root, map[string]any{"id": "full-plan", "expectedHash": hash, "summary": "null DEPLOYED", "nextAction": "x"})
+	if r.errClass() != "invalid_input" || r.obj("prepared") != nil {
+		t.Fatalf("null rebuild: %v", r)
+	}
+	issues := r.obj("error")["issues"].([]any)
+	if len(issues) != 1 || issues[0].(map[string]any)["path"] != "summary" {
+		t.Fatalf("issues %v", issues)
+	}
+	sameFingerprint(t, before, fingerprint(t, root))
+	// Merge refresh.
+	r = h.call("m", "workplan_checkpoint", root, map[string]any{"id": "full-plan", "expectedHash": hash, "merge": true, "appendValidation": "deploy ok"})
+	p := r.obj("prepared")
+	if p == nil {
+		t.Fatalf("merge: %v", r)
+	}
+	c := h.call("mc", "shiori.commit", root, commitInput(p))
+	var out struct {
+		Checkpoint struct {
+			Summary          string   `json:"summary"`
+			Guardrails       []string `json:"guardrails"`
+			References       []string `json:"references"`
+			RecentValidation []string `json:"recentValidation"`
+		} `json:"checkpoint"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(c.text()), &out); err != nil || !c.ok() {
+		t.Fatalf("commit: %v %v", c, err)
+	}
+	if out.Checkpoint.Summary != "Phase A done; B in progress" || len(out.Checkpoint.Guardrails) != 1 || len(out.Checkpoint.References) != 1 ||
+		strings.Join(out.Checkpoint.RecentValidation, "|") != "bun test: 3 passed|deploy ok" || out.Warnings != nil {
+		t.Fatalf("merged %+v", out)
+	}
+	// A replacing write that drops entries warns.
+	hash = readHash(t, h, root, "full-plan")
+	r = h.call("w", "workplan_checkpoint", root, map[string]any{"id": "full-plan", "expectedHash": hash, "summary": "s", "nextAction": "n"})
+	c = h.call("wc", "shiori.commit", root, commitInput(r.obj("prepared")))
+	out.Warnings = nil
+	if err := json.Unmarshal([]byte(c.text()), &out); err != nil || !c.ok() || len(out.Warnings) != 4 ||
+		out.Warnings[0] != "guardrails: 1 → 0 (1 previous entry not kept; merge=true keeps omitted fields)" {
+		t.Fatalf("warnings %v (%v)", out.Warnings, c)
+	}
+}
