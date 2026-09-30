@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shiori.invalid/schema/v1/tools/workplan_compact_preview.input.schema.json",
+  "title": "workplan_compact_preview input (native surface)",
+  "description": "Read-only preview of the exact history selection and archive intent; never applies.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Workplan id; normalized to lowercase [a-z0-9-] (max 80) before use.",
+      "$ref": "../common.schema.json#/$defs/workplanId"
+    },
+    "archiveReason": {
+      "description": "Reason recorded with archived history.",
+      "type": "string"
+    },
+    "completedPhaseIds": {
+      "description": "Completed phases to archive.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "noteIndexes": {
+      "description": "Indexes of notes to archive.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "resolvedFindingIndexes": {
+      "description": "Indexes of resolved findings to archive.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "confirmation": {
+      "description": "Must be ARCHIVE_SELECTED_HISTORY for apply.",
+      "type": "string"
+    },
+    "previewToken": {
+      "description": "Token from the matching preview.",
+      "type": "string"
+    },
+    "expectedHash": {
+      "description": "stateHash from the latest read; binds the write to that exact state.",
+      "$ref": "../common.schema.json#/$defs/hash"
+    }
+  },
+  "required": [
+    "id",
+    "archiveReason"
+  ],
+  "additionalProperties": false,
+  "x-shiori-mutating": false,
+  "x-shiori-rules": [
+    {
+      "when": "input contains mode",
+      "path": "$",
+      "native": "Unrecognized key: \"mode\""
+    }
+  ],
+  "x-shiori-core-surface": "Native-only tool; core equivalent is workplan_compact with mode=preview.",
+  "x-shiori-nested-unknown-keys": "n/a"
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shiori.invalid/schema/v1/tools/workplan_reset.input.schema.json",
+  "title": "workplan_reset input (native surface)",
+  "description": "Reset a plan to the draft planning state, or regenerate only its Markdown.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Workplan id; normalized to lowercase [a-z0-9-] (max 80) before use.",
+      "$ref": "../common.schema.json#/$defs/workplanId"
+    },
+    "mode": {
+      "description": "Operation mode.",
+      "default": "draft",
+      "type": "string",
+      "enum": [
+        "draft",
+        "markdown-only"
+      ]
+    },
+    "preserveNotes": {
+      "description": "Keep notes on a draft reset.",
+      "default": false,
+      "type": "boolean"
+    },
+    "replaceMarkdown": {
+      "description": "Allow replacing handwritten (non-generated) Markdown.",
+      "type": "boolean"
+    },
+    "expectedHash": {
+      "description": "stateHash from the latest read; binds the write to that exact state.",
+      "$ref": "../common.schema.json#/$defs/hash"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "required": [
+        "expectedHash"
+      ]
+    }
+  ],
+  "x-shiori-mutating": true,
+  "x-shiori-rules": [
+    {
+      "when": "always (native)",
+      "path": "expectedHash",
+      "native": "Native existing-state writes require the current stateHash"
+    }
+  ],
+  "x-shiori-core-surface": "The standalone CLI/core surface additionally accepts optional 'workspaceRoot' (string); the native surface rejects it as an unrecognized key. The allOf conditions are native-surface rules; the core surface keeps expectedHash optional for legacy direct calls (a concurrent change must still be detected), and uses the 'core' messages in x-shiori-rules.",
+  "x-shiori-nested-unknown-keys": "n/a"
+}

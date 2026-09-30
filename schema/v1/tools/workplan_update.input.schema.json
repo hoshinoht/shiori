@@ -1,0 +1,541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shiori.invalid/schema/v1/tools/workplan_update.input.schema.json",
+  "title": "workplan_update input (native surface)",
+  "description": "Update plan metadata, links, findings, dependencies or targeted phase/step fields, or explicitly recover a pending transaction.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Workplan id; normalized to lowercase [a-z0-9-] (max 80) before use.",
+      "$ref": "../common.schema.json#/$defs/workplanId"
+    },
+    "expectedHash": {
+      "description": "stateHash from the latest read; binds the write to that exact state.",
+      "$ref": "../common.schema.json#/$defs/hash"
+    },
+    "recovery": {
+      "description": "Explicit recovery of a pending transaction; mutually exclusive with ordinary update fields.",
+      "type": "string",
+      "enum": [
+        "resume",
+        "rollback"
+      ]
+    },
+    "replaceMarkdown": {
+      "description": "Allow replacing handwritten (non-generated) Markdown.",
+      "type": "boolean"
+    },
+    "title": {
+      "description": "Plan title.",
+      "type": "string"
+    },
+    "goal": {
+      "description": "Plan goal; blank is allowed while drafting.",
+      "type": "string"
+    },
+    "status": {
+      "description": "Lifecycle status.",
+      "type": "string",
+      "enum": [
+        "draft",
+        "in_progress",
+        "blocked",
+        "review",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "scope": {
+      "description": "In-scope items.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "nonGoals": {
+      "description": "Explicit non-goals.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "description": "Constraints that must hold.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "planFile": {
+      "description": "Linked Markdown path under .opencode/workplan/ ending in .md.",
+      "type": "string"
+    },
+    "planMarkdown": {
+      "description": "Explicit full Markdown content for the linked plan file.",
+      "type": "string"
+    },
+    "specFiles": {
+      "description": "Project-relative spec files bound into planHash.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewFindings": {
+      "description": "Review findings.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "critical",
+              "major",
+              "minor",
+              "note",
+              "question"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved"
+            ]
+          }
+        },
+        "required": [
+          "severity",
+          "title"
+        ]
+      }
+    },
+    "phases": {
+      "description": "Ordered phases; omitted ids are generated.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "in_progress",
+              "blocked",
+              "review",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                },
+                "validation": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "draft",
+                    "in_progress",
+                    "blocked",
+                    "review",
+                    "completed",
+                    "cancelled"
+                  ]
+                }
+              },
+              "required": [
+                "title"
+              ]
+            }
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    "updatePhases": {
+      "description": "Targeted phase field patches.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "phaseId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "in_progress",
+              "blocked",
+              "review",
+              "completed",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "phaseId"
+        ]
+      }
+    },
+    "addPhases": {
+      "description": "Phases to insert (after an anchor, or appended).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "afterPhaseId": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "in_progress",
+                  "blocked",
+                  "review",
+                  "completed",
+                  "cancelled"
+                ]
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "validation": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "draft",
+                        "in_progress",
+                        "blocked",
+                        "review",
+                        "completed",
+                        "cancelled"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "title"
+            ]
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      }
+    },
+    "updateSteps": {
+      "description": "Targeted step field patches keyed by (phaseId, stepId).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "phaseId": {
+            "type": "string"
+          },
+          "stepId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "validation": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "in_progress",
+              "blocked",
+              "review",
+              "completed",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "phaseId",
+          "stepId"
+        ]
+      }
+    },
+    "addSteps": {
+      "description": "Steps to insert (after an anchor, or appended).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "phaseId": {
+            "type": "string"
+          },
+          "afterStepId": {
+            "type": "string"
+          },
+          "step": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string"
+              },
+              "validation": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "in_progress",
+                  "blocked",
+                  "review",
+                  "completed",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": [
+              "title"
+            ]
+          }
+        },
+        "required": [
+          "phaseId",
+          "step"
+        ]
+      }
+    },
+    "addRelevantFiles": {
+      "description": "Relevant files to add.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "addSpecFiles": {
+      "description": "Spec files to add.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removeSpecFiles": {
+      "description": "Spec files to remove (normalized before matching).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "addReviewFindings": {
+      "description": "Findings to append.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "critical",
+              "major",
+              "minor",
+              "note",
+              "question"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved"
+            ]
+          }
+        },
+        "required": [
+          "severity",
+          "title"
+        ]
+      }
+    },
+    "appendNotes": {
+      "description": "Notes to append (deduplicated).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dependencies": {
+      "description": "Full replacement of the dependency sidecar; [] records an empty set, omission leaves it unchanged.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "phaseId": {
+            "$ref": "../common.schema.json#/$defs/nonblank"
+          },
+          "stepId": {
+            "$ref": "../common.schema.json#/$defs/nonblank"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "phaseId": {
+                  "$ref": "../common.schema.json#/$defs/nonblank"
+                },
+                "stepId": {
+                  "$ref": "../common.schema.json#/$defs/nonblank"
+                }
+              },
+              "required": [
+                "phaseId",
+                "stepId"
+              ]
+            }
+          }
+        },
+        "required": [
+          "phaseId",
+          "stepId",
+          "dependsOn"
+        ]
+      }
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "required": [
+        "expectedHash"
+      ]
+    },
+    {
+      "if": {
+        "required": [
+          "recovery"
+        ]
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "id",
+            "expectedHash",
+            "recovery"
+          ]
+        }
+      }
+    }
+  ],
+  "x-shiori-mutating": true,
+  "x-shiori-rules": [
+    {
+      "when": "always (native)",
+      "path": "expectedHash",
+      "native": "Native existing-state writes require the current stateHash"
+    },
+    {
+      "when": "recovery set and any key other than id/expectedHash/recovery has a non-undefined value (native counts replaceMarkdown, even false); core excludes workspaceRoot and replaceMarkdown=false",
+      "path": "recovery",
+      "native": "recovery is mutually exclusive with ordinary update fields",
+      "core": "recovery is mutually exclusive with ordinary update fields"
+    }
+  ],
+  "x-shiori-core-surface": "The standalone CLI/core surface additionally accepts optional 'workspaceRoot' (string); the native surface rejects it as an unrecognized key. The allOf conditions are native-surface rules; the core surface keeps expectedHash optional for legacy direct calls (a concurrent change must still be detected), and uses the 'core' messages in x-shiori-rules.",
+  "x-shiori-nested-unknown-keys": "strip"
+}
