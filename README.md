@@ -136,15 +136,18 @@ same output as D.3.1):
   notes eligible for rollover, archivable completed phases ≥25% of the
   JSON, or a JSON of 192 KiB): the exact JSON (and generated-Markdown)
   saving, the counts, the reasons and a ready-to-preview selection.
-  `resume` adds a compact `compactionRecommended` that is dropped before
-  any text would go below the D.1 minimums. Advice only.
+  `resume` adds a compact `compactionRecommended` only when the packet
+  with it keeps the same page items and text caps as without it (D.4.2;
+  otherwise it is omitted and `doctor` keeps the full advice). Advice
+  only.
   `--compaction-advice off|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N`
   (resume, doctor, serve) sets the thresholds.
 - `compact --rollover [--keep-notes N] [--pin-note I]...` (tool input
   `noteRollover`) selects every note older than the latest N (default
   20) except pinned notes (`[pinned]` or `--pin-note`), decision records
   (`decision`/`decided` or the uppercase `USER` marker), notes naming an
-  open step or quoting an open finding, and earlier archive pointers.
+  open step or quoting an open finding, and the latest three archive
+  pointer notes (D.4.2; older pointers are archived like other notes).
   It uses the unchanged preview → token → `ARCHIVE_SELECTED_HISTORY`
   flow; apply needs a fresh checkpoint, so every archived note predates
   it, and the archive keeps the complete originals.
@@ -278,6 +281,25 @@ separately decided stage E):
    Instead of the `bin` option, `SHIORI_BIN=/abs/path/shiori` may be set in the
    environment OpenCode runs in. The path must be absolute; `PATH` is never
    searched and nothing is downloaded.
+
+   Optional (D.4.2): `compactionAdvice` sets the compaction advisor
+   thresholds of the spawned core (`shiori serve --stdio
+   --compaction-advice …`): `"off"`, or an object with any of
+   `minSavingsKiB` (default 32), `notes` (50), `terminalPercent` (25,
+   at most 100), `planKiB` (192) and `keepNotes` (20, at most 10000), each
+   a positive integer. Absent, the defaults apply. An invalid value fails
+   plugin load with a message naming the option; it is operator
+   configuration, never model input.
+
+   ```jsonc
+   {
+     "package": "/abs/path/to/shiori/adapter/opencode",
+     "options": {
+       "bin": "/abs/path/shiori",
+       "compactionAdvice": { "minSavingsKiB": 16, "notes": 30, "keepNotes": 30 }
+     }
+   }
+   ```
 3. Optional single-file build: `cd adapter/opencode && bun build ./index.ts
    --target=bun --format=esm --outfile /abs/path/shiori-opencode.js` (only
    `node:` imports remain).
@@ -340,7 +362,10 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
   `testdata/d4/expectations.json` (`SHIORI_D4_UPDATE=1`); it is empty
   because no corpus fixture qualifies for compaction advice, so every
   vector is byte-identical to D.3.1 (`TestD4ComparatorOnCorpus` checks
-  the comparator with lowered thresholds).
+  the comparator with lowered thresholds; since D.4.2 every advised
+  resume packet, small budgets included, is the advice-off packet plus
+  the member). `testdata/d4_2/expectations.json` is empty for the same
+  reason.
   The same engine with the graph additions off must still pass the
   earlier check, and the D.2 output must differ from it only by the
   approved members (`SHIORI_D2_UPDATE=1` re-pins).
@@ -359,8 +384,8 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit D.4, then the queue in the
-[STATUS resume point](docs/STATUS.md#resume-point-paused-after-d4): E1
+Review and commit D.4.2, then the queue in the
+[STATUS resume point](docs/STATUS.md#resume-point-paused-after-d42): E1
 (X2 evidence ledger, tool-surface proposal first), E2 (X3 worktree lanes,
 proposal first), then a measured performance stage (X8–X10). Updating the
 pinned copy the owner's OpenCode uses is a separate step for the owner.

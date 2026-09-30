@@ -9,8 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Sections 11–16 record the approved D.1, D.2, D.3, D.3.1, D.4
-and D.4.1 design changes, which deliberately depart from the reference.
+spell out). Sections 11–17 record the approved D.1, D.2, D.3, D.3.1, D.4,
+D.4.1 and D.4.2 design changes, which deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -1247,7 +1247,8 @@ thresholds. No mutation vector changes (they never pass `noteRollover`).
   `terminalSteps` = steps in archivable phases). It is advisory: it is
   dropped before any text would go below the D.1 minimums (first, before
   the D.3.1 critical path). Like the D.2 readiness members it may cost a
-  page item at a tight budget.
+  page item at a tight budget. (Superseded by §17 item 2: since D.4.2
+  the advice is shown only when it costs no page content.)
 - Each `workplan_doctor` plan entry adds `compactionRecommended` with
   `reasons`, `estimate` (`json`, `markdown` with `treatment`, `total`:
   `before`/`after`/`saved`/`percent`), `terminalSteps {total, archivable,
@@ -1275,7 +1276,8 @@ are:
 - *open references*: the note names an open (not completed/cancelled)
   step as a whole `<phaseId>/<stepId>` token, or quotes the title of an
   open finding (titles of at least 12 code units);
-- *archive pointers*: notes starting with `Compaction archive: `.
+- *archive pointers*: notes starting with `Compaction archive: ` (since
+  D.4.2, §17 item 3: only the latest 3; older ones roll over).
 
 Notes carry no timestamps, so "older than the newest checkpoint" is
 enforced by the existing apply rule: apply requires a fresh checkpoint,
@@ -1365,3 +1367,71 @@ suffixes gives the oracle text byte-for-byte. There are 6 such vectors: 5
 mutating-input vectors (native surface; core unchanged) and 1 mutation
 vector (`mutations/create-overwrite-stale-hash`). Every other vector is
 unchanged from D.4.
+
+## 17. Approved design changes D.4.2 (APPROVED 2026-10-01)
+
+D.4.2, approved 2026-10-01: the owner's decisions on the D.4 review items
+(STATUS "Owner decisions to review (D.4)"). Everything not listed here
+stays as in sections 1–16: the V2 formats, the thirteen identities, every
+input shape (the `noteRollover` member is unchanged), error classes, the
+compaction flow and archive, the doctor advice shape and D.1/D.2/D.3.1's
+resume budget rules and their order.
+
+**1. Decision-record rule: confirmed.** The §15 item 2 rule stays as
+implemented: a note is a decision record when it contains the whole word
+`decision`, `decisions` or `decided` in any case, or the uppercase word
+`USER`. No change.
+
+**2. Resume advice never costs page content.** `workplan_resume` chooses
+its packet without `compactionRecommended` by the unchanged D.1–D.3.1
+rules (readable levels with the critical path, then without it, then the
+emergency caps). The advice is then added only when the packet with it
+has the same degradation level as the packet without it: the same number
+of page items, the same compact/full item form and every text cap (list,
+title, long, pinned, protected) equal — i.e. the chosen level rendered
+with the member still fits `maxChars`. Otherwise it is omitted; an
+emergency packet never carries it. So a packet with the advice is always
+the advice-off packet plus that one member, byte-for-byte, and a packet
+without it is the advice-off packet. `workplan_doctor` keeps the full
+advice. (Replaces §15 item 1's "dropped before any text would go below
+the D.1 minimums … may cost a page item".)
+
+**3. Archive pointer retention.** Rollover keeps the latest 3 notes that
+start with `Compaction archive: ` (counted over the whole note list in
+order, including those inside the latest `keepLatest`); older pointer
+notes are ordinary notes for rollover (kept only if pinned, a decision
+record or an open reference, else selected and archived with their
+complete text like any other note — never lost). The pointer that apply
+appends is not counted, so after an apply a plan holds at most 4 pointer
+notes. `kept.archivePointer` in the preview's `noteRollover` and in the
+doctor advice counts only the retained ones; the advisor's `eligible`,
+`eligibleBytes`, JSON/Markdown estimate and ready-to-preview selection
+follow the same rule (they use the same selection). The model-facing
+`noteRollover` descriptions (`schema/v1/tools/workplan_compact*.input.schema.json`,
+`adapter/opencode/src/registration.json`) say "the latest 3 compaction
+archive pointers"; the property is a `d4` addition, so the reference
+reproduction (`d1.referenceSha256`) is unaffected.
+
+**4. Adapter option.** The adapter accepts an optional plugin option
+`compactionAdvice`: `"off"`, or an object with any of `minSavingsKiB`,
+`notes`, `terminalPercent`, `planKiB`, `keepNotes` (each a positive
+integer ≤ 2^30; `terminalPercent` ≤ 100, `keepNotes` ≤ 10000). It is
+validated when the plugin loads (before any core or permission bridge is
+started); anything else — another type, an unknown key, a non-integer or
+out-of-range value — fails plugin load with `Shiori adapter: invalid
+plugin option "compactionAdvice": …`. A valid value is passed to the
+spawned core as the trusted `shiori serve --stdio --compaction-advice
+<spec>` flag (keys `min-savings-kib`, `notes`, `terminal-percent`,
+`plan-kib`, `keep-notes`; protocol `Options.Compaction`). Absent (or
+`{}`), no flag is passed and the defaults apply. It is operator
+configuration, never model input.
+
+The oracle corpus is not edited.
+[`testdata/d4_2/expectations.json`](../testdata/d4_2/expectations.json)
+lists no vector: with the default thresholds no corpus fixture is
+recommended for compaction and no oracle vector passes `noteRollover`, so
+every vector is byte-identical to D.4.1 (`TestCorpusParity`'s D.4 split
+still runs every read vector with the advice on and off).
+`TestD4ComparatorOnCorpus` (lowered thresholds) now applies the
+comparator to every advised resume packet, small budgets included, with
+no budget-cost exemption.

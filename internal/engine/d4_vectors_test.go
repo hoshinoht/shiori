@@ -216,7 +216,7 @@ var (
 // completed or cancelled steps; resolved = findings with status resolved;
 // rollover keeps the latest keep notes and older notes that are pinned,
 // decision records, name an open step / quote an open finding title, or
-// are compaction archive pointers.
+// are one of the latest three compaction archive pointers (D.4.2).
 func restateAdvice(data []byte, keep int) (map[string]int, error) {
 	var p struct {
 		Phases []struct {
@@ -279,7 +279,22 @@ func restateAdvice(data []byte, keep int) (map[string]int, error) {
 		cut = 0
 	}
 	out["kept.latest"] = len(p.Notes) - cut
-	for _, n := range p.Notes[:cut] {
+	// D.4.2: only the latest three archive pointer notes (anywhere in the
+	// list) are kept; older ones roll over like ordinary notes.
+	var pointers []int
+	for i, n := range p.Notes {
+		if strings.HasPrefix(n, "Compaction archive: ") {
+			pointers = append(pointers, i)
+		}
+	}
+	if len(pointers) > 3 {
+		pointers = pointers[len(pointers)-3:]
+	}
+	latestPointer := map[int]bool{}
+	for _, i := range pointers {
+		latestPointer[i] = true
+	}
+	for i, n := range p.Notes[:cut] {
 		switch {
 		case strings.Contains(strings.ToLower(n), "[pinned]"):
 			out["kept.pinned"]++
@@ -287,7 +302,7 @@ func restateAdvice(data []byte, keep int) (map[string]int, error) {
 			out["kept.decision"]++
 		case names(n):
 			out["kept.openReference"]++
-		case strings.HasPrefix(n, "Compaction archive: "):
+		case latestPointer[i]:
 			out["kept.archivePointer"]++
 		default:
 			out["notes"]++
@@ -302,7 +317,7 @@ func restateAdvice(data []byte, keep int) (map[string]int, error) {
 // counts restate from the raw plan.
 func TestD4ComparatorOnCorpus(t *testing.T) {
 	low := &CompactionThresholds{MinSavingsBytes: 1, Notes: 1, TerminalPercent: 1, PlanBytes: 1}
-	advised, budgetCost := 0, 0
+	advised := 0
 	for _, f := range loadVectors(t, "tools", "resume") {
 		var v vector
 		data, _ := os.ReadFile(f)
@@ -330,15 +345,9 @@ func TestD4ComparatorOnCorpus(t *testing.T) {
 			if text == offText {
 				return
 			}
-			// A resume packet whose budget is tight pays for the advice
-			// with a page item or shorter text (it is dropped only before
-			// text would go below the D.1 minimums), so it differs in more
-			// than the member; the comparator applies to the others.
-			if v.Call.Tool == "workplan_resume" && (truncated(t, text) || truncated(t, offText) ||
-				pageReturned(parseT(t, text)) != pageReturned(parseT(t, offText))) {
-				budgetCost++
-				return
-			}
+			// D.4.2: the advice never costs page content, so every resume
+			// packet (small budgets included) equals the D.4-off packet
+			// plus the member.
 			if err := d4Compare(root.Path, v.Call.Tool, text, offText); err != nil {
 				t.Fatal(err)
 			}
@@ -348,9 +357,5 @@ func TestD4ComparatorOnCorpus(t *testing.T) {
 	if advised == 0 {
 		t.Fatal("no corpus vector exercised the D.4 comparator")
 	}
-	t.Logf("D.4 comparator checked %d vectors with lowered thresholds; %d small-budget resume packets paid for the advice with page items or text and were skipped", advised, budgetCost)
-}
-
-func truncated(t *testing.T, text string) bool {
-	return numMember(parseT(t, text), "truncatedFieldCount") > 0
+	t.Logf("D.4 comparator checked %d vectors with lowered thresholds (no skips: D.4.2 resume advice never costs page content)", advised)
 }

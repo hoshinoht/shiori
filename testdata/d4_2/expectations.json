@@ -1,0 +1,4 @@
+{
+  "note": "D.4.2 approved design changes (docs/contracts.md §17, 2026-10-01): oracle vectors whose Go output changes on purpose. Empty: resume shows the compaction advice only when it costs no page content (item 2), rollover keeps only the latest 3 archive pointer notes (item 3) and the adapter option (item 4) is outside the corpus; with the default thresholds no corpus fixture is recommended for compaction and no oracle vector passes noteRollover, so every vector is byte-identical to D.4.1. TestCorpusParity (D.4 split, advice on and off) enforces this; TestD4ComparatorOnCorpus checks with lowered thresholds that every advised resume packet equals the advice-off packet plus the member.",
+  "vectors": {}
+}

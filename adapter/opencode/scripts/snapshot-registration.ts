@@ -65,7 +65,7 @@ reset.input.properties.confirmation = { description: "mode=wipe only: must be WI
 // note rollover selector of workplan_compact and workplan_compact_preview,
 // inserted after resolvedFindingIndexes.
 const rollover = {
-  description: "Instead of noteIndexes: archive every note older than the latest keepLatest (default 20) except pinned ones: [pinned] in the text or pinNoteIndexes, decision records (decision/decided or USER), notes naming an open step as phaseId/stepId or quoting an open finding title, and compaction archive pointers. Apply needs a fresh checkpoint; pass the same noteRollover to preview and apply",
+  description: "Instead of noteIndexes: archive every note older than the latest keepLatest (default 20) except pinned ones: [pinned] in the text or pinNoteIndexes, decision records (decision/decided or USER), notes naming an open step as phaseId/stepId or quoting an open finding title, and the latest 3 compaction archive pointers (older ones roll over). Apply needs a fresh checkpoint; pass the same noteRollover to preview and apply",
   type: "object",
   properties: {
     keepLatest: { description: "Number of newest notes that always stay (default 20)", type: "integer", minimum: 1, maximum: 10000 },

@@ -176,6 +176,13 @@ func hasWordFold(n, w string) bool {
 
 const archivePointerPrefix = "Compaction archive: "
 
+// KeepArchivePointers is how many archive pointer notes rollover keeps
+// (D.4.2, contracts §17 item 3): the latest ones in the plan's note order,
+// counting pointers inside the latest keepLatest. Older pointer notes are
+// ordinary notes for rollover (archived with the complete original text,
+// never lost).
+const KeepArchivePointers = 3
+
 type rollover struct {
 	keep     int
 	pins     []int
@@ -199,6 +206,14 @@ func rolloverSelect(p *model.Plan, keep int, pins []int) rollover {
 		pinned[i] = true
 	}
 	refs := openRefs(p)
+	// The latest KeepArchivePointers archive pointer notes are kept.
+	keptPointer := map[int]bool{}
+	for i, left := len(p.Notes)-1, KeepArchivePointers; i >= 0 && left > 0; i-- {
+		if strings.HasPrefix(p.Notes[i], archivePointerPrefix) {
+			keptPointer[i] = true
+			left--
+		}
+	}
 	for i := 0; i < cut; i++ {
 		n := p.Notes[i]
 		reason := ""
@@ -209,7 +224,7 @@ func rolloverSelect(p *model.Plan, keep int, pins []int) rollover {
 			reason = keepDecision
 		case refs.match(n):
 			reason = keepOpenReference
-		case strings.HasPrefix(n, archivePointerPrefix):
+		case keptPointer[i]:
 			reason = keepArchivePointer
 		}
 		if reason != "" {

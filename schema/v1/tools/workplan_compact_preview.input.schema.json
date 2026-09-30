@@ -39,7 +39,7 @@
       }
     },
     "noteRollover": {
-      "description": "D.4 (approved 2026-09-30): select notes by rollover instead of noteIndexes. Every note older than the latest keepLatest is archived unless it is pinned: explicitly ([pinned] in its text, or listed in pinNoteIndexes), as a decision record (the words decision/decisions/decided, or the uppercase USER marker), by naming an open step as <phaseId>/<stepId> or quoting an open finding's title, or as a compaction archive pointer. Apply needs a fresh checkpoint, so every archived note predates the newest checkpoint. The preview token binds these parameters and the resulting indexes. Cannot be combined with noteIndexes.",
+      "description": "D.4 (approved 2026-09-30): select notes by rollover instead of noteIndexes. Every note older than the latest keepLatest is archived unless it is pinned: explicitly ([pinned] in its text, or listed in pinNoteIndexes), as a decision record (the words decision/decisions/decided, or the uppercase USER marker), by naming an open step as <phaseId>/<stepId> or quoting an open finding's title, or as one of the latest 3 compaction archive pointers (D.4.2, approved 2026-10-01; older pointer notes roll over like other notes and are archived). Apply needs a fresh checkpoint, so every archived note predates the newest checkpoint. The preview token binds these parameters and the resulting indexes. Cannot be combined with noteIndexes.",
       "type": "object",
       "properties": {
         "keepLatest": {

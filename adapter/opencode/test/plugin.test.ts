@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync 
 import { join, relative } from "node:path";
 
 import { CoreClient } from "../src/core-client";
-import { createPlugin, editResources, SUPPORTED_HOST_VERSIONS, TOOL_NAMES } from "../src/plugin";
+import { compactionAdviceArgs, createPlugin, editResources, SUPPORTED_HOST_VERSIONS, TOOL_NAMES } from "../src/plugin";
 import registration from "../src/registration.json";
 import { createFakeHost, toolContext, type FakeHostOptions } from "./fake-host";
 import { fingerprint, pause, REPO_ROOT, seedPlan, shioriBin, tempRoot } from "./helpers";
@@ -576,5 +576,60 @@ describe("P07 unsupported capability, transport loss and unload", () => {
       resources: { readPaths: ["/r/a.md"], writePaths: ["/r/.opencode/workplan/x.json"], deletePaths: [], lockPaths: ["/r/.opencode/workplan/.x.lock"], stagingPaths: [], archivePaths: [] },
     } as any);
     expect(res).toEqual(["/r/.opencode", "/r/.opencode/workplan", "/r/.opencode/workplan/.x.lock", "/r/.opencode/workplan/x.json"]);
+  });
+});
+
+describe("compactionAdvice plugin option (D.4.2, contracts §17 item 4)", () => {
+  it("maps the option to the trusted serve flag and rejects anything else", () => {
+    expect(compactionAdviceArgs(undefined)).toEqual([]);
+    expect(compactionAdviceArgs({})).toEqual([]);
+    expect(compactionAdviceArgs("off")).toEqual(["--compaction-advice", "off"]);
+    expect(compactionAdviceArgs({ minSavingsKiB: 8, notes: 10, terminalPercent: 30, planKiB: 64, keepNotes: 5 }))
+      .toEqual(["--compaction-advice", "min-savings-kib=8,notes=10,terminal-percent=30,plan-kib=64,keep-notes=5"]);
+    for (const bad of [null, "on", 3, [], { notes: 0 }, { notes: 1.5 }, { notes: "5" }, { terminalPercent: 101 }, { keepNotes: 10001 }, { size: 1 }, { toString: 1 }]) {
+      expect(() => compactionAdviceArgs(bad)).toThrow(/invalid plugin option "compactionAdvice"/);
+    }
+  });
+
+  async function adviceSetup(compactionAdvice: unknown) {
+    const root = tempRoot("shiori-advice-");
+    roots.push(root);
+    const { jsonPath } = seedPlan(root);
+    const plan = JSON.parse(readFileSync(jsonPath, "utf8"));
+    plan.notes = Array.from({ length: 80 }, (_, i) => `routine receipt ${i}: ${"x".repeat(100)}`);
+    writeFileSync(jsonPath, `${JSON.stringify(plan, null, 2)}\n`);
+    const host = createFakeHost(root);
+    host.ctx.options = compactionAdvice === undefined ? { bin: shioriBin() } : { bin: shioriBin(), compactionAdvice };
+    const args: (readonly string[] | undefined)[] = [];
+    const plugin = createPlugin({ bridge: host.bridgeFactory(), env: {}, core: (o) => (args.push(o.args), new CoreClient(o)) });
+    const cleanup = await plugin.setup(host.ctx as never) as () => Promise<void>;
+    const doctor = JSON.parse((await host.tool("workplan_doctor").execute({ id: "native-demo" }, toolContext("tester"))).content);
+    await cleanup();
+    return { args, advice: doctor.plans[0].compactionRecommended };
+  }
+
+  it("passes the thresholds to the spawned core; absent keeps the defaults", async () => {
+    const tuned = await adviceSetup({ minSavingsKiB: 1, notes: 5, keepNotes: 3 });
+    expect(tuned.args).toEqual([["serve", "--stdio", "--compaction-advice", "min-savings-kib=1,notes=5,keep-notes=3"]]);
+    expect(tuned.advice.thresholds).toEqual({ minSavingsBytes: 1024, notes: 5, terminalPercent: 25, planBytes: 196608, keepNotes: 3 });
+    expect(tuned.advice.notes.eligible).toBe(77);
+    const absent = await adviceSetup(undefined);
+    expect(absent.args).toEqual([undefined]);
+    expect(absent.advice).toBeUndefined();
+    const off = await adviceSetup("off");
+    expect(off.args).toEqual([["serve", "--stdio", "--compaction-advice", "off"]]);
+    expect(off.advice).toBeUndefined();
+  });
+
+  it("fails plugin load on an invalid option before any core is started", async () => {
+    const root = tempRoot("shiori-advice-bad-");
+    roots.push(root);
+    const host = createFakeHost(root);
+    host.ctx.options = { bin: shioriBin(), compactionAdvice: { notes: -1 } };
+    let started = 0;
+    const plugin = createPlugin({ bridge: host.bridgeFactory(), env: {}, core: (o) => (started++, new CoreClient(o)) });
+    await expect(plugin.setup(host.ctx as never)).rejects.toThrow(/compactionAdvice.*notes must be a positive integer/);
+    expect(started).toBe(0);
+    expect(host.registered).toHaveLength(0);
   });
 });

@@ -358,8 +358,8 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		}
 	}
 	m.warnings = warnings
-	// D.4 (contracts §15, P2): advice only; its compact form is dropped
-	// before any text would go below the D.1 minimums.
+	// D.4 (contracts §15, P2): advice only; D.4.2 (§17): its compact form
+	// is shown only when it costs no page content (chooseResume).
 	m.compaction = e.compactionAdvice(s, false)
 
 	// Findings.
@@ -860,30 +860,52 @@ func resumeTargetPage(maxChars, limit int) int {
 
 // chooseResume applies the budget policy: the first degradation level
 // whose complete text fits maxChars (UTF-16 code units). The D.3.1
-// critical path and the D.4 compaction advice are advisory (the detail
-// stays in inspect/doctor), so they are dropped (the advice first) before
-// any text goes below the D.1 minimums.
+// critical path is advisory (the detail stays in inspect/doctor), so it is
+// dropped before any text goes below the D.1 minimums.
+//
+// The D.4 compaction advice never costs page content (D.4.2, contracts
+// §17 item 2): the packet is first chosen without it by the D.1–D.3.1
+// rules, and the advice is added only when the packet with it has the same
+// degradation level (page items, compact form and every text cap) as the
+// packet without it (the chosen level rendered with the advice still
+// fits maxChars); otherwise it is omitted (doctor keeps the full advice).
 func chooseResume(m *resumeModel) (ojson.Value, string, error) {
-	if v, text, ok := chooseResumeLevels(m); ok {
-		return v, text, nil
+	adv := m.compaction
+	m.compaction = nil
+	v, text, pr, ok := chooseResumeReadable(m)
+	if !ok {
+		return chooseResumeEmergency(m)
 	}
-	if m.compaction != nil {
-		m.compaction = nil
-		if v, text, ok := chooseResumeLevels(m); ok {
-			return v, text, nil
+	if adv != nil {
+		// The same level with the advice: identical to the chosen packet
+		// plus the member, kept only when it still fits.
+		m.compaction = adv
+		if av, ab := m.render(pr); ojson.UTF16LenBytes(ab) <= m.maxChars {
+			return av, string(ab), nil
 		}
+		m.compaction = nil
+	}
+	return v, text, nil
+}
+
+// chooseResumeReadable is the D.1–D.3.1 readable policy: the levels with
+// the critical path, then without it.
+func chooseResumeReadable(m *resumeModel) (ojson.Value, string, resumeParams, bool) {
+	if v, text, pr, ok := chooseResumeLevels(m); ok {
+		return v, text, pr, true
 	}
 	if m.critical != nil {
 		m.critical = nil
-		if v, text, ok := chooseResumeLevels(m); ok {
-			return v, text, nil
+		if v, text, pr, ok := chooseResumeLevels(m); ok {
+			return v, text, pr, true
 		}
 	}
-	return chooseResumeEmergency(m)
+	return ojson.Value{}, "", resumeParams{}, false
 }
 
-// chooseResumeLevels tries the readable levels (steps 1 and 2).
-func chooseResumeLevels(m *resumeModel) (ojson.Value, string, bool) {
+// chooseResumeLevels tries the readable levels (steps 1 and 2) and
+// returns the chosen level.
+func chooseResumeLevels(m *resumeModel) (ojson.Value, string, resumeParams, bool) {
 	L := resumeListCap(m.maxChars)
 	remaining := len(m.items) - m.offset
 	if remaining < 0 {
@@ -944,7 +966,7 @@ func chooseResumeLevels(m *resumeModel) (ojson.Value, string, bool) {
 			for _, compact := range []bool{false, true} {
 				base.compact = compact
 				if v, b, ok := try(base); ok {
-					return v, string(b), true
+					return v, string(b), base, true
 				}
 			}
 			continue
@@ -969,9 +991,9 @@ func chooseResumeLevels(m *resumeModel) (ojson.Value, string, bool) {
 			base.items, base.compact = nC, true
 		}
 		v, b := m.render(base)
-		return v, string(b), true
+		return v, string(b), base, true
 	}
-	return ojson.Value{}, "", false
+	return ojson.Value{}, "", resumeParams{}, false
 }
 
 // chooseResumeEmergency applies the emergency caps (steps 3 and 4).

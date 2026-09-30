@@ -1,8 +1,8 @@
 # Maintenance-safe handoff — 2026-09-30
 
-## Resume point (paused after D.4.1)
+## Resume point (paused after D.4.2)
 
-The owner paused after stage D.4.1. Read this section first; the stage
+The owner paused after stage D.4.2. Read this section first; the stage
 sections below keep the full record.
 
 **State.** Every stage is done; the owner commits each one after review.
@@ -21,6 +21,7 @@ sections below keep the full record.
 | D.3.1 step gate, repair archive, resume diagnostics | done | `df74f35` (pushed) |
 | D.4 compaction advisor (P2) and note rollover (P3) | done | `02d2333` (pushed) |
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
+| D.4.2 | done | (owner adds id) |
 
 **Live.** hoshi-opencode2 (`~/.config/opencode`, remote
 `git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
@@ -50,9 +51,8 @@ OpenCode. Nothing in
 
 **Open owner decisions.**
 
-- D.4 review items (below, "Owner decisions to review (D.4)"), chiefly the
-  decision-record rule of note rollover and the resume budget cost of the
-  advice.
+- D.4 review items: resolved by D.4.2 (approved 2026-10-01; see
+  "Owner decisions to review (D.4)" and contracts §17).
 - Still to-review in spec 06: X1, X4, X5, X7, X8, X9, X10, P4, P5.
 - Stage E–G items beyond what the owner already enabled (release
   artifacts, cross-platform evidence, migration automation) remain
@@ -62,7 +62,7 @@ OpenCode. Nothing in
 
 - In the repository: the frozen oracle corpus and fixtures (`testdata/`,
   `testdata/MANIFEST.json` pins the oracle hashes), the stage pins
-  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4`, `d4_1/expectations.json`), perf
+  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4`, `d4_1`, `d4_2/expectations.json`), perf
   fixtures (`testdata/perf/*.tar.gz`, unpacked by the benchmarks into
   `$TMPDIR/shiori-perf-<go version>/`).
 - Owner-plan evidence (never copied into the repository): read-only
@@ -1363,6 +1363,12 @@ after. Before is `df74f35` (D.3.1), after is the working tree.
 
 ### Owner decisions to review (D.4)
 
+**Resolved by D.4.2 (approved 2026-10-01, contracts §17):** item 1
+confirmed unchanged; item 2 replaced (resume shows the advice only when
+it costs no page content); item 5 replaced (rollover keeps the latest 3
+archive pointer notes, older ones roll over); item 6 replaced (adapter
+option `compactionAdvice`). Items 3, 4 and 7 stand as recorded.
+
 1. **Decision-record rule.** A note is a decision record (pinned) when it
    contains `decision`/`decisions`/`decided` (any case) or the uppercase
    word `USER`. On the hardening plan this keeps 85 of 194 older notes.
@@ -1457,9 +1463,99 @@ pins on the native surface), 0 fail.
 - `bun test` in `adapter/opencode`: 49 pass, 1 skip (opt-in runtime smoke).
 - `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
 
+## Stage D.4.2 — D.4 review decisions: DONE (owner commits)
+
+Base `76c9fda` (D.4 = `02d2333`, D.4.1 = `422ef05`). Nothing was committed.
+The pinned `vendor/shiori` copy the owner's OpenCode uses and everything
+under `~/.config/opencode` were not touched; no OpenCode or `shiori
+serve` process was started, stopped or restarted (the adapter `bun test`
+runs its own temporary stdio children). Owner decisions on the D.4 review
+items, approved 2026-10-01; exact behaviour in
+[contracts §17](contracts.md#17-approved-design-changes-d42-approved-2026-10-01).
+No V2 field, tool identity, input shape or error class changed.
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| 1 decision records | confirmed unchanged (decision words or uppercase `USER`) | contracts §17 item 1 |
+| 2 resume advice | the packet is chosen without the advice by the unchanged D.1–D.3.1 rules; the chosen level is rendered once more with `compactionRecommended` and kept only if it still fits, so a packet with the advice is always the advice-off packet plus the member (same page items, item form and text caps); emergency packets never carry it; doctor unchanged | `internal/engine/resume.go` (`chooseResume`, `chooseResumeReadable`; `chooseResumeLevels` returns the chosen level) |
+| 3 pointer notes | rollover keeps the latest 3 `Compaction archive: ` notes (over the whole list); older ones roll over like ordinary notes (archived with complete text); the advisor's eligible counts, bytes, estimate and selection follow (same selection); `noteRollover` descriptions updated | `internal/engine/advisor.go` (`KeepArchivePointers`, `rolloverSelect`), `schema/v1/tools/workplan_compact{,_preview}.input.schema.json`, `adapter/opencode/src/registration.json` and `scripts/snapshot-registration.ts` (the `d4` property text only) |
+| 4 adapter option | plugin option `compactionAdvice`: `"off"` or `{minSavingsKiB, notes, terminalPercent, planKiB, keepNotes}`, validated at load (invalid fails plugin load before any core/bridge starts), passed as `serve --stdio --compaction-advice <spec>`; absent or `{}`: no flag | `adapter/opencode/src/plugin.ts` (`compactionAdviceArgs`), README "OpenCode adapter" |
+
+### Vector expectations
+
+The oracle corpus is unchanged. `testdata/d4_2/expectations.json` lists
+**no** vector: with the default thresholds no corpus fixture is
+recommended for compaction and no oracle vector passes `noteRollover`, so
+every vector is byte-identical to D.4.1 (tools 149 pass / 50 approved,
+resume 74 / 13, paging 43 / 31, mutations 56 / 14, mutating input 39, 0
+fail; `testdata/d4/expectations.json` stays empty).
+`TestD4ComparatorOnCorpus` (lowered thresholds) no longer exempts
+small-budget resume packets: all 10 advised doctor/resume vectors pass the
+comparator (output minus the advice = advice-off output; counts restated,
+including the new pointer rule, by the independent implementation).
+
+### New tests
+
+- `d4_2_test.go`: `TestD42ArchivePointerRetention` (six successive
+  rollovers with `keepLatest` 2: `kept.archivePointer` = min(pointers, 3),
+  exactly the older pointers archived with complete text, pointers after
+  apply 2, 3, 4, 4, 4, 4), `TestD42AdvisorPointerEstimate` (9 older
+  pointers: 3 kept, 6 eligible; restated; applying the advised selection
+  writes exactly the estimated JSON size), `TestD42Expectations`.
+- `TestD4ResumeBudget` (4096–16000 × limits 1/8/20) now also asserts that
+  every packet with the advice has the advice-off page item count and
+  equals the advice-off packet plus the member byte-for-byte (shown 736,
+  dropped 215; D.4 showed 860, of which 124 cost page content).
+- Adapter `plugin.test.ts`: option mapping and rejection (11 invalid
+  values), end-to-end thresholds through a real core (`doctor`
+  `thresholds` = the option; absent and `"off"` give no advice), invalid
+  option fails `setup` before any core starts and registers no tool.
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1 -timeout 20m` per package: all pass (engine
+  169 s).
+- `bun test` in `adapter/opencode`: 52 pass, 1 skip (opt-in runtime smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+- Cost: resume CLI median of 9, D.4.1 → D.4.2, within noise (hardening
+  plan 11.3 → 11.1 / 9.6 → 9.7 / 5.5 → 5.6 ms at 6000/12000/64000; perf
+  100 KiB/1 MiB/10 MiB unchanged). A first version that re-ran the whole
+  level search with the advice cost +5 ms on the hardening plan at 6000
+  and was replaced by one extra render of the chosen level (same
+  shown/dropped counts in the sweep).
+
+Owner-plan evidence ran on fresh `cp -Rp` copies (`chmod -R u+w`) of the
+read-only `kanade-hardening` fixture; nothing from it is in the
+repository. The pristine copy's paths, modes, mtimes, sizes and bytes
+were identical before and after. Before is `76c9fda` (D.4.1), after is the
+working tree.
+
+- **Resume** (`kanade-v5-beta-hardening`, UTF-16 units; page items):
+  at 12000 D.4.1 returned 11 533 with the advice and 5 items; D.4.2
+  returns 11 964 without it and 6 items, byte-identical to
+  `--compaction-advice off`. At 6000, 8000, 16000, 32000 and 64000 the
+  advice fits at the same level (1/1/8/8/20 items, +123 to +160 units)
+  and the packet minus the advice equals the advice-off packet; at 4096
+  neither version shows it. Output is identical to D.4.1 wherever D.4.1's
+  advice cost nothing. Doctor output is byte-identical to D.4.1 (no
+  pointer notes in the original).
+- **Successive rollovers** (`compact --rollover --keep-notes 2`, three
+  notes appended and a fresh checkpoint before rounds 2–5): pointer notes
+  before/archived/after per round 0/0/1, 1/0/2, 2/0/3, 3/0/4, 4/1/4 (D.4.1
+  on the same sequence: …, 4/0/5). Round 5 archived the round-1 pointer
+  (`…/state-538980bf42a0-….json`) with its complete text; every archived
+  note equals the original; JSON 257 151 → 190 985 after round 1 and
+  190 739 → 190 661 in round 5 (D.4.1: → 190 777); validate `valid:
+  true`. Doctor afterwards with `keep-notes=2`: `kept.archivePointer` 2
+  (the third retained pointer is inside the latest 2), 2 eligible
+  (one older pointer).
+
 ## Resume after maintenance
 
-See [Resume point](#resume-point-paused-after-d41) at the top. The Go
+See [Resume point](#resume-point-paused-after-d42) at the top. The Go
 toolchain observed is 1.27.1 darwin/arm64; build and test commands are in
 the [README](../README.md). If the oracle files change, the corpus is
 stale: compare their sha256 against `testdata/MANIFEST.json` →

@@ -388,7 +388,8 @@ func TestD4RolloverInput(t *testing.T) {
 
 // TestD4ResumeBudget: every packet fits; the advice is never kept in a
 // packet below the D.1 minimums, and a packet without it is byte-identical
-// to the D.4-off packet.
+// to the D.4-off packet. D.4.2: a packet with it is the D.4-off packet
+// plus the member (the advice never costs page items or text).
 func TestD4ResumeBudget(t *testing.T) {
 	e, _ := seedHistory(t, d4Notes)
 	// A heavy pinned header (the shape of the owner's roadmap) so that the
@@ -424,6 +425,20 @@ func TestD4ResumeBudget(t *testing.T) {
 			shown++
 			if belowMinimums(on) {
 				t.Fatalf("%d/%d: advice kept in a packet below the D.1 minimums", max, limit)
+			}
+			// D.4.2 (contracts §17 item 2): the advice never costs page
+			// content: the packet minus the advice is the D.4-off packet
+			// byte-for-byte (same page items, same text caps).
+			offV, offText := d4Resume(t, &off, max, limit)
+			if pageReturned(on) != pageReturned(offV) {
+				t.Fatalf("%d/%d: advice reduced the page from %d to %d items", max, limit, pageReturned(offV), pageReturned(on))
+			}
+			inv := string(ojson.Pretty(objWithout(on, "compactionRecommended")))
+			if !strings.HasPrefix(text, "{\n") {
+				inv = string(ojson.Compact(objWithout(on, "compactionRecommended")))
+			}
+			if inv != offText {
+				t.Fatalf("%d/%d: packet minus the advice differs from D.4-off\n%s", max, limit, firstDiff(inv, offText))
 			}
 		}
 	}

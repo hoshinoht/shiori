@@ -222,6 +222,44 @@ async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, tool
   };
 }
 
+/** Keys of the `compactionAdvice` plugin option and their `--compaction-advice` spellings. */
+const COMPACTION_ADVICE_KEYS: Readonly<Record<string, string>> = {
+  minSavingsKiB: "min-savings-kib",
+  notes: "notes",
+  terminalPercent: "terminal-percent",
+  planKiB: "plan-kib",
+  keepNotes: "keep-notes",
+};
+
+/**
+ * D.4.2 (contracts §17 item 4): the optional plugin option
+ * `compactionAdvice` — `"off"` or `{minSavingsKiB, notes, terminalPercent,
+ * planKiB, keepNotes}` (each optional, a positive integer; terminalPercent
+ * at most 100, keepNotes at most 10000) — becomes the trusted
+ * `--compaction-advice` flag of the spawned `shiori serve --stdio`
+ * (protocol Options.Compaction). Absent (or `{}`): no flag, the core's
+ * defaults. Anything else fails plugin load with an actionable message;
+ * it is operator configuration and never model input.
+ */
+export function compactionAdviceArgs(value: unknown): string[] {
+  if (value === undefined) return [];
+  const bad = (why: string): never => {
+    throw new Error(`Shiori adapter: invalid plugin option "compactionAdvice": ${why}. ` +
+      'Use "off" or an object with any of minSavingsKiB, notes, terminalPercent, planKiB, keepNotes (positive integers; terminalPercent 1-100, keepNotes 1-10000).');
+  };
+  if (value === "off") return ["--compaction-advice", "off"];
+  if (value === null || typeof value !== "object" || Array.isArray(value)) bad(`expected "off" or an object, got ${JSON.stringify(value)}`);
+  const parts: string[] = [];
+  for (const [key, n] of Object.entries(value as Record<string, unknown>)) {
+    if (!Object.prototype.hasOwnProperty.call(COMPACTION_ADVICE_KEYS, key)) bad(`unknown key ${JSON.stringify(key)}`);
+    if (typeof n !== "number" || !Number.isInteger(n) || n <= 0 || n > 2 ** 30) bad(`${key} must be a positive integer, got ${JSON.stringify(n)}`);
+    if (key === "terminalPercent" && (n as number) > 100) bad("terminalPercent must be 1-100");
+    if (key === "keepNotes" && (n as number) > 10000) bad("keepNotes must be 1-10000");
+    parts.push(`${COMPACTION_ADVICE_KEYS[key]}=${n}`);
+  }
+  return parts.length === 0 ? [] : ["--compaction-advice", parts.join(",")];
+}
+
 export interface AdapterDeps {
   /** Core client factory (tests inject a fake transport). */
   readonly core?: (options: CoreClientOptions) => CoreClient;
@@ -262,7 +300,11 @@ export function createPlugin(deps: AdapterDeps = {}) {
       const root = await realpath(ctx.location.project.directory);
       const env = deps.env ?? process.env;
       const bin = typeof ctx.options?.bin === "string" ? ctx.options.bin : env.SHIORI_BIN;
-      const coreOptions: CoreClientOptions = { bin, env, clientName: "shiori-opencode" };
+      const adviceArgs = compactionAdviceArgs(ctx.options?.compactionAdvice);
+      const coreOptions: CoreClientOptions = {
+        bin, env, clientName: "shiori-opencode",
+        ...(adviceArgs.length > 0 ? { args: ["serve", "--stdio", ...adviceArgs] } : {}),
+      };
       const core = deps.core ? deps.core(coreOptions) : new CoreClient(coreOptions);
       const bridge = verified
         ? await (deps.bridge ?? ((c) => registerNativePermissionBridge(c)))(ctx as unknown as NativePermissionBridgeContext)
