@@ -23,7 +23,7 @@ sections below keep the full record.
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
 | D.4.2 | done | `cdcaa24` (pushed) |
 | D.4.3 | done | `8b98602` (pushed) |
-| cleanup | done | (owner adds id) |
+| cleanup | done | `797b983` (pushed) |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
