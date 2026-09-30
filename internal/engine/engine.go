@@ -41,6 +41,15 @@ type Engine struct {
 	// wiped-plan doctor note, and the new finding rendering and
 	// whole-second timestamps. Test-only, like noD3.
 	noD31 bool
+	// noD4 turns off the D.4 compaction advice in resume and doctor
+	// (contracts §15). Test-only, like noD31: every corpus vector must be
+	// byte-identical with and without it unless it is pinned.
+	noD4 bool
+
+	// Compaction configures the D.4 compaction advisor thresholds (nil:
+	// DefaultCompactionThresholds). Set by the trusted caller (CLI or
+	// serve flag), never by model input.
+	Compaction *CompactionThresholds
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.

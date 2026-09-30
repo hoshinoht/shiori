@@ -27,6 +27,7 @@ const (
 	kIntList
 	kObject
 	kObjectList
+	kInt // integer within [min, max] (D.4 noteRollover.keepLatest)
 )
 
 type fspec struct {
@@ -36,6 +37,7 @@ type fspec struct {
 	enum     []string
 	obj      *ospec
 	def      *ojson.Value
+	min, max int64 // kInt bounds
 }
 
 type ospec struct{ fields []fspec }
@@ -55,6 +57,9 @@ func withDefault(f fspec, v ojson.Value) fspec {
 	return f
 }
 func required(f fspec) fspec { f.required = true; return f }
+func intRange(key string, min, max int64) fspec {
+	return fspec{key: key, kind: kInt, min: min, max: max}
+}
 
 var statusEnum = model.Statuses
 
@@ -68,6 +73,8 @@ var (
 	addPhaseSpec    = &ospec{fields: []fspec{str("afterPhaseId"), {key: "phase", kind: kObject, required: true, obj: phaseSpec}}}
 	updateStepSpec  = &ospec{fields: []fspec{reqStr("phaseId"), reqStr("stepId"), str("title"), str("target"), str("action"), str("validation"), enum("status", statusEnum)}}
 	addStepSpec     = &ospec{fields: []fspec{reqStr("phaseId"), str("afterStepId"), {key: "step", kind: kObject, required: true, obj: stepSpec}}}
+	// D.4 (contracts §15, P3): the note rollover selector.
+	rolloverSpec = &ospec{fields: []fspec{intRange("keepLatest", 1, MaxRolloverKeep), intList("pinNoteIndexes")}}
 )
 
 var toolSpecs = map[string]*ospec{
@@ -114,11 +121,13 @@ var toolSpecs = map[string]*ospec{
 		withDefault(enum("mode", []string{"preview", "apply"}), ojson.StringValue("preview")),
 		reqStr("archiveReason"), strList("completedPhaseIds"), intList("noteIndexes"), intList("resolvedFindingIndexes"),
 		str("confirmation"), str("previewToken"), hash("expectedHash"),
+		{key: "noteRollover", kind: kObject, obj: rolloverSpec}, // D.4
 	}},
 	"compact_preview": {fields: []fspec{
 		{key: "id", kind: kID, required: true},
 		reqStr("archiveReason"), strList("completedPhaseIds"), intList("noteIndexes"), intList("resolvedFindingIndexes"),
 		str("confirmation"), str("previewToken"), hash("expectedHash"),
+		{key: "noteRollover", kind: kObject, obj: rolloverSpec}, // D.4
 	}},
 }
 
@@ -194,6 +203,8 @@ func expectedType(k fkind) string {
 		return "array"
 	case kObject:
 		return "object"
+	case kInt:
+		return "number"
 	default:
 		return "string"
 	}
@@ -304,6 +315,24 @@ func parseField(f fspec, v ojson.Value, path []string, l *issueList) (ojson.Valu
 		return ojson.ArrayValue(out), ok
 	case kObject:
 		return parseObject(f.obj, v, path, l, nil, nil)
+	case kInt:
+		if v.Kind() != ojson.Number {
+			return typeErr("number")
+		}
+		fl, _ := v.Float()
+		if fl != float64(int64(fl)) || fl > 9007199254740991 || fl < -9007199254740991 {
+			l.add(path, "Invalid input: expected int, received number")
+			return ojson.Value{}, false
+		}
+		if int64(fl) < f.min {
+			l.add(path, "Too small: expected number to be >="+strconv.FormatInt(f.min, 10))
+			return ojson.Value{}, false
+		}
+		if int64(fl) > f.max {
+			l.add(path, "Too big: expected number to be <="+strconv.FormatInt(f.max, 10))
+			return ojson.Value{}, false
+		}
+		return ojson.IntValue(int64(fl)), true
 	case kObjectList:
 		if v.Kind() != ojson.Array {
 			return typeErr("array")
@@ -424,7 +453,11 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 				}
 			}
 		}
-	case "compact":
+	case "compact", "compact_preview":
+		// D.4 (contracts §15): noteRollover selects the notes itself.
+		if has("noteRollover") && has("noteIndexes") {
+			l.add([]string{"noteRollover"}, msgRolloverWithIndexes)
+		}
 		if mode, _ := data.Get("mode"); mode.Str() == "apply" {
 			if native {
 				if !has("expectedHash") {

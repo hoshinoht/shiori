@@ -48,6 +48,10 @@ type compactPlan struct {
 	in         *storage.Intent
 	cpAfter    []byte
 	freshness  string
+	canonical  ojson.Value
+	roll       *rollover // D.4 note rollover selection, when requested
+	jsonAfter  []byte
+	mdAfter    []byte
 }
 
 func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
@@ -125,6 +129,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	}
 	cp.noteIdx = intsOf(data, "noteIndexes")
 	cp.findingIdx = intsOf(data, "resolvedFindingIndexes")
+	rollIn, hasRoll := data.Get("noteRollover")
 	dupInts := func(xs []int) bool {
 		seen := map[int]bool{}
 		for _, x := range xs {
@@ -149,6 +154,29 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 		seenPh[pid] = true
 	}
 	p := s.Plan
+	// D.4 (contracts §15, P3): noteRollover selects the notes.
+	if hasRoll {
+		if _, ok := data.Get("noteIndexes"); ok {
+			return nil, errors.New(msgRolloverWithIndexes)
+		}
+		keep := DefaultRolloverKeep
+		if k, ok := rollIn.Get("keepLatest"); ok {
+			f, _ := k.Float()
+			keep = int(f)
+		}
+		pins := intsOf(rollIn, "pinNoteIndexes")
+		if dupInts(pins) {
+			return nil, errors.New("noteRollover.pinNoteIndexes contains duplicate indexes")
+		}
+		for _, i := range pins {
+			if i >= len(p.Notes) {
+				return nil, fmt.Errorf("noteRollover.pinNoteIndexes: Note index out of range: %d", i)
+			}
+		}
+		r := rolloverSelect(p, keep, pins)
+		cp.roll = &r
+		cp.noteIdx = append([]int{}, r.selected...)
+	}
 	selPhases := []ojson.Value{}
 	removedPhases := []ojson.Value{}
 	for _, pid := range cp.phaseIDs {
@@ -209,15 +237,21 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 		Set("resolvedFindingIndexes", ojson.ArrayValue(removedFindings)).Value()
 	cp.digest = digestWith("workplan-compact-removals-v1", cp.removed)
 	treatment := cp.treatment()
-	canonical := ojson.NewObject(3).
+	canonical := ojson.NewObject(4).
 		Set("completedPhaseIds", ojson.StringsValue(cp.phaseIDs)).
 		Set("noteIndexes", intsValue(cp.noteIdx)).
-		Set("resolvedFindingIndexes", intsValue(cp.findingIdx)).Value()
+		Set("resolvedFindingIndexes", intsValue(cp.findingIdx))
+	if cp.roll != nil {
+		// The token binds the rollover parameters as well as the notes
+		// they resolved to.
+		canonical.Set("noteRollover", cp.roll.inputValue())
+	}
+	cp.canonical = canonical.Value()
 	cp.token = "v1-" + digestWith("workplan-compact-token-v1", ojson.NewObject(6).
 		Set("workplanId", ojson.StringValue(id)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).
 		Set("archiveReason", ojson.StringValue(cp.reason)).
-		Set("canonicalSelection", canonical).
+		Set("canonicalSelection", cp.canonical).
 		Set("removalsDigest", ojson.StringValue(cp.digest)).
 		Set("linkedMarkdownTreatment", ojson.StringValue(treatment)).Value())
 	hexTok := strings.TrimPrefix(cp.token, "v1-")
@@ -260,7 +294,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	now := e.nowISO()
 	next.UpdatedAt = now
 	cp.next = next
-	return cp, e.compactIntent(cp, id, hexTok[:16], now, canonical)
+	return cp, e.compactIntent(cp, id, hexTok[:16], now)
 }
 
 func (cp *compactPlan) treatment() string {
@@ -289,7 +323,7 @@ func artifactString(a snapshot.Artifact) ojson.Value {
 	return ojson.StringValue(bytesToString(a.Bytes))
 }
 
-func (e *Engine) compactIntent(cp *compactPlan, id, tx, now string, canonical ojson.Value) error {
+func (e *Engine) compactIntent(cp *compactPlan, id, tx, now string) error {
 	s := cp.s
 	archive := ojson.NewObject(7).
 		Set("archiveVersion", ojson.IntValue(1)).
@@ -315,6 +349,7 @@ func (e *Engine) compactIntent(cp *compactPlan, id, tx, now string, canonical oj
 			return err
 		}
 	}
+	cp.jsonAfter, cp.mdAfter = jsonAfter, mdAfter
 	specs := []targetSpec{
 		{rel: cp.archiveRel, kind: "archive", after: append(ojson.Pretty(archive), '\n'), afterOK: true},
 		{rel: s.JSON.Rel, kind: "plan", before: s.JSON.Bytes, beforeOK: true, after: jsonAfter, afterOK: true, forceWrite: true},
@@ -439,10 +474,6 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 	for _, l := range cp.in.Locks {
 		lockPaths = append(lockPaths, e.absRel(l.Rel))
 	}
-	canonical := ojson.NewObject(3).
-		Set("completedPhaseIds", ojson.StringsValue(cp.phaseIDs)).
-		Set("noteIndexes", intsValue(cp.noteIdx)).
-		Set("resolvedFindingIndexes", intsValue(cp.findingIdx)).Value()
 	selected := compactSelected(cp)
 	out := ojson.NewObject(18).
 		Set("mode", ojson.StringValue("preview")).
@@ -454,8 +485,14 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 		Set("previewToken", ojson.StringValue(cp.token)).
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).
-		Set("canonicalSelection", canonical).
+		Set("canonicalSelection", cp.canonical).
 		Set("selected", selected)
+	// D.4 (contracts §15, P3): the rollover breakdown and the exact byte
+	// savings of the apply intent, only in rollover mode.
+	if cp.roll != nil {
+		out.Set("noteRollover", cp.roll.previewValue()).
+			Set("estimatedSavings", cp.savingsValue())
+	}
 	// D.2 (G5): archived steps that remaining steps still depend on; apply
 	// keeps them as terminal summaries. Present only when there are any.
 	if ap := e.archivedPrerequisites(cp); len(ap) > 0 {
@@ -574,7 +611,7 @@ func (e *Engine) PrepareCompact(data ojson.Value) (*Prepared, error) {
 		if err != nil {
 			return Output{}, err
 		}
-		return Output{Value: ojson.NewObject(11).
+		out := ojson.NewObject(12).
 			Set("compacted", ojson.BoolValue(true)).
 			Set("workplanId", ojson.StringValue(id)).
 			Set("archivePath", ojson.StringValue(e.absRel(cp.archiveRel))).
@@ -585,7 +622,11 @@ func (e *Engine) PrepareCompact(data ojson.Value) (*Prepared, error) {
 				Set("resolvedFindingCount", ojson.IntValue(int64(len(cp.findingIdx)))).Value()).
 			Set("activeAfterCompaction", cp.counts()).
 			Set("linkedMarkdownUpdated", ojson.BoolValue(cp.gen)).
-			Set("checkpointRefreshed", ojson.BoolValue(cp.cpAfter != nil)).
+			Set("checkpointRefreshed", ojson.BoolValue(cp.cpAfter != nil))
+		if cp.roll != nil {
+			out.Set("savings", cp.savingsValue()) // D.4, rollover mode only
+		}
+		return Output{Value: out.
 			Set("planHash", ojson.StringValue(post.PlanHash)).
 			Set("stateHash", ojson.StringValue(post.StateHash)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil

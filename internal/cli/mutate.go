@@ -111,7 +111,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	mdFile := fs.String("markdown-file", "", "file with explicit linked Markdown")
 	overwrite := fs.Bool("overwrite", false, "")
 	replaceMD := fs.Bool("replace-markdown", false, "")
-	var notes, blockers, guardrails, refs, validations, phases, noteIdx, findingIdx stringsFlag
+	var notes, blockers, guardrails, refs, validations, phases, noteIdx, findingIdx, pinNotes stringsFlag
 	fs.Var(&notes, "append-note", "")
 	fs.Var(&blockers, "blocker", "")
 	fs.Var(&guardrails, "guardrail", "")
@@ -120,6 +120,9 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	fs.Var(&phases, "archive-phase", "")
 	fs.Var(&noteIdx, "archive-note", "")
 	fs.Var(&findingIdx, "archive-finding", "")
+	rollover := fs.Bool("rollover", false, "select notes by rollover (D.4)")
+	keepNotes := fs.Int("keep-notes", 0, "rollover: newest notes that stay (default 20)")
+	fs.Var(&pinNotes, "pin-note", "rollover: note index to keep")
 	recovery := fs.String("recovery", "", "resume|rollback")
 	patchFile := fs.String("patch-file", "", "")
 	validate := fs.Bool("validate", false, "")
@@ -152,7 +155,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 		"patch":      {"patch-file", "validate"},
 		"reset":      {"mode", "preserve-notes", "replace-markdown", "preview-token", "confirm"},
 		"checkpoint": {"summary", "next-action", "phase", "step", "blocker", "guardrail", "reference", "validation"},
-		"compact":    {"reason", "archive-phase", "archive-note", "archive-finding", "apply", "preview-token", "confirm"},
+		"compact":    {"reason", "archive-phase", "archive-note", "archive-finding", "apply", "preview-token", "confirm", "rollover", "keep-notes", "pin-note"},
 	}
 	for name := range set {
 		switch name {
@@ -272,6 +275,28 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	if err := intsFlag("archive-finding", "resolvedFindingIndexes", findingIdx); err != nil {
 		return usageErr("%v", err)
+	}
+	// D.4 (contracts §15): the note rollover selector.
+	if (set["keep-notes"] || set["pin-note"]) && !*rollover {
+		return usageErr("--keep-notes and --pin-note need --rollover")
+	}
+	if *rollover {
+		rb := ojson.NewObject(2)
+		if set["keep-notes"] {
+			rb.Set("keepLatest", ojson.IntValue(int64(*keepNotes)))
+		}
+		if set["pin-note"] {
+			out := make([]ojson.Value, len(pinNotes))
+			for i, s := range pinNotes {
+				n, err := strconv.Atoi(s)
+				if err != nil {
+					return usageErr("--pin-note expects integers")
+				}
+				out[i] = ojson.IntValue(int64(n))
+			}
+			rb.Set("pinNoteIndexes", ojson.ArrayValue(out))
+		}
+		put("noteRollover", rb.Value())
 	}
 	if *apply {
 		put("mode", ojson.StringValue("apply"))

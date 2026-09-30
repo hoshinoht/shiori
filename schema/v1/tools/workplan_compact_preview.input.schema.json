@@ -38,6 +38,28 @@
         "maximum": 9007199254740991
       }
     },
+    "noteRollover": {
+      "description": "D.4 (approved 2026-09-30): select notes by rollover instead of noteIndexes. Every note older than the latest keepLatest is archived unless it is pinned: explicitly ([pinned] in its text, or listed in pinNoteIndexes), as a decision record (the words decision/decisions/decided, or the uppercase USER marker), by naming an open step as <phaseId>/<stepId> or quoting an open finding's title, or as a compaction archive pointer. Apply needs a fresh checkpoint, so every archived note predates the newest checkpoint. The preview token binds these parameters and the resulting indexes. Cannot be combined with noteIndexes.",
+      "type": "object",
+      "properties": {
+        "keepLatest": {
+          "description": "How many of the newest notes always stay (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "pinNoteIndexes": {
+          "description": "Zero-based indexes of further notes to keep.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "confirmation": {
       "description": "Must be ARCHIVE_SELECTED_HISTORY for apply.",
       "type": "string"
@@ -62,8 +84,14 @@
       "when": "input contains mode",
       "path": "$",
       "native": "Unrecognized key: \"mode\""
+    },
+    {
+      "when": "noteRollover and noteIndexes both present",
+      "path": "noteRollover",
+      "native": "noteRollover cannot be combined with noteIndexes; noteRollover selects the notes",
+      "core": "noteRollover cannot be combined with noteIndexes; noteRollover selects the notes"
     }
   ],
   "x-shiori-core-surface": "Native-only tool; core equivalent is workplan_compact with mode=preview.",
-  "x-shiori-nested-unknown-keys": "n/a"
+  "x-shiori-nested-unknown-keys": "noteRollover (D.4) rejects unknown keys like the top level."
 }

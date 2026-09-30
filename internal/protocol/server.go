@@ -43,6 +43,9 @@ type Options struct {
 	Durability *Durability
 	// WriteSupported overrides the platform write gate (tests).
 	WriteSupported *bool
+	// Compaction sets the D.4 compaction advisor thresholds (nil: the
+	// defaults); from the trusted serve flag, never from a frame.
+	Compaction *engine.CompactionThresholds
 }
 
 // ErrIdle is returned by Serve after an idle exit.
@@ -421,6 +424,7 @@ func (s *server) engineFor(h *hostContext) (*engine.Engine, error) {
 	if e.Root != h.canonicalRoot {
 		return nil, &classed{class: "invalid_input", msg: "hostContext.canonicalRoot is not canonical (it resolves through a symbolic link)"}
 	}
+	e.Compaction = s.opts.Compaction
 	s.engine = e
 	s.boundRoot = e.Root
 	return e, nil

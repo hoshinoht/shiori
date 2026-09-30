@@ -9,8 +9,8 @@ golden corpus, and a resolution for each open item in
 recorded in `testdata/`. Where OBSERVED and the specifications disagree,
 section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
-spell out). Sections 11, 12, 13 and 14 record the approved D.1, D.2, D.3 and
-D.3.1 design changes, which deliberately depart from the reference.
+spell out). Sections 11–15 record the approved D.1, D.2, D.3, D.3.1 and D.4
+design changes, which deliberately depart from the reference.
 
 ## 1. Sources of truth
 
@@ -1190,3 +1190,120 @@ below 6000) on the synthetic graph roadmap with a stale checkpoint.
   millisecond `startedAt` (it is parsed for lock age, not stored with the
   plan).
 
+## 15. Approved design changes D.4 (APPROVED 2026-09-30)
+
+D.4, approved 2026-09-30: the compaction advisor (spec 06 P2) and note
+rollover (spec 06 P3). Everything not listed here stays as in sections
+1–14: the V2 plan/checkpoint/dependencies/journal formats, the
+`.opencode/workplan/` layout and archive layout, the thirteen `workplan_*`
+identities, the hash algorithm, the generated Markdown, D.1's resume
+budgeting rules, D.2's graph behaviour and the compaction flow (preview →
+exact `previewToken` → `confirmation: ARCHIVE_SELECTED_HISTORY`, fresh
+checkpoint, archive of the complete originals first). The only input
+change is the optional `noteRollover` member of `workplan_compact` and
+`workplan_compact_preview`.
+
+The oracle corpus is not edited. Every tools/resume/paging vector runs
+with the D.4 advice off (`Engine.noD4`, test-only), which must pass every
+earlier check unchanged, and with it on; a difference must be pinned in
+[`testdata/d4/expectations.json`](../testdata/d4/expectations.json) and
+pass a comparator (`internal/engine/d4_vectors_test.go`): removing
+`compactionRecommended` gives the D.4-off text byte-for-byte and the
+advice counts restate from the raw plan JSON by an independent
+implementation of the rules below. With the default thresholds **no
+corpus vector changes** (the largest eligible history, `large-paging`,
+could save 13 080 of its 45 232 JSON bytes, under the 32 KiB minimum), so
+the list is empty:
+plans without qualifying history give output byte-identical to D.3.1.
+`TestD4ComparatorOnCorpus` runs the same comparator with lowered
+thresholds. No mutation vector changes (they never pass `noteRollover`).
+
+**1. Compaction advisor (P2).** Advice only; nothing is archived.
+
+- *What compaction could archive* (the unchanged compaction rules):
+  completed phases whose every step is completed ("archivable"; a
+  completed phase with a cancelled step is not), the notes the rollover
+  rule (item 2) selects with `keepLatest` = the configured `keepNotes`,
+  and every finding with status `resolved`.
+- *Estimate.* The plan JSON saving is computed from the pretty encoding of
+  the removed elements, including the archive pointer note and the new
+  `updatedAt`, so it equals the size apply writes. Doctor also renders the
+  generated Markdown of the result (`treatment: generated-refresh`), or
+  reports it unchanged (`preserved`, handwritten or missing).
+- *Recommended* when the plan JSON saving is at least `minSavingsBytes`
+  and at least one threshold is crossed: `notes` (eligible rollover
+  notes), `terminalPercent` (archivable-phase bytes as a percentage of the
+  plan JSON) or `planBytes` (plan JSON size). Defaults, grounded in the
+  measured long plan (257 KB JSON, 214 notes; notes ≈48% of the JSON,
+  terminal steps ≈48% of step bytes): `minSavingsBytes` 32 KiB, `notes`
+  50, `terminalPercent` 25, `planBytes` 192 KiB, `keepNotes` 20. A plan
+  JSON under `minSavingsBytes` is never examined further. Thresholds are
+  trusted operator configuration (`shiori resume|doctor|serve
+  --compaction-advice off|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N`),
+  never model input.
+- `workplan_resume` adds `compactionRecommended: {savedJsonBytes,
+  savedJsonPercent, notes, terminalSteps, resolvedFindings}` after
+  `currentDependencies`/`criticalPath` (`notes` = eligible rollover notes,
+  `terminalSteps` = steps in archivable phases). It is advisory: it is
+  dropped before any text would go below the D.1 minimums (first, before
+  the D.3.1 critical path). Like the D.2 readiness members it may cost a
+  page item at a tight budget.
+- Each `workplan_doctor` plan entry adds `compactionRecommended` with
+  `reasons`, `estimate` (`json`, `markdown` with `treatment`, `total`:
+  `before`/`after`/`saved`/`percent`), `terminalSteps {total, archivable,
+  archivableBytes}`, `notes {total, keepLatest, eligible, eligibleBytes,
+  kept {latest, pinned, decision, openReference, archivePointer}}`,
+  `resolvedFindings {count, bytes}`, the ready-to-preview `selection`
+  (`completedPhaseIds`, `noteRollover {keepLatest}` when notes are
+  eligible, `resolvedFindingIndexes`), `checkpointFreshness`, the
+  effective `thresholds` and an `instruction`. The member appears only
+  when recommended.
+
+**2. Note rollover (P3).** `workplan_compact` and
+`workplan_compact_preview` accept `noteRollover: {keepLatest?,
+pinNoteIndexes?}` (`keepLatest` integer 1–10000, default 20;
+`pinNoteIndexes` zero-based note indexes; unknown keys rejected). It
+selects every note older than the latest `keepLatest` except notes that
+are:
+
+- *pinned*: the text contains `[pinned]` (any case) or the index is in
+  `pinNoteIndexes`;
+- *decision records* (the JSON twin of a Decision register line under the
+  convention "record every user decision as a JSON note and a Decision
+  register line"): the whole word `decision`, `decisions` or `decided` in
+  any case, or the uppercase word `USER`;
+- *open references*: the note names an open (not completed/cancelled)
+  step as a whole `<phaseId>/<stepId>` token, or quotes the title of an
+  open finding (titles of at least 12 code units);
+- *archive pointers*: notes starting with `Compaction archive: `.
+
+Notes carry no timestamps, so "older than the newest checkpoint" is
+enforced by the existing apply rule: apply requires a fresh checkpoint,
+which binds the current plan bytes, so every stored note predates it. The
+selected indexes become the `noteIndexes` of the selection; the removals,
+digest, archive (complete original note texts in `removed.noteIndexes`
+and the complete original JSON, Markdown, checkpoint and dependency bytes
+in `source`) and apply are unchanged. The preview token binds
+`canonicalSelection.noteRollover {keepLatest, pinNoteIndexes}` as well as
+the resolved `noteIndexes`, so apply must repeat the same `noteRollover`
+(else `previewToken does not match ...`). `noteRollover` with
+`noteIndexes` is an input error on both surfaces (`noteRollover cannot be
+combined with noteIndexes; noteRollover selects the notes`); a pin index
+out of range or duplicated is refused (`noteRollover.pinNoteIndexes: Note
+index out of range: <i>` / `... contains duplicate indexes`). A rollover
+that selects nothing cannot be applied (the existing "Select at least
+one ..." refusal). In rollover mode only, the preview adds
+`noteRollover {keepLatest, pinNoteIndexes, noteCount, olderThanLatest,
+selectedCount, kept, olderThanCheckpoint}` and `estimatedSavings` (the
+exact plan JSON and Markdown bytes before/after of the apply intent), and
+the apply result adds `savings` in the same shape. CLI: `shiori compact
+<id> --reason R --rollover [--keep-notes N] [--pin-note I]...`.
+
+Schema: `schema/v1/tools/workplan_compact.input.schema.json` and
+`workplan_compact_preview.input.schema.json` add the `noteRollover`
+property (with an `x-shiori-rules` entry for the combination). The
+adapter registration snapshot (`adapter/opencode/src/registration.json`,
+key `d4`) lists the two additions; removing the `d1`, `d3` and `d4` keys
+and their additions and restoring the `d3` changes reproduces the
+reference snapshot byte-for-byte (`d1.referenceSha256`, checked by
+`plugin.test.ts`).

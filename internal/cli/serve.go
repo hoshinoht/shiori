@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoshinoht/shiori/internal/engine"
 	"github.com/hoshinoht/shiori/internal/protocol"
 )
 
@@ -24,11 +25,12 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	stdio := fs.Bool("stdio", false, "serve the protocol on stdin/stdout (required)")
 	idle := fs.Duration("idle-timeout", protocol.DefaultIdleTimeout, "exit after this long with no request and no prepared intent")
 	maxFrame := fs.Int("max-frame-bytes", protocol.DefaultMaxFrameBytes, "request frame limit in bytes")
+	advice := fs.String("compaction-advice", "", "compaction advisor thresholds: off, or key=value pairs (D.4)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if !*stdio || fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N]")
+		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N] [--compaction-advice SPEC]")
 		return 2
 	}
 	if *idle <= 0 || *idle > 24*time.Hour {
@@ -39,10 +41,20 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "shiori serve: --max-frame-bytes must be between 1024 and 64 MiB")
 		return 2
 	}
+	var th *engine.CompactionThresholds
+	if *advice != "" {
+		t, err := engine.ParseCompactionThresholds(*advice)
+		if err != nil {
+			fmt.Fprintln(stderr, "shiori serve:", err)
+			return 2
+		}
+		th = t
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err := protocol.Serve(ctx, protocol.Options{
-		In: stdin, Out: stdout, Err: stderr,
+		Compaction: th,
+		In:         stdin, Out: stdout, Err: stderr,
 		CoreVersion:   Version,
 		IdleTimeout:   *idle,
 		MaxFrameBytes: *maxFrame,

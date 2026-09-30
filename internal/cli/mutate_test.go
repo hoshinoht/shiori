@@ -214,3 +214,82 @@ func TestCreateStepStatusGateCLI(t *testing.T) {
 		t.Fatalf("create step gate wrote: %v", d)
 	}
 }
+
+// D.4 (contracts §15): note rollover flags; the preview token binds them.
+func TestCompactRolloverCLI(t *testing.T) {
+	root := testutil.NewRoot(t, "large-paging")
+	withPrompt(t, false, "")
+	if code, _, errOut := run("compact", "big-plan", "--reason", "roll", "--keep-notes", "5", "--root", root.Path); code != 2 || !strings.Contains(errOut, "need --rollover") {
+		t.Fatalf("--keep-notes without --rollover: %d %s", code, errOut)
+	}
+	if code, out, _ := run("compact", "big-plan", "--reason", "roll", "--rollover", "--archive-note", "1", "--json", "--root", root.Path); code != 1 || !strings.Contains(out, "noteRollover cannot be combined with noteIndexes") {
+		t.Fatalf("--rollover with --archive-note: %d %s", code, out)
+	}
+	before := testutil.Fingerprint(t, root.Path)
+	code, out, errOut := run("compact", "big-plan", "--reason", "roll", "--rollover", "--keep-notes", "50", "--pin-note", "0", "--json", "--root", root.Path)
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	if d := testutil.DiffFingerprints(before, testutil.Fingerprint(t, root.Path)); len(d) > 0 {
+		t.Fatalf("preview wrote: %v", d)
+	}
+	var pv struct {
+		PreviewToken, StateHash string
+		CanonicalSelection      struct {
+			NoteIndexes  []int
+			NoteRollover struct {
+				KeepLatest     int
+				PinNoteIndexes []int
+			}
+		}
+		NoteRollover struct{ SelectedCount int }
+	}
+	json.Unmarshal([]byte(out), &pv)
+	if pv.CanonicalSelection.NoteRollover.KeepLatest != 50 || len(pv.CanonicalSelection.NoteRollover.PinNoteIndexes) != 1 ||
+		pv.NoteRollover.SelectedCount != len(pv.CanonicalSelection.NoteIndexes) || pv.NoteRollover.SelectedCount == 0 {
+		t.Fatalf("preview %s", out)
+	}
+	for _, i := range pv.CanonicalSelection.NoteIndexes {
+		if i == 0 || i >= 10 {
+			t.Fatalf("selected note %d (pinned 0; keep the latest 50 of 60)", i)
+		}
+	}
+	// Apply with a different keep is refused; with the same flags it commits.
+	code, out, _ = run("compact", "big-plan", "--reason", "roll", "--rollover", "--keep-notes", "40", "--pin-note", "0", "--apply", "--preview-token", pv.PreviewToken, "--confirm", "ARCHIVE_SELECTED_HISTORY", "--expected-hash", pv.StateHash, "--yes", "--json", "--root", root.Path)
+	if code != 1 || !strings.Contains(out, "previewToken does not match") {
+		t.Fatalf("different keep: %d %s", code, out)
+	}
+	code, out, errOut = run("compact", "big-plan", "--reason", "roll", "--rollover", "--keep-notes", "50", "--pin-note", "0", "--apply", "--preview-token", pv.PreviewToken, "--confirm", "ARCHIVE_SELECTED_HISTORY", "--expected-hash", pv.StateHash, "--yes", "--json", "--root", root.Path)
+	if code != 0 || !strings.Contains(out, `"compacted": true`) || !strings.Contains(out, `"savings"`) {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+}
+
+// D.4: --compaction-advice is a trusted read flag of resume and doctor.
+func TestCompactionAdviceFlag(t *testing.T) {
+	root := testutil.NewRoot(t, "large-paging")
+	_, plain, _ := run("doctor", "big-plan", "--json", "--root", root.Path)
+	if strings.Contains(plain, "compactionRecommended") {
+		t.Fatal("default thresholds recommend compaction for the 45 KB fixture")
+	}
+	code, out, errOut := run("doctor", "big-plan", "--json", "--compaction-advice", "min-savings-kib=1,notes=10", "--root", root.Path)
+	if code != 0 || !strings.Contains(out, `"compactionRecommended"`) {
+		t.Fatalf("%d %s", code, errOut)
+	}
+	code, out, _ = run("resume", "big-plan", "--compaction-advice", "min-savings-kib=1,notes=10", "--root", root.Path)
+	if code != 0 || !strings.Contains(out, "compact:   recommended") {
+		t.Fatalf("human resume: %s", out)
+	}
+	if _, off, _ := run("doctor", "big-plan", "--json", "--compaction-advice", "off", "--root", root.Path); off != plain {
+		t.Fatal("--compaction-advice off differs from the default output")
+	}
+	for _, args := range [][]string{
+		{"read", "big-plan", "--compaction-advice", "off"},
+		{"doctor", "big-plan", "--compaction-advice", "notes=0"},
+		{"doctor", "big-plan", "--compaction-advice", "bogus=1"},
+	} {
+		if code, _, _ := run(append(args, "--root", root.Path)...); code != 2 {
+			t.Errorf("%v: exit %d", args, code)
+		}
+	}
+}

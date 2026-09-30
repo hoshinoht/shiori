@@ -1,8 +1,9 @@
 // Regenerates src/registration.json from the reference TypeScript workplan
 // plugin so that the adapter registers byte-identical tool descriptions and
 // input schemas (same identities, argument shapes and model-facing text),
-// plus the approved D.1 addition (workplan_read includeNotes) and the D.3
-// reset changes (wipe mode, previewToken, confirmation, accurate text).
+// plus the approved D.1 addition (workplan_read includeNotes), the D.3
+// reset changes (wipe mode, previewToken, confirmation, accurate text) and
+// the D.4 compaction noteRollover selector.
 //
 //   bun scripts/snapshot-registration.ts /path/to/workplan-tools/src/core > src/registration.json
 //
@@ -59,6 +60,27 @@ change(["input", "properties", "mode", "enum"], ["draft", "markdown-only", "wipe
 change(["input", "properties", "preserveNotes", "description"], "Keep notes during a wipe (a draft reset always keeps notes)");
 reset.input.properties.previewToken = { description: "mode=wipe only: the previewToken returned by the wipe preview", type: "string" };
 reset.input.properties.confirmation = { description: "mode=wipe only: must be WIPE_PLAN_CONTENT to apply the previewed wipe", type: "string" };
+// Approved design change D.4 (docs/contracts.md §15, 2026-09-30): the
+// note rollover selector of workplan_compact and workplan_compact_preview,
+// inserted after resolvedFindingIndexes.
+const rollover = {
+  description: "Instead of noteIndexes: archive every note older than the latest keepLatest (default 20) except pinned ones: [pinned] in the text or pinNoteIndexes, decision records (decision/decided or USER), notes naming an open step as phaseId/stepId or quoting an open finding title, and compaction archive pointers. Apply needs a fresh checkpoint; pass the same noteRollover to preview and apply",
+  type: "object",
+  properties: {
+    keepLatest: { description: "Number of newest notes that always stay (default 20)", type: "integer", minimum: 1, maximum: 10000 },
+    pinNoteIndexes: { description: "Zero-based indexes of further notes to keep", type: "array", items: { type: "integer", minimum: 0, maximum: 9007199254740991 } },
+  },
+  additionalProperties: false,
+};
+for (const name of ["workplan_compact", "workplan_compact_preview"]) {
+  const input = tools.find((tool) => tool.name === name)!.input as { properties: Record<string, unknown> };
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input.properties)) {
+    next[key] = value;
+    if (key === "resolvedFindingIndexes") next.noteRollover = rollover;
+  }
+  input.properties = next;
+}
 console.log(JSON.stringify({
   source: "reference workplan-tools native registration (generated; do not edit)",
   tools,
@@ -71,5 +93,9 @@ console.log(JSON.stringify({
     note: "Approved design change D.3 (docs/contracts.md §13 item 1, 2026-09-30). Removing this key and the d1 key, every listed addition, and restoring each listed change to its reference value reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
     additions: [{ tool: "workplan_reset", property: "previewToken" }, { tool: "workplan_reset", property: "confirmation" }],
     changes,
+  },
+  d4: {
+    note: "Approved design change D.4 (docs/contracts.md §15, 2026-09-30): the note rollover selector of compaction (spec 06 P3). Removing this key with the d1/d3 keys, every listed addition, and restoring each d3 change reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    additions: [{ tool: "workplan_compact", property: "noteRollover" }, { tool: "workplan_compact_preview", property: "noteRollover" }],
   },
 }, null, 2));

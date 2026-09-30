@@ -1,5 +1,79 @@
 # Maintenance-safe handoff — 2026-09-30
 
+## Resume point (paused after D.4)
+
+The owner paused after stage D.4. Read this section first; the stage
+sections below keep the full record.
+
+**State.** Every stage is done; the owner commits each one after review.
+
+| Stage | Status | Commit |
+| --- | --- | --- |
+| Specs 01–05 | done | `c78a177` |
+| A contract and fixture freeze | done | `fdadfd4` |
+| B read-only Go core and CLI | done | `7a899e5` |
+| C transactional core | done | `9f66518` |
+| D stdio protocol and OpenCode adapter | done | `4044539` |
+| Spec 06 extensions (X1–X10, P2–P6; accepted X2, X3, X6, P2, P3, P6) | docs | `ca73894`, `6608561`, `7fe8915`, `44d5bb7` |
+| D.1 readable resume, filtered read, drift, gate | done | `5c94cdb` |
+| D.2 dependency graph drives work (X6) | done | `e47e667` |
+| D.3 safe reset, corrupt-plan repair, host degradation | done | `83a3414` |
+| D.3.1 step gate, repair archive, resume diagnostics | done | `df74f35` (pushed) |
+| D.4 compaction advisor (P2) and note rollover (P3) | done, in the working tree | the owner adds the id on commit |
+
+**Live.** hoshi-opencode2 (`~/.config/opencode`, remote
+`git@github.com:hoshinoht/hoshi-opencode2.git`) runs Shiori as its workplan
+tools: git submodule `vendor/shiori` pinned to `df74f35` (D.3.1), plugin
+entry `./vendor/shiori/adapter/opencode` with option `bin:
+{env:HOME}/.config/opencode/vendor/shiori/shiori` (a locally built
+binary, not tracked). The reference plugin `./packages/workplan-tools` is
+the rollback (swap back once `workplan_doctor` shows no pending journal;
+never register both). D.4 is not live until the owner bumps the submodule,
+rebuilds `vendor/shiori/shiori` and restarts OpenCode. Nothing in
+`~/.config/opencode` is changed by Shiori stages.
+
+**Queue, in order** (each needs its own owner approval):
+
+1. **E1 — X2 evidence ledger.** Start with a tool-surface proposal for
+   owner approval (spec 06 §1 forbids new or renamed `workplan_*` tools
+   without a decision: e.g. evidence through `workplan_update`/
+   `workplan_checkpoint` inputs vs a new tool), then the
+   `<id>.evidence.json` v1 sidecar, git tree binding and staleness.
+2. **E2 — X3 worktree lanes** (needs X2). Proposal first (path-claim
+   trie, lane state machine, baseline fingerprint, merge train; spec 04).
+3. **Measured performance stage** (all still to-review in spec 06): X8
+   warm snapshot cache in `serve`, X9 derived plan index (open choice:
+   SQLite vs a small custom format, decide by measurement), X10 structural
+   index and slice parsing. Measure first (spec 03), record targets.
+
+**Open owner decisions.**
+
+- D.4 review items (below, "Owner decisions to review (D.4)"), chiefly the
+  decision-record rule of note rollover and the resume budget cost of the
+  advice.
+- Still to-review in spec 06: X1, X4, X5, X7, X8, X9, X10, P4, P5.
+- Stage E–G items beyond what the owner already enabled (release
+  artifacts, cross-platform evidence, migration automation) remain
+  unauthorized; so are commits, pushes and installs by an agent.
+
+**Fixtures and evidence.**
+
+- In the repository: the frozen oracle corpus and fixtures (`testdata/`,
+  `testdata/MANIFEST.json` pins the oracle hashes), the stage pins
+  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4/expectations.json`), perf
+  fixtures (`testdata/perf/*.tar.gz`, unpacked by the benchmarks into
+  `$TMPDIR/shiori-perf-<go version>/`).
+- Owner-plan evidence (never copied into the repository): read-only
+  copies `kanade-fixture` (13-phase roadmap, `kanade-v5-roadmap`) and
+  `kanade-hardening` (257 KB plan, `kanade-v5-beta-hardening`) in the
+  session scratchpad `/private/tmp/claude-501/-Users-cantabile--config-opencode/cd0126d5-9456-499c-8c8d-47d08ad247e9/scratchpad/`
+  (temporary; recreate with `cp -Rp` from the originals under
+  `~/projects/personal/maplestory/kanade-bot/.opencode/workplan/` and its
+  `docs/v5/` specs, never modifying the originals). Always work on a
+  further `cp -Rp` copy with `chmod -R u+w`.
+- Reference TypeScript plugin (for `adapter/opencode/scripts/snapshot-registration.ts`):
+  `~/.config/opencode/packages/workplan-tools/src/core`.
+
 ## Authorization
 
 The owner has authorized implementation of stages A–D (spec 05 §2).
@@ -24,6 +98,9 @@ archive and recovered planFile for unparseable plans with a repair hint on
 writers, compact stale diagnostic and critical path in resume, wiped-plan
 doctor note, finding rendering `title (status)` and whole-second
 timestamps (both renderings are detected as generated).
+D.4 owner decision (contracts §15, 2026-09-30): the compaction advisor
+(P2) in resume and doctor and note rollover (P3) as a compaction selection
+mode; advice only, the compaction flow is unchanged.
 Stages E–G are still unauthorized (enabling the adapter in a real OpenCode
 configuration is stage E, decided separately). So are commits, pushes, automatic migration,
 agent/tool renaming, and dependency or system installs made without asking.
@@ -1002,7 +1079,7 @@ after. Before is `e47e667`, after is the working tree.
    also differ in reset semantics, list shape and doctor output. Stage E's
    one-writer-per-root rule is unchanged.
 
-## Stage D.3.1 — third live-testing round: DONE (uncommitted, for owner review)
+## Stage D.3.1 — third live-testing round: DONE (committed `df74f35`)
 
 Base `83a3414`. Nothing was committed. The pinned `vendor/shiori` copy
 (`83a3414`) that the owner's OpenCode uses and everything under
@@ -1170,16 +1247,152 @@ before and after. Before is `83a3414` (D.3), after is the working tree.
    classified as generated either way). Stage E's one-writer-per-root rule
    is unchanged.
 
+## Stage D.4 — compaction advisor and note rollover: DONE (uncommitted, for owner review)
+
+Base `df74f35`. Nothing was committed. The pinned `vendor/shiori` copy
+(`df74f35`) that the owner's OpenCode uses and everything under
+`~/.config/opencode` were not touched. The decisions and exact behaviour
+are in [contracts §15](contracts.md#15-approved-design-changes-d4-approved-2026-09-30);
+spec 06 marks P2 and P3 implemented. No V2 field changed; tool identities
+are unchanged; the only input change is the optional `noteRollover` on
+`workplan_compact`/`workplan_compact_preview`.
+
+### Changes
+
+| Item | What changed | Where |
+| --- | --- | --- |
+| P2 advisor | exact plan JSON saving of archiving archivable completed phases, rollover notes and resolved findings (pretty-encoding footprints, archive pointer and `updatedAt` included); recommended at ≥32 KiB saving plus one threshold (50 eligible notes, archivable phases ≥25% of the JSON, JSON ≥192 KiB); doctor plan entry `compactionRecommended` (estimate incl. generated-Markdown render, counts, kept reasons, reasons, selection, thresholds, instruction); resume compact `compactionRecommended {savedJsonBytes, savedJsonPercent, notes, terminalSteps, resolvedFindings}`, dropped (before the D.3.1 critical path) before any text would go below the D.1 minimums | `internal/engine/advisor.go`, `resume.go` (`chooseResume`), `doctor.go`, `engine.go` (`Compaction`, `noD4`) |
+| thresholds | `--compaction-advice off\|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N` on `resume`, `doctor` and `serve` (protocol `Options.Compaction`); never model input | `advisor.go` (`ParseCompactionThresholds`), `internal/cli/cli.go`, `serve.go`, `internal/protocol/server.go` |
+| P3 rollover | `noteRollover {keepLatest 1–10000 (20), pinNoteIndexes}`: selects notes older than the latest N except pinned (`[pinned]`/indexes), decision records, open-step/open-finding references and archive pointers; token binds `canonicalSelection.noteRollover`; combination with `noteIndexes` is an input error; rollover-mode preview adds `noteRollover` and `estimatedSavings`, apply adds `savings`; archive and apply unchanged | `advisor.go` (`rolloverSelect`), `compact.go`, `mutinput.go` (`kInt`, `rolloverSpec`, refine), schemas, `registration.json` (`d4`), `scripts/snapshot-registration.ts`, CLI `--rollover --keep-notes --pin-note` |
+| CLI output | human `resume`/`doctor` show the advice | `internal/cli/human.go` |
+
+### Vector expectations
+
+The oracle corpus is unchanged. Every tools/resume/paging vector runs with
+the advice off (`Engine.noD4`), which passes every earlier check, and on;
+`testdata/d4/expectations.json` lists **no** vector: with the default
+thresholds no corpus fixture qualifies (`large-paging`, the largest
+eligible history, could save 13 080 of 45 232 JSON bytes), so all 360
+read vectors are byte-identical to D.3.1. Mutation (70) and mutating-input
+(39) vectors are unchanged. Parity: tools 149 pass / 50 approved
+divergences, resume 74 / 13, paging 43 / 31, 0 fail (same as D.3.1).
+`TestD4ComparatorOnCorpus` runs the comparator (output minus the advice =
+D.4-off text; counts restated from the raw plan by an independent
+implementation) on 10 doctor/resume vectors with lowered thresholds; one
+4096-budget resume packet pays for the advice with a page item and is
+skipped there.
+
+### New tests
+
+- `d4_test.go`: `TestD4AdvisorReport` (counts per keep reason, restated;
+  resume = doctor figures; off/unmet thresholds byte-identical to
+  D.4-off), `TestD4AdviceMatchesApply` (applying the advised selection
+  writes exactly the estimated JSON and Markdown sizes; advice then gone),
+  `TestD4RolloverPreviewApply` (selection, token binds keepLatest/pins,
+  wrong parameters and stale checkpoint refused before authorization,
+  archive holds the complete original notes and plan JSON, remaining
+  notes = kept + pointer), `TestD4RolloverInput` (both surfaces, both
+  tools), `TestD4ResumeBudget` (4096–16000 × 3 limits on a heavy header:
+  fits; advice never kept below the minimums; a packet without it equals
+  D.4-off; shown 860, dropped 91), `TestD4NoEligibleHistoryIdentical`,
+  `TestParseCompactionThresholds`.
+- `d4_vectors_test.go`: the D.4 split in `TestCorpusParity`, the
+  comparator and `TestD4ComparatorOnCorpus`.
+- CLI `TestCompactRolloverCLI`, `TestCompactionAdviceFlag`; protocol
+  `TestNoteRolloverPreviewThenPreparedApply`; adapter registration differs
+  from the reference only by the `d1`/`d3`/`d4` changes.
+
+### Evidence (darwin/arm64, Go 1.27.1, bun 1.4.0)
+
+- `gofmt -l`: clean. `go vet ./...` (darwin and `GOOS=linux`): clean.
+- `go test -race -count=1 -timeout 20m` per package: all pass (engine
+  160 s).
+- `bun test` in `adapter/opencode`: 49 pass, 1 skip (opt-in runtime smoke).
+- `CGO_ENABLED=0 go build -trimpath ./cmd/shiori`: builds.
+- Cost (CLI, median of 7, D.3.1 → D.4): resume 4.9 → 4.9 / 8.8 → 9.3 /
+  47.1 → 49.9 ms and doctor 4.8 → 5.4 / 14.6 → 18.4 / 95.5 → 132.0 ms at
+  100 KiB / 1 MiB / 10 MiB (the perf plans qualify; doctor renders the
+  generated Markdown twice for the Markdown figures). A first version that
+  re-encoded the plan per component and matched notes against every open
+  step cost 391 ms for the 10 MiB resume; it was replaced by footprint
+  arithmetic and linear-time note classification.
+
+Owner-plan evidence ran on fresh `cp -Rp` copies (`chmod -R u+w`) of the
+read-only fixtures; nothing from them is in the repository. The pristine
+copies' paths, modes, mtimes, sizes and bytes were identical before and
+after. Before is `df74f35` (D.3.1), after is the working tree.
+
+- **Roadmap copy** (`kanade-v5-roadmap`, 65 939-byte JSON, 35 notes): no
+  advice. `resume` (12000/6000/4096), `doctor`, `validate`, `inspect
+  --limit 500`, `read --phase core-bot` and the full `read` are
+  byte-identical between D.3.1 and D.4.
+- **Hardening copy** (`kanade-v5-beta-hardening`: 257 151-byte JSON,
+  203 367-byte handwritten Markdown, 12 phases, 62 steps, 214 notes, 32
+  resolved findings, fresh checkpoint). `validate` is identical. Doctor
+  advice: reasons `notes: 105 notes are eligible for rollover (threshold
+  50)` and `size: the plan JSON is 257151 bytes (threshold 196608)`;
+  estimate JSON 257 151 → 176 182 (−80 969, 31%), Markdown preserved
+  (handwritten), total 17%; terminal steps 28, of which 2 archivable (only
+  phase `integration` qualifies; `privacy` has a cancelled step and the
+  rest are unfinished) = 2 140 bytes; notes kept: latest 20, decision 85,
+  open reference 4, eligible 105 = 60 459 bytes; resolved findings 32 =
+  18 486 bytes. Resume at 12000 adds `{savedJsonBytes 80969,
+  savedJsonPercent 31, notes 105, terminalSteps 2, resolvedFindings 32}`
+  and returns 5 instead of 6 page items (truncated fields 30 vs 32).
+- **Rollover** (`compact --rollover`): preview selected 105 of 194 older
+  notes with `estimatedSavings` JSON 257 151 → 196 808 (−60 343, 23%);
+  apply wrote exactly 196 808 bytes (`savings` identical), left the
+  handwritten Markdown byte-identical and refreshed the checkpoint. The
+  archive `archive/kanade-v5-beta-hardening/state-538980bf42a0-5ffce10e9ccc.json`
+  (0600, 535 KB) holds all 105 removed notes byte-identical to the
+  originals (59 616 bytes of note text), `source.workplanJson`
+  byte-identical to the original JSON (sha256 `d4ea2174534a…`), the
+  original Markdown and checkpoint. Remaining notes = the 109 kept notes
+  in order + the archive pointer; validate `valid: true`; doctor no
+  longer recommends (the remaining history saves under 32 KiB).
+- **Advised selection** (doctor's `selection` passed to preview/apply on
+  a second copy): archived 1 phase, 105 notes and 32 findings; JSON
+  257 151 → 176 182 bytes, exactly the doctor estimate.
+- **Sizes after** (bytes; before / after rollover / after advised
+  selection): plan JSON 257 151 / 196 808 / 176 182; full `read` 576 412 /
+  515 861 / 492 553; `read --no-markdown` 372 286 / 311 735 / 288 427;
+  `resume` 12000: 11 595 / 11 563 / 11 562 (5 items; notes are not part of
+  resume); `resume --max-chars 64000`: 50 937 / 50 875 / 50 874.
+
+### Owner decisions to review (D.4)
+
+1. **Decision-record rule.** A note is a decision record (pinned) when it
+   contains `decision`/`decisions`/`decided` (any case) or the uppercase
+   word `USER`. On the hardening plan this keeps 85 of 194 older notes.
+   Decision words only would archive 131 notes (72 KB). Matching the
+   Markdown `## Decision register` lines to notes was not feasible (the
+   texts differ), so the rule does not look at the register itself.
+2. **Resume budget cost.** Like D.3.1's critical path, the advice is
+   dropped only before text would go below the D.1 minimums, so it can
+   cost a page item (hardening plan at 12000: 6 → 5). Alternative: drop it
+   whenever it would shrink the page.
+3. Resume reports the plan JSON saving only (no Markdown render on the
+   hot path); doctor adds the Markdown and total figures.
+4. "Older than the newest checkpoint" is enforced by apply's existing
+   fresh-checkpoint rule; notes carry no timestamps.
+5. Earlier archive pointer notes are kept (one per compaction).
+6. Thresholds are CLI/serve flags only; the adapter passes none, so the
+   live setup uses the defaults.
+7. Terminal steps in unfinished phases are never archivable (compaction
+   rule unchanged), so most of the measured "terminal steps ≈48%" stays;
+   step-level archival would be a new design.
+
+### Remaining issues (D.4)
+
+1. Doctor at 10 MiB costs +37 ms (two Markdown renders for the Markdown
+   figures).
+2. Mixed writers: the reference plugin has no advice and no
+   `noteRollover`; stage E's one-writer-per-root rule is unchanged.
+
 ## Resume after maintenance
 
-1. Read this file, `docs/contracts.md` and the specs. No workplan plugin is
-   needed.
-2. Inspect `git status`. Stages A–D, D.1, D.2 and D.3 are committed
-   (`fdadfd4`, `7a899e5`, `9f66518`, `4044539`, `5c94cdb`, `e47e667`,
-   `83a3414`). D.3.1 exists only in the working tree until the owner
-   commits it. Preserve any user edits.
-3. If the oracle files change, the corpus is stale. Compare their sha256 against
-   `testdata/MANIFEST.json` → `oracle.files`.
-
-The Go toolchain observed is 1.27.1 darwin/arm64. Build and test commands are
-in the [README](../README.md).
+See [Resume point](#resume-point-paused-after-d4) at the top. The Go
+toolchain observed is 1.27.1 darwin/arm64; build and test commands are in
+the [README](../README.md). If the oracle files change, the corpus is
+stale: compare their sha256 against `testdata/MANIFEST.json` →
+`oracle.files`.

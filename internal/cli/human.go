@@ -152,6 +152,10 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		if c := get(v, "criticalPath"); c.Kind() == ojson.Object {
 			fmt.Fprintf(w, "critical:  %s steps, next %s/%s\n", str(get(c, "length")), str(get(c, "nextStep", "phaseId")), str(get(c, "nextStep", "stepId")))
 		}
+		if c := get(v, "compactionRecommended"); c.Kind() == ojson.Object {
+			fmt.Fprintf(w, "compact:   recommended, plan JSON saves %s bytes (%s%%): %s notes, %s terminal steps, %s resolved findings (see doctor)\n",
+				str(get(c, "savedJsonBytes")), str(get(c, "savedJsonPercent")), str(get(c, "notes")), str(get(c, "terminalSteps")), str(get(c, "resolvedFindings")))
+		}
 		if cur := get(cp, "current"); cur.Kind() == ojson.Object {
 			fmt.Fprintf(w, "current:   %s/%s  %s [%s]%s\n", str(get(cur, "phaseId")), str(get(cur, "stepId")), str(get(cur, "stepTitle")), str(get(cur, "stepStatus")), graphNote(cur))
 		}
@@ -200,6 +204,13 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 				fmt.Fprintf(w, "      warning: %s\n", x.Str())
 			}
 			criticalPath(w, get(p, "criticalPath"), "      ")
+			if c := get(p, "compactionRecommended"); c.Kind() == ojson.Object {
+				t := get(c, "estimate", "total")
+				fmt.Fprintf(w, "      compaction recommended (advice only): saves %s of %s bytes (%s%%)\n", str(get(t, "saved")), str(get(t, "before")), str(get(t, "percent")))
+				for _, r := range get(c, "reasons").Elems() {
+					fmt.Fprintf(w, "        %s\n", r.Str())
+				}
+			}
 			if pf := get(p, "recoveredPlanFile"); pf.Kind() == ojson.String {
 				fmt.Fprintf(w, "      recovered planFile %s (kept by create --overwrite unless --plan-file is given)\n", pf.Str())
 			}

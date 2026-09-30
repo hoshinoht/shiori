@@ -1111,3 +1111,39 @@ func TestStepStatusGateIssues(t *testing.T) {
 	}
 	sameFingerprint(t, before, fingerprint(t, root))
 }
+
+// D.4 (contracts §15) on the native path: compact_preview with
+// noteRollover is read-only, the prepared apply commits it, and the serve
+// option sets the advisor thresholds of the connection's engine.
+func TestNoteRolloverPreviewThenPreparedApply(t *testing.T) {
+	root := fixtureRoot(t, "large-paging")
+	h := start(t, Options{Compaction: &engine.CompactionThresholds{MinSavingsBytes: 1024, Notes: 10}})
+	h.handshake()
+	d := h.call("d", "workplan_doctor", root, map[string]any{"id": "big-plan"})
+	if !d.ok() || !strings.Contains(d.text(), `"compactionRecommended"`) {
+		t.Fatalf("doctor with lowered thresholds: %v", d)
+	}
+	hash := readHash(t, h, root, "big-plan")
+	before := fingerprint(t, root)
+	roll := map[string]any{"keepLatest": 50}
+	r := h.call("pv", "workplan_compact_preview", root, map[string]any{"id": "big-plan", "archiveReason": "roll", "noteRollover": roll})
+	if !r.ok() || r.obj("prepared") != nil {
+		t.Fatalf("preview: %v", r)
+	}
+	var pv map[string]any
+	json.Unmarshal([]byte(r.text()), &pv)
+	tok, _ := pv["previewToken"].(string)
+	sameFingerprint(t, before, fingerprint(t, root))
+	if bad := h.call("b", "workplan_compact_preview", root, map[string]any{"id": "big-plan", "archiveReason": "roll", "noteRollover": roll, "noteIndexes": []int{1}}); bad.errClass() != "invalid_input" {
+		t.Fatalf("rollover with noteIndexes: %v", bad)
+	}
+	a := h.call("ap", "workplan_compact", root, map[string]any{"id": "big-plan", "archiveReason": "roll", "noteRollover": roll, "mode": "apply", "previewToken": tok, "confirmation": "ARCHIVE_SELECTED_HISTORY", "expectedHash": hash})
+	p := a.obj("prepared")
+	if p == nil {
+		t.Fatalf("apply: %v", a)
+	}
+	sameFingerprint(t, before, fingerprint(t, root))
+	if c := h.call("c", "shiori.commit", root, commitInput(p)); !c.ok() || !strings.Contains(c.text(), `"savings"`) {
+		t.Fatalf("commit: %v", c)
+	}
+}

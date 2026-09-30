@@ -8,14 +8,15 @@ This repository contains the specifications, the approved stage A contract
 (machine schemas, a golden fixture corpus and a measured TypeScript baseline),
 the stage B read-only Go core, the stage C transactional core with its
 `shiori` CLI, the stage D native OpenCode adapter (`shiori serve --stdio`
-plus `adapter/opencode/`), and the D.1, D.2, D.3 and D.3.1 approved design
-changes
+plus `adapter/opencode/`), and the D.1, D.2, D.3, D.3.1 and D.4 approved
+design changes
 ([contracts §11](docs/contracts.md#11-approved-design-changes-d1-approved-2026-09-30),
 [§12](docs/contracts.md#12-approved-design-changes-d2-approved-2026-09-30),
 [§13](docs/contracts.md#13-approved-design-changes-d3-approved-2026-09-30),
-[§14](docs/contracts.md#14-approved-design-changes-d31-approved-2026-09-30)).
+[§14](docs/contracts.md#14-approved-design-changes-d31-approved-2026-09-30),
+[§15](docs/contracts.md#15-approved-design-changes-d4-approved-2026-09-30)).
 The architecture is a Go core and CLI with a thin OpenCode JS/TS adapter.
-Stages A–D, D.1, D.2, D.3 and D.3.1 are authorized. Automatic artifact migration, commits
+Stages A–D, D.1, D.2, D.3, D.3.1 and D.4 are authorized. Automatic artifact migration, commits
 and remote publication are not.
 
 ## Specifications
@@ -31,7 +32,7 @@ Read in this order:
 Stage A contract:
 
 - [Frozen contract v1 (APPROVED 2026-09-30)](docs/contracts.md), including the
-  approved D.1, D.2, D.3 and D.3.1 design changes (§11–§14)
+  approved D.1, D.2, D.3, D.3.1 and D.4 design changes (§11–§15)
 - [Machine schemas](schema/index.json) and [golden corpus](testdata/MANIFEST.json)
 - [TypeScript reference baseline and Go stage B results](docs/baseline.md)
 
@@ -127,14 +128,36 @@ D.3.1 behaviour of the read operations (contracts §14):
   earlier `title(status)` rendering still counts as generated and is
   refreshed by the next write.
 
+D.4 behaviour (contracts §15; plans without qualifying history give the
+same output as D.3.1):
+
+- `doctor` adds `compactionRecommended` to a plan entry when compaction
+  could save at least 32 KiB of plan JSON and a threshold is crossed (50
+  notes eligible for rollover, archivable completed phases ≥25% of the
+  JSON, or a JSON of 192 KiB): the exact JSON (and generated-Markdown)
+  saving, the counts, the reasons and a ready-to-preview selection.
+  `resume` adds a compact `compactionRecommended` that is dropped before
+  any text would go below the D.1 minimums. Advice only.
+  `--compaction-advice off|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N`
+  (resume, doctor, serve) sets the thresholds.
+- `compact --rollover [--keep-notes N] [--pin-note I]...` (tool input
+  `noteRollover`) selects every note older than the latest N (default
+  20) except pinned notes (`[pinned]` or `--pin-note`), decision records
+  (`decision`/`decided` or the uppercase `USER` marker), notes naming an
+  open step or quoting an open finding, and earlier archive pointers.
+  It uses the unchanged preview → token → `ARCHIVE_SELECTED_HISTORY`
+  flow; apply needs a fresh checkpoint, so every archived note predates
+  it, and the archive keeps the complete originals.
+
 ```sh
 shiori list     --root /path/to/project
 shiori read     <id> [--phase ID] [--step ID] [--no-markdown | --markdown] [--notes]
 shiori inspect  <id> [--phase ID] [--limit 1-500] [--cursor TOKEN]
 shiori validate <id>                       # exit 1 when the plan is invalid
-shiori resume   <id> [--max-chars 4096-64000] [--limit 1-100] [--cursor TOKEN] [--phase ID] [--step ID]
-shiori doctor   [id] [--limit 1-100]
+shiori resume   <id> [--max-chars 4096-64000] [--limit 1-100] [--cursor TOKEN] [--phase ID] [--step ID] [--compaction-advice SPEC]
+shiori doctor   [id] [--limit 1-100] [--compaction-advice SPEC]
 shiori compact  <id> --reason R [--archive-phase ID]... [--archive-note I]... [--archive-finding I]...   # preview only
+shiori compact  <id> --reason R --rollover [--keep-notes N] [--pin-note I]...                          # D.4 rollover preview
 ```
 
 ### Mutations
@@ -313,7 +336,11 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
   earlier check), and those D.3.1 changes, including mutation and Markdown
   render vectors, in `testdata/d3_1/expectations.json`
   (`SHIORI_D31_UPDATE=1`, per package; the D.3.1-off run must still pass
-  every earlier check).
+  every earlier check). D.4 changes would be pinned in
+  `testdata/d4/expectations.json` (`SHIORI_D4_UPDATE=1`); it is empty
+  because no corpus fixture qualifies for compaction advice, so every
+  vector is byte-identical to D.3.1 (`TestD4ComparatorOnCorpus` checks
+  the comparator with lowered thresholds).
   The same engine with the graph additions off must still pass the
   earlier check, and the D.2 output must differ from it only by the
   approved members (`SHIORI_D2_UPDATE=1` re-pins).
@@ -332,7 +359,8 @@ SHIORI_BASELINE=/tmp/go-baseline.json go test ./internal/engine -run '^TestBasel
 
 ## Next decision
 
-Review and commit D.3.1 (see [STATUS](docs/STATUS.md)). Updating the pinned
-copy the owner's OpenCode uses is a separate step for the owner. Worktree
-orchestration and alternative storage remain later, explicitly gated
-stages.
+Review and commit D.4, then the queue in the
+[STATUS resume point](docs/STATUS.md#resume-point-paused-after-d4): E1
+(X2 evidence ledger, tool-surface proposal first), E2 (X3 worktree lanes,
+proposal first), then a measured performance stage (X8–X10). Updating the
+pinned copy the owner's OpenCode uses is a separate step for the owner.

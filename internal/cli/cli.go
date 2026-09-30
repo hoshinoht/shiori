@@ -46,7 +46,8 @@ Mutating commands (print the prepared intent, then require confirmation):
                              --preview-token T --confirm WIPE_PLAN_CONTENT (archives first)
   checkpoint <id>            --summary S --next-action A [--phase --step --blocker
                              --guardrail --reference --validation]
-  compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I]
+  compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I
+                             | --rollover [--keep-notes N] [--pin-note I]...]
                              --preview-token T --confirm ARCHIVE_SELECTED_HISTORY
   serve --stdio              Native adapter protocol on stdin/stdout (JSON lines;
                              prepare -> host authorization -> commit; idle exit)
@@ -70,6 +71,8 @@ Read command flags:
   inspect:  --phase ID --limit N --cursor TOKEN
   resume:   --max-chars N --limit N --cursor TOKEN --phase ID --step ID
   doctor:   --limit N
+  resume, doctor: --compaction-advice off|key=N,... (D.4 advisor thresholds:
+            min-savings-kib, notes, terminal-percent, plan-kib, keep-notes)
 
 Exit status: 0 success; 1 operation error, refusal, or (validate) an invalid
 plan; 2 usage error.
@@ -113,6 +116,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	limit := fs.Int("limit", 0, "page size")
 	cursor := fs.String("cursor", "", "cursor from the previous page")
 	maxChars := fs.Int("max-chars", 0, "resume budget in UTF-16 code units")
+	advice := fs.String("compaction-advice", "", "compaction advisor thresholds: off, or key=value pairs (D.4)")
 	var positional []string
 	for {
 		if err := fs.Parse(rest); err != nil {
@@ -215,6 +219,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
+	if set["compaction-advice"] {
+		th, err := engine.ParseCompactionThresholds(*advice)
+		if err != nil {
+			fmt.Fprintln(stderr, "shiori "+cmd+":", err)
+			return 2
+		}
+		e.Compaction = th
+	}
 
 	res, text, err := dispatch(e, cmd, input)
 	if err != nil {
@@ -240,6 +252,8 @@ func flagAllowed(cmd, name string) bool {
 	switch name {
 	case "root", "json", "input":
 		return true
+	case "compaction-advice": // D.4, trusted operator flag
+		return cmd == "resume" || cmd == "doctor"
 	}
 	allowed := map[string][]string{
 		"read":    {"phase", "step", "no-markdown", "markdown", "notes"},

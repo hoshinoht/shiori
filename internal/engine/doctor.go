@@ -403,6 +403,11 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 			b.Set("criticalPath", cp)
 		}
 	}
+	// D.4 (contracts §15, P2): the full compaction advice, only when
+	// recommended. Advice only; nothing is archived.
+	if a := e.compactionAdvice(s, true); a != nil {
+		b.Set("compactionRecommended", a.detailValue(p.ID))
+	}
 	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }
 

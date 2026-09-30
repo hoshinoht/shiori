@@ -69,18 +69,25 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1 and D.3 changes", () => {
+  it("differs from the reference registration only by the approved D.1, D.3 and D.4 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
     expect(reg.d1.additions).toEqual([{ tool: "workplan_read", property: "includeNotes" }]);
     expect(reg.d3.additions).toEqual([{ tool: "workplan_reset", property: "previewToken" }, { tool: "workplan_reset", property: "confirmation" }]);
     expect(reg.d3.changes.map((c: any) => c.path.join("."))).toEqual(["description", "input.properties.mode.description", "input.properties.mode.enum", "input.properties.preserveNotes.description"]);
+    expect(reg.d4.additions).toEqual([{ tool: "workplan_compact", property: "noteRollover" }, { tool: "workplan_compact_preview", property: "noteRollover" }]);
+    for (const name of ["workplan_compact", "workplan_compact_preview"]) {
+      const roll = reg.tools.find((t: any) => t.name === name).input.properties.noteRollover;
+      expect(roll.type).toBe("object");
+      expect(roll.additionalProperties).toBe(false);
+      expect(Object.keys(roll.properties)).toEqual(["keepLatest", "pinNoteIndexes"]);
+    }
     const read = reg.tools.find((t: any) => t.name === "workplan_read");
     expect(read.input.properties.includeNotes.type).toBe("boolean");
     const reset = reg.tools.find((t: any) => t.name === "workplan_reset");
     expect(reset.input.properties.mode.enum).toEqual(["draft", "markdown-only", "wipe"]);
-    const { d1, d3, ...rest } = reg;
-    for (const a of [...d1.additions, ...d3.additions]) delete rest.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    const { d1, d3, d4, ...rest } = reg;
+    for (const a of [...d1.additions, ...d3.additions, ...d4.additions]) delete rest.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
     for (const c of d3.changes) {
       let cur = rest.tools.find((t: any) => t.name === c.tool);
       for (const key of c.path.slice(0, -1)) cur = cur[key];

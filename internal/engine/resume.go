@@ -122,6 +122,7 @@ type resumeModel struct {
 	depsValid           bool
 	currentDeps         []model.StepRef
 	critical            *criticalView // D.3.1 compact critical path
+	compaction          *advice       // D.4 compaction advice (compact form)
 	high                []findingView
 	highCounts          [3]int
 	warnings            []string
@@ -357,6 +358,9 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		}
 	}
 	m.warnings = warnings
+	// D.4 (contracts §15, P2): advice only; its compact form is dropped
+	// before any text would go below the D.1 minimums.
+	m.compaction = e.compactionAdvice(s, false)
 
 	// Findings.
 	buckets := index.BuildBuckets(p)
@@ -763,6 +767,9 @@ func (m *resumeModel) build(pr resumeParams) ojson.Value {
 	if m.critical != nil {
 		out.Set("criticalPath", criticalPath)
 	}
+	if m.compaction != nil {
+		out.Set("compactionRecommended", m.compaction.compactValue())
+	}
 	return out.
 		Set("safety", safety).
 		Set("page", page).
@@ -853,11 +860,18 @@ func resumeTargetPage(maxChars, limit int) int {
 
 // chooseResume applies the budget policy: the first degradation level
 // whose complete text fits maxChars (UTF-16 code units). The D.3.1
-// critical path is advisory (the full path stays in inspect and doctor),
-// so it is dropped before any text goes below the D.1 minimums.
+// critical path and the D.4 compaction advice are advisory (the detail
+// stays in inspect/doctor), so they are dropped (the advice first) before
+// any text goes below the D.1 minimums.
 func chooseResume(m *resumeModel) (ojson.Value, string, error) {
 	if v, text, ok := chooseResumeLevels(m); ok {
 		return v, text, nil
+	}
+	if m.compaction != nil {
+		m.compaction = nil
+		if v, text, ok := chooseResumeLevels(m); ok {
+			return v, text, nil
+		}
 	}
 	if m.critical != nil {
 		m.critical = nil

@@ -164,17 +164,49 @@ would be stale between checkpoints. It fits only the notes history: see X4.
 
 ### P2 — Compaction advisor
 
+**Status: accepted and implemented in stage D.4** (2026-09-30;
+[contracts §15](../contracts.md#15-approved-design-changes-d4-approved-2026-09-30)
+item 1).
+
 `resume` and `doctor` report `compactionRecommended` with the estimated
 savings when terminal-step bytes, note count or total size cross configurable
 thresholds. Advice only: compaction still requires preview → exact token →
 authorized apply ([01 §7](01-core.md)).
 
+As implemented: the estimate is the exact plan JSON saving of archiving
+every archivable completed phase, the rollover notes and every resolved
+finding (doctor adds the generated-Markdown saving). It is recommended when
+that saving reaches 32 KiB and one threshold is crossed: 50 eligible notes,
+archivable phases ≥25% of the JSON, or a JSON of 192 KiB (configurable with
+`--compaction-advice`). Resume carries a compact form that is dropped before
+text would go below the D.1 minimums; doctor carries the detail and a
+ready-to-preview selection. On the measured plan it recommends saving
+80 969 of 257 151 JSON bytes (31%): 105 rollover notes, the one archivable
+phase (2 steps; the other terminal steps sit in unfinished phases, which
+compaction never archives) and 32 resolved findings.
+
 ### P3 — Note rollover
+
+**Status: accepted and implemented in stage D.4** (2026-09-30;
+[contracts §15](../contracts.md#15-approved-design-changes-d4-approved-2026-09-30)
+item 2).
 
 A compaction selection mode that archives notes older than the latest N (and
 older than the newest checkpoint), keeping notes pinned by the decision
 register or referenced by open steps/findings. Archives keep complete
 originals. Uses the existing "selected history" mechanism; no V2 field change.
+
+As implemented: `noteRollover {keepLatest (default 20), pinNoteIndexes}`
+on `workplan_compact`/`workplan_compact_preview`. Kept: the latest N,
+notes marked `[pinned]` or listed, decision records (`decision`/`decided`
+or the uppercase `USER` marker, the JSON twin of a Decision register
+line), notes naming an open step (`<phase>/<step>`) or quoting an open
+finding title, and earlier archive pointers. "Older than the newest
+checkpoint" is enforced by apply's fresh-checkpoint rule (notes carry no
+timestamps). The token binds the parameters; archives are unchanged and
+hold the complete originals. On the measured plan it archives 105 of 214
+notes (59 616 note bytes): the plan JSON goes from 257 151 to 196 808
+bytes and a full `read` from 576 412 to 515 861 bytes.
 
 ### P4 — Journal v2 by reference
 
@@ -218,8 +250,8 @@ stage it attaches to. Record decisions here with a date.
 | X8 | to-review | | |
 | X9 | to-review | | |
 | X10 | to-review | | |
-| P2 | accepted | 2026-09-30 | stage D.4 |
-| P3 | accepted | 2026-09-30 | stage D.4 |
+| P2 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 1) |
+| P3 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 2) |
 | P4 | to-review | | |
 | P5 | to-review | | |
 | P6 | accepted | 2026-09-30 | covered by D.1 (F) and D.3 |
