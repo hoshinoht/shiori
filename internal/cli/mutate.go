@@ -13,11 +13,12 @@ import (
 	"syscall"
 
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
 )
 
-// Standalone mutation confirmation (contracts §5.5). The CLI acts under
+// Standalone mutation confirmation. The CLI acts under
 // local operator authority: it prints the prepared intent and requires
 // typing "yes" on a TTY, or --yes off a TTY. --yes is a flag only (never
 // an environment variable or config) and never bypasses stale-hash, lock,
@@ -280,7 +281,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	if err := intsFlag("archive-finding", "resolvedFindingIndexes", findingIdx); err != nil {
 		return usageErr("%v", err)
 	}
-	// D.4 (contracts §15): the note rollover selector.
+	// The note rollover selector.
 	if (set["keep-notes"] || set["pin-note"]) && !*rollover {
 		return usageErr("--keep-notes and --pin-note need --rollover")
 	}
@@ -315,16 +316,16 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 		}
 		put("expectedHash", ojson.StringValue(*expected))
 	}
-	input := ojson.ObjectValue(members)
-	_, hasHash := input.Get("expectedHash")
+	toolIn := ojson.ObjectValue(members)
+	_, hasHash := toolIn.Get("expectedHash")
 	existing := cmd != "create" && cmd != "compact"
 	if cmd == "create" {
-		if ov, ok := input.Get("overwrite"); ok && ov.Bool() {
+		if ov, ok := toolIn.Get("overwrite"); ok && ov.Bool() {
 			existing = true
 		}
 	}
 	if cmd == "compact" {
-		if m, ok := input.Get("mode"); ok && m.Str() == "apply" {
+		if m, ok := toolIn.Get("mode"); ok && m.Str() == "apply" {
 			existing = true
 		}
 	}
@@ -333,7 +334,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 
 	rootDir := *root
-	if wr, ok := input.Get("workspaceRoot"); ok && wr.Kind() == ojson.String && rootDir == "" {
+	if wr, ok := toolIn.Get("workspaceRoot"); ok && wr.Kind() == ojson.String && rootDir == "" {
 		rootDir = wr.Str()
 	}
 	if rootDir == "" {
@@ -349,7 +350,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	data, err := engine.ParseMutationInput(cmd, input, engine.SurfaceCore)
+	data, err := input.ParseMutationInput(cmd, toolIn, input.SurfaceCore)
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}

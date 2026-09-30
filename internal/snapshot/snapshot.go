@@ -14,7 +14,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
 
-// Limits (contracts §5.2). They are configurable by the trusted caller
+// Limits. They are configurable by the trusted caller
 // only, never by model input.
 type Limits struct {
 	MaxArtifactBytes int64
@@ -60,7 +60,7 @@ type Snapshot struct {
 
 	// MissingPlanArtifacts lists linked Markdown/spec paths that are absent.
 	MissingPlanArtifacts []string
-	// BackslashPaths lists linked paths containing '\' (D5).
+	// BackslashPaths lists linked paths containing '\'.
 	BackslashPaths []string
 }
 
@@ -263,7 +263,7 @@ func LoadOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Sn
 }
 
 // InterruptedStateHash computes the read-only state hash of a plan whose
-// primary JSON is absent but whose journal is pending (D1, S09): the
+// primary JSON is absent but whose journal is pending: the
 // primary is recorded as missing and only the journal's own targets and
 // the id's sidecars contribute.
 func InterruptedStateHash(root, id string, limits Limits, journalTargets []string) (string, error) {
@@ -356,8 +356,8 @@ func DirExists(root string) bool {
 // Unreadable is the raw-byte view of a plan whose primary JSON exists but
 // cannot be loaded (unparseable, wrong shape or an invalid link). Its
 // hashes cover the exact primary bytes and the id's sidecars, so a
-// read-only report can hand out an expectedHash for an explicit repair
-// (D.3, contracts §13 item 2). The linked Markdown and specs are unknown
+// read-only report can hand out an expectedHash for an explicit repair.
+// The linked Markdown and specs are unknown
 // and not part of the manifest.
 type Unreadable struct {
 	JSON          Artifact

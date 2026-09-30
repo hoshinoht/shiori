@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -20,7 +21,7 @@ const msgInvalidPlans = "One or more primary plans are invalid; see per-plan dia
 // classification, freshness, locks, pending journals and recovery
 // pointers. Host facts it cannot prove stay unknown (null). It never asks
 // for approval, repairs, or changes anything.
-func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
+func (e *Engine) Doctor(in input.DoctorInput) (ojson.Value, error) {
 	limit := DefaultDoctorLimit
 	if in.Limit != nil {
 		limit = *in.Limit
@@ -43,7 +44,7 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 	}
 
 	// Journals first: a journal-only plan (primary JSON absent) is
-	// reported with its interrupted-state hash (D1).
+	// reported with its interrupted-state hash.
 	type pending struct {
 		entry   dirEntry
 		id      string
@@ -99,7 +100,7 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 		}
 		plans = append(plans, entry)
 	}
-	// D1: journal-only plans (no primary JSON) get an entry that carries
+	// Journal-only plans (no primary JSON) get an entry that carries
 	// the read-only interrupted-state hash so explicit recovery can supply
 	// its expectedHash. It uses only the existing plan-entry fields.
 	journalOnly := 0
@@ -197,8 +198,8 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 		Set("omittedPendingTransactions", ojson.IntValue(int64(len(journals)-len(pendingValues)))).
 		Set("runtimeFacts", runtimeFacts(in.RuntimeFacts)).
 		Set("issues", ojson.StringsValue(topIssues))
-	// D.1 (contracts §11 item F): non-failing stray-artifact warnings,
-	// present only when there are any. Nothing is moved or deleted.
+	// Non-failing stray-artifact warnings, present only when there are
+	// any. Nothing is moved or deleted.
 	if len(strays) > 0 {
 		listed := []ojson.Value{}
 		warnings := []string{}
@@ -222,7 +223,7 @@ func (e *Engine) Doctor(in DoctorInput) (ojson.Value, error) {
 	return out.Set("readOnly", ojson.BoolValue(true)).Value(), nil
 }
 
-// strayArtifact is a workplan-root file that belongs to no plan (D.1).
+// strayArtifact is a workplan-root file that belongs to no plan.
 type strayArtifact struct {
 	name, kind, suggestion string
 	id                     string // orphaned sidecar's or stale copy's plan id
@@ -245,7 +246,7 @@ const straySuggestion = "If it is history, move it under " + snapshot.WorkplanDi
 // strayArtifacts lists, in UTF-16 order, checkpoint/dependency sidecars
 // without a primary plan and root-level files that classify as nothing
 // and are not linked Markdown. Journals without a primary are recovery
-// state (D1), not strays; temporary and lock files are classified.
+// state, not strays; temporary and lock files are classified.
 func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 	primary := map[string]bool{}
 	for _, n := range l.primary {
@@ -278,11 +279,11 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 				continue
 			}
 			if id := strings.TrimSuffix(name, ".md"); primary[id] {
-				// D.3 (contracts §13 item 3): <id>.md of a readable plan that
-				// links another file is a stale copy left by a planFile move.
-				// When the plan cannot be read its link is unknown.
+				// <id>.md of a readable plan that links another file is a
+				// stale copy left by a planFile move. When the plan cannot
+				// be read its link is unknown.
 				pf, readable := planFiles[id]
-				if e.noD3 || !readable {
+				if !readable {
 					continue
 				}
 				out = append(out, strayArtifact{name: name, kind: "stale-markdown", id: id, linked: pf, suggestion: straySuggestion})
@@ -333,12 +334,12 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 			Set("id", ojson.StringValue(name)).
 			Set("valid", ojson.BoolValue(false)).
 			Set("issues", ojson.StringsValue([]string{err.Error()}))
-		// D.3 (contracts §13 item 2): raw-byte hashes for a repair.
+		// Raw-byte hashes for a repair.
 		if id != "" && id == name {
-			if u := e.unreadableFor(id, err); u != nil {
+			if u := e.unreadable(id, err); u != nil {
 				b.Set("planHash", ojson.StringValue(u.PlanHash)).
 					Set("stateHash", ojson.StringValue(u.StateHash))
-				// D.3.1 (contracts §14 item 2b): the link a repair keeps.
+				// The link a repair keeps.
 				if pf := e.recoverPlanFile(id, u.JSON.Bytes); pf != "" {
 					b.Set("recoveredPlanFile", ojson.StringValue(pf))
 				}
@@ -368,8 +369,8 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	cv := classifyCheckpoint(s)
 	if cv.issue != "" {
 		issue := "checkpoint: " + cv.issue
-		if cv.staleDetail != "" && !e.noD3 {
-			issue += ". " + cv.staleDetail // D.3 (contracts §13 item 5)
+		if cv.staleDetail != "" {
+			issue += ". " + cv.staleDetail
 		}
 		issues = append(issues, issue)
 	}
@@ -385,10 +386,10 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 		Set("issues", ojson.StringsValue(issues))
 	w := e.validationWarnings(s, dv)
 	if note := e.wipedNote(s); note != "" {
-		w = append(w, note) // D.3.1 (contracts §14 item 5a)
+		w = append(w, note)
 	}
 	if len(w) > 0 {
-		b.Set("warnings", ojson.StringsValue(w)) // D.1, additive
+		b.Set("warnings", ojson.StringsValue(w)) // additive
 	}
 	b.
 		Set("workplan", p.Summary()).
@@ -396,17 +397,17 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 		Set("stateHash", ojson.StringValue(s.StateHash)).
 		Set("checkpointFreshness", ojson.StringValue(cv.freshness)).
 		Set("dependenciesRecorded", ojson.BoolValue(dv.recorded))
-	// D.2 (X6): the advisory critical path, only when a valid sidecar
-	// chains at least two open steps.
+	// The advisory critical path, only when a valid sidecar chains at
+	// least two open steps.
 	if dv.deps != nil && len(dv.issues) == 0 {
 		if cp, ok := criticalPathValue(e.graph(index.Build(p), dv)); ok {
 			b.Set("criticalPath", cp)
 		}
 	}
-	// D.4 (contracts §15, P2): the full compaction advice, only when
-	// recommended. Advice only; nothing is archived.
-	if a := e.compactionAdvice(s, true); a != nil {
-		b.Set("compactionRecommended", a.detailValue(p.ID))
+	// The full compaction advice, only when recommended. Advice only;
+	// nothing is archived.
+	if a := e.compactionAdvice(s, cv.freshness, true); a != nil {
+		b.Set("compactionRecommended", a.DetailValue(p.ID))
 	}
 	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }
@@ -444,7 +445,7 @@ func (e *Engine) lockValue(name string) (ojson.Value, string) {
 }
 
 // runtimeFacts are host facts the core cannot prove; they stay unknown
-// until the adapter supplies them (spec 01 §8). Supplied facts are
+// until the adapter supplies them. Supplied facts are
 // sanitized exactly as the reference does: every field is type-checked,
 // lists and strings are bounded (UTF-16 code units), and anything else
 // becomes null/unknown.
@@ -539,9 +540,9 @@ func runtimeFacts(facts *ojson.Value) ojson.Value {
 		Set("builtinPlan", ojson.NewObject(2).
 			Set("configured", boolean(get(f, "builtinPlan", "configured"))).
 			Set("effective", boolean(get(f, "builtinPlan", "effective"))).Value())
-	// D.3 (contracts §13 item 7): the host version the adapter runs on, the
-	// versions it was verified against and whether writes are enabled.
-	// Present only when the adapter supplies it.
+	// The host version the adapter runs on, the versions it was verified
+	// against and whether writes are enabled. Present only when the adapter
+	// supplies it.
 	if h := get(f, "host"); h.Kind() == ojson.Object {
 		writes := null
 		if w := get(h, "writes"); w.Kind() == ojson.String && (w.Str() == "enabled" || w.Str() == "disabled") {
@@ -576,13 +577,13 @@ func sliceUTF16(s string, max int) string {
 	return s
 }
 
-// wipedNote explains an empty draft plan that a wipe left behind (D.3.1,
-// contracts §14 item 5a): validate still reports the missing phases as an
+// wipedNote explains an empty draft plan that a wipe left behind:
+// validate still reports the missing phases as an
 // issue, and doctor adds where the removed content is archived and what to
 // do next. The newest reset:wipe archive under archive/<id>/ is named.
 func (e *Engine) wipedNote(s *snapshot.Snapshot) string {
 	p := s.Plan
-	if e.noD31 || len(p.Phases) != 0 || p.Status != "draft" {
+	if len(p.Phases) != 0 || p.Status != "draft" {
 		return ""
 	}
 	dirRel := snapshot.WorkplanDir + "/archive/" + s.ID

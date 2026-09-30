@@ -148,7 +148,7 @@ go test ./internal/ojson -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s
 go test ./internal/engine -run '^$' -bench Ops -benchmem   # 100 KiB to 10 MiB fixtures
 ```
 
-The tests replay a frozen golden corpus recorded from the original TypeScript engine (`testdata/`, hashes pinned in `testdata/MANIFEST.json`) and check every intentional divergence against pinned expectations. They also cover fault injection, crash recovery in separate processes, lock reclamation and the protocol framing limits. The adapter tests run the real core against fakes of the OpenCode host; an opt-in runtime smoke (`SHIORI_RUNTIME_SMOKE=1`) drives a private OpenCode server without calling a model. The JSON Schema validator is a test-only dependency and is not linked into the binary.
+The conformance suite (`internal/conformance`) replays a frozen golden corpus recorded from the original TypeScript engine (`testdata/`, hashes pinned in `testdata/MANIFEST.json`) against the engine's exported API. Every output is byte-identical to the reference except the vectors listed in `testdata/expected/expectations.json`, whose field-level comparators prove that only the documented difference occurs (each entry names its reason and contract section, and design changes are pinned by hash). They also cover fault injection, crash recovery in separate processes, lock reclamation and the protocol framing limits. The adapter tests run the real core against fakes of the OpenCode host; an opt-in runtime smoke (`SHIORI_RUNTIME_SMOKE=1`) drives a private OpenCode server without calling a model. The JSON Schema validator is a test-only dependency and is not linked into the binary.
 
 <details>
 <summary>Repository layout</summary>
@@ -157,14 +157,18 @@ The tests replay a frozen golden corpus recorded from the original TypeScript en
 | --- | --- |
 | `cmd/shiori` | CLI entry point |
 | `internal/cli` | Commands, human output, confirmation, `serve` |
-| `internal/engine` | Tool operations: read, resume, inspect, validate, doctor, create, update, patch, reset, checkpoint, compact |
+| `internal/engine` | Tool operations: read, resume, inspect, validate, doctor, create, update, patch, reset, checkpoint, compact, recovery, repair |
+| `internal/input` | Tool input parsing and validation for both surfaces |
+| `internal/resume` | Resume packet, budget policy, paging cursors |
+| `internal/advisor` | Compaction advice and note rollover selection |
+| `internal/conformance` | Black-box parity suite over the golden corpus |
 | `internal/storage` | Prepared intents, locks, staging, journals, commit |
 | `internal/protocol` | stdio JSON-lines server: handshake, prepare/commit, cancellation |
 | `internal/model`, `internal/index` | Plan V2 model, sidecars, Markdown rendering, dependency graph |
 | `internal/ojson`, `internal/snapshot` | Order-preserving JSON, plan and state hashing |
 | `adapter/opencode` | OpenCode plugin: tool registration, core client, host permission bridge |
 | `schema/v1` | JSON Schema 2020-12 contract for storage, tool inputs and the protocol |
-| `testdata/` | Golden corpus, fixtures, stage expectations, perf fixtures |
+| `testdata/` | Golden corpus, fixtures, documented differences (`expected/`), perf fixtures |
 | `docs/` | Specifications, contract, baseline measurements, status |
 
 </details>

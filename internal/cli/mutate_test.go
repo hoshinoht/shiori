@@ -27,7 +27,7 @@ func stateHash(t *testing.T, root string) string {
 	return v.StateHash
 }
 
-// contracts §5.5: off a TTY --yes is required; existing-state writes need
+// Off a TTY --yes is required; existing-state writes need
 // --expected-hash unless --legacy-unhashed; refusals change nothing.
 func TestMutationConfirmationPolicy(t *testing.T) {
 	root := testutil.NewRoot(t, "minimal-valid")
@@ -76,8 +76,8 @@ func TestMutationJSONMatchesVector(t *testing.T) {
 	root := testutil.NewRoot(t, "empty-workspace")
 	withPrompt(t, false, "")
 	in := `{"id":"New Plan!","kind":"  ","title":"  New  ","goal":" g ","scope":["a"," a ","","b"],"specFiles":["docs/x.md","./docs/x.md"],"phases":[{"id":"Phase One","title":" P1 ","steps":[{"id":"S 1","title":" s1 ","target":" ","action":" act ","validation":"val"}]}],"reviewFindings":[{"severity":"note","title":" f ","detail":" ","source":"src"}],"notes":["n","n"]}`
-	// D.3 (contracts §13 item 5): a link to a missing spec is refused
-	// before the prompt, with class invalid_input.
+	// A link to a missing spec is refused before the prompt, with class
+	// invalid_input.
 	code, out, _ := run("create", "--input", in, "--yes", "--json", "--root", root.Path)
 	if code != 1 || !strings.Contains(out, `"class": "invalid_input"`) || !strings.Contains(out, "Linked spec file does not exist: docs/x.md") {
 		t.Fatalf("missing spec: code %d, %s", code, out)
@@ -143,7 +143,7 @@ func TestCompactCLI(t *testing.T) {
 	}
 }
 
-// D.1 status gate: the CLI error carries the exact field-path issues and
+// The status gate: the CLI error carries the exact field-path issues and
 // nothing is prepared or written.
 func TestStatusGateCLI(t *testing.T) {
 	root := testutil.NewRoot(t, "empty-workspace")
@@ -167,8 +167,8 @@ func TestStatusGateCLI(t *testing.T) {
 	}
 }
 
-// D.3.1 (contracts §14 item 1): the step status gate carries field paths
-// in the --json error and refuses before the prompt.
+// The step status gate carries field paths in the --json error and
+// refuses before the prompt.
 func TestStepStatusGateCLI(t *testing.T) {
 	root := testutil.NewRoot(t, "minimal-valid")
 	withPrompt(t, false, "")
@@ -193,7 +193,7 @@ func TestStepStatusGateCLI(t *testing.T) {
 	}
 }
 
-// D.3.1: create applies the step status gate to the steps it creates.
+// Create applies the step status gate to the steps it creates.
 func TestCreateStepStatusGateCLI(t *testing.T) {
 	root := testutil.NewRoot(t, "empty-workspace")
 	withPrompt(t, false, "")
@@ -215,7 +215,7 @@ func TestCreateStepStatusGateCLI(t *testing.T) {
 	}
 }
 
-// D.4 (contracts §15): note rollover flags; the preview token binds them.
+// Note rollover flags; the preview token binds them.
 func TestCompactRolloverCLI(t *testing.T) {
 	root := testutil.NewRoot(t, "large-paging")
 	withPrompt(t, false, "")
@@ -265,7 +265,7 @@ func TestCompactRolloverCLI(t *testing.T) {
 	}
 }
 
-// D.4: --compaction-advice is a trusted read flag of resume and doctor.
+// --compaction-advice is a trusted read flag of resume and doctor.
 func TestCompactionAdviceFlag(t *testing.T) {
 	root := testutil.NewRoot(t, "large-paging")
 	_, plain, _ := run("doctor", "big-plan", "--json", "--root", root.Path)
@@ -294,7 +294,7 @@ func TestCompactionAdviceFlag(t *testing.T) {
 	}
 }
 
-// D.4.3 (contracts §18): checkpoint --merge keeps the stored fields and
+// checkpoint --merge keeps the stored fields and
 // --append-validation appends; the withheld-placeholder refusal and the
 // drop warnings reach the CLI unchanged.
 func TestCheckpointMergeCLI(t *testing.T) {

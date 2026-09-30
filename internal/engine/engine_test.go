@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/resume"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
@@ -24,7 +26,7 @@ func mustEngine(t *testing.T, root string) *Engine {
 	return e
 }
 
-// TestInterruptedStateHash is the D1/S09 acceptance case: a journal left
+// TestInterruptedStateHash: a journal left
 // before the primary JSON exists still yields a read-only state hash that
 // binds the journal bytes, without writing anything.
 func TestInterruptedStateHash(t *testing.T) {
@@ -33,7 +35,7 @@ func TestInterruptedStateHash(t *testing.T) {
 	before := testutil.Fingerprint(t, root.Path)
 	id := "tx-new"
 	doc := func() map[string]any {
-		v, err := e.Doctor(DoctorInput{ID: &id})
+		v, err := e.Doctor(input.DoctorInput{ID: &id})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,31 +74,31 @@ func TestInterruptedStateHash(t *testing.T) {
 		t.Fatal("state hash must change when the journal changes")
 	}
 	// read keeps the reference behaviour (not a design change).
-	if _, err := e.Read(ReadInput{ID: id}); err == nil || !strings.Contains(err.Error(), "Workplan file not found") {
+	if _, err := e.Read(input.ReadInput{ID: id}); err == nil || !strings.Contains(err.Error(), "Workplan file not found") {
 		t.Fatalf("read: %v", err)
 	}
 }
 
-// TestReadResponseLimit is D9: above the response frame limit read fails
+// TestReadResponseLimit: above the response frame limit read fails
 // with unsupported_capability and a retrieval pointer; the smaller
 // projections still work.
 func TestReadResponseLimit(t *testing.T) {
 	root := testutil.NewRoot(t, "full-valid")
 	e := mustEngine(t, root.Path)
 	e.MaxResponseBytes = 2048
-	_, err := e.Read(ReadInput{ID: "full-plan"})
+	_, err := e.Read(input.ReadInput{ID: "full-plan"})
 	if err == nil || !IsUnsupported(err) || !strings.Contains(err.Error(), "includeMarkdown=false") {
 		t.Fatalf("want unsupported_capability, got %v", err)
 	}
-	if _, err := e.Inspect(InspectInput{ID: "full-plan"}); err != nil {
+	if _, err := e.Inspect(input.InspectInput{ID: "full-plan"}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// TestResumeBudgetSweep is R01: every accepted budget produces a packet
-// whose complete text fits, for the stress fixtures and a synthetic
-// 13-phase/38-step roadmap, with and without paging. D.1 (contracts §11
-// item A) adds: every page progresses, a packet with more than one page
+// TestResumeBudgetSweep: every accepted budget produces a packet whose
+// complete text fits, for the stress fixtures and a synthetic
+// 13-phase/38-step roadmap, with and without paging; every page
+// progresses, a packet with more than one page
 // item never shortens text below the readable minimums or shortens a
 // protected path/reference, and a page below the target size only
 // carries floor-level item prose (text shrinks before the page).
@@ -109,7 +111,7 @@ func TestResumeBudgetSweep(t *testing.T) {
 	type target struct {
 		e     *Engine
 		id    string
-		graph bool // D.2: valid dependency sidecar
+		graph bool // valid dependency sidecar
 	}
 	var targets []target
 	for _, fx := range []struct{ fixture, id string }{{"resume-stress", "stress-plan"}, {"large-paging", "big-plan"}, {"unicode", "unicode-plan"}, {"full-valid", "full-plan"}} {
@@ -125,7 +127,7 @@ func TestResumeBudgetSweep(t *testing.T) {
 		for _, b := range budgets {
 			for _, limit := range []int{1, 7, 20, 100} {
 				b, limit := b, limit
-				in := ResumeInput{ID: fx.id, MaxChars: &b, Limit: &limit}
+				in := input.ResumeInput{ID: fx.id, MaxChars: &b, Limit: &limit}
 				seen := 0
 				for page := 0; page < 400; page++ {
 					v, text, err := e.Resume(in)
@@ -143,7 +145,7 @@ func TestResumeBudgetSweep(t *testing.T) {
 					}
 					checkTargetOrder(t, fmt.Sprintf("%s budget %d limit %d page %d", fx.id, b, limit, page), v, b, limit)
 					if fx.graph {
-						checkD2Order(t, fmt.Sprintf("%s (graph) budget %d limit %d page %d", fx.id, b, limit, page), v, resumeListCap(b))
+						checkReadyOrder(t, fmt.Sprintf("%s (graph) budget %d limit %d page %d", fx.id, b, limit, page), v, resume.ListCap(b))
 					}
 					seen += int(r)
 					next, _ := pg.Get("nextCursor")
@@ -172,7 +174,7 @@ func TestCursorTamperAndStale(t *testing.T) {
 	root := testutil.NewRoot(t, "large-paging")
 	e := mustEngine(t, root.Path)
 	limit := 10
-	v, err := e.Inspect(InspectInput{ID: "big-plan", Limit: &limit})
+	v, err := e.Inspect(input.InspectInput{ID: "big-plan", Limit: &limit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestCursorTamperAndStale(t *testing.T) {
 			b[i] = 'A'
 		}
 		bad := string(b)
-		if _, err := e.Inspect(InspectInput{ID: "big-plan", Limit: &limit, Cursor: &bad}); err == nil {
+		if _, err := e.Inspect(input.InspectInput{ID: "big-plan", Limit: &limit, Cursor: &bad}); err == nil {
 			t.Fatalf("tampered cursor accepted at %d", i)
 		}
 	}
@@ -195,7 +197,7 @@ func TestCursorTamperAndStale(t *testing.T) {
 	notes := filepath.Join(root.Path, ".opencode", "workplan", "big-plan.md")
 	data, _ := os.ReadFile(notes)
 	os.WriteFile(notes, append(data, '\n'), 0o600)
-	if _, err := e.Inspect(InspectInput{ID: "big-plan", Limit: &limit, Cursor: &tok}); err != errInspectCursorStale {
+	if _, err := e.Inspect(input.InspectInput{ID: "big-plan", Limit: &limit, Cursor: &tok}); err != resume.ErrInspectCursorStale {
 		t.Fatalf("want stale, got %v", err)
 	}
 }
@@ -207,7 +209,7 @@ func TestConcurrentReads(t *testing.T) {
 	root := testutil.NewRoot(t, "large-paging")
 	e := mustEngine(t, root.Path)
 	before := testutil.Fingerprint(t, root.Path)
-	want, _, err := e.Resume(ResumeInput{ID: "big-plan"})
+	want, _, err := e.Resume(input.ResumeInput{ID: "big-plan"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,13 +218,13 @@ func TestConcurrentReads(t *testing.T) {
 	for i := 0; i < 16; i++ {
 		go func() {
 			for _, op := range []func() error{
-				func() error { _, err := e.Read(ReadInput{ID: "big-plan"}); return err },
-				func() error { _, err := e.Inspect(InspectInput{ID: "big-plan"}); return err },
-				func() error { _, err := e.Validate(ValidateInput{ID: "big-plan"}); return err },
-				func() error { _, err := e.Doctor(DoctorInput{}); return err },
-				func() error { _, err := e.List(ListInput{}); return err },
+				func() error { _, err := e.Read(input.ReadInput{ID: "big-plan"}); return err },
+				func() error { _, err := e.Inspect(input.InspectInput{ID: "big-plan"}); return err },
+				func() error { _, err := e.Validate(input.ValidateInput{ID: "big-plan"}); return err },
+				func() error { _, err := e.Doctor(input.DoctorInput{}); return err },
+				func() error { _, err := e.List(input.ListInput{}); return err },
 				func() error {
-					v, _, err := e.Resume(ResumeInput{ID: "big-plan"})
+					v, _, err := e.Resume(input.ResumeInput{ID: "big-plan"})
 					if err == nil && string(ojson.Compact(v)) != wantText {
 						return errors.New("resume result differs under concurrency")
 					}

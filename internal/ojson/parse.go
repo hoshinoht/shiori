@@ -9,11 +9,11 @@ import (
 	"unsafe"
 )
 
-// MaxDepth is the default nesting limit (contracts §5.2).
+// MaxDepth is the default nesting limit.
 const MaxDepth = 128
 
 // SyntaxError describes malformed JSON. Its text deliberately differs from
-// JavaScript engine text (contracts §6.2 rule 3): comparators match only the
+// JavaScript engine text: comparators match only the
 // stable prefix that callers put in front of it.
 type SyntaxError struct {
 	Offset int

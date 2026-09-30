@@ -55,7 +55,7 @@ func human(w io.Writer, cmd string, v ojson.Value) {
 		fmt.Fprintf(w, "%s  (%s plans)\n", str(get(v, "directory")), str(get(v, "count")))
 		for _, p := range get(v, "workplans").Elems() {
 			if _, summary := p.Get("kind"); !summary {
-				// D.3: an unlistable plan carries an issues array (and, when
+				// An unlistable plan carries an issues array (and, when
 				// unreadable, the raw-byte stateHash for a repair).
 				fmt.Fprintf(w, "  %-24s INVALID\n", str(get(p, "id")))
 				issues(w, "      ", get(p, "issues"))
@@ -245,7 +245,7 @@ func itoaSum(a, b ojson.Value) string {
 	return fmt.Sprintf("%d", int64(x+y))
 }
 
-// graphNote renders the D.2 readiness of a step view (resume current and
+// graphNote renders the readiness of a step view (resume current and
 // page items, inspect steps): "  [ready, unblocks N]" or
 // "  [blocked by p/s (status), ...]"; empty without a dependency sidecar.
 func graphNote(v ojson.Value) string {
@@ -272,7 +272,7 @@ func graphNote(v ojson.Value) string {
 	return ""
 }
 
-// criticalPath prints the D.2 advisory critical path, when present.
+// criticalPath prints the advisory critical path, when present.
 func criticalPath(w io.Writer, cp ojson.Value, indent string) {
 	if cp.Kind() != ojson.Object {
 		return

@@ -16,7 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
 )
@@ -412,7 +414,7 @@ func TestUnknownInputFieldRejectsButConnectionContinues(t *testing.T) {
 			t.Fatalf("got %v", r)
 		}
 	}
-	// Nested unknown keys reject too (D2), with a path.
+	// Nested unknown keys reject too, with a path.
 	r := h.call("nested", "workplan_create", root, map[string]any{"id": "x", "goal": "g", "phases": []any{map[string]any{"title": "p", "extra": 1}}})
 	if r.errClass() != "invalid_input" || !strings.Contains(r.obj("error").str("message"), `phases.0: Unrecognized key: "extra"`) {
 		t.Fatalf("got %v", r)
@@ -537,7 +539,7 @@ func TestReadOperationsReturnExactToolText(t *testing.T) {
 }
 
 func listIDs(t *testing.T, e *engine.Engine) []string {
-	v, err := e.List(engine.ListInput{})
+	v, err := e.List(input.ListInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,15 +557,15 @@ func listIDs(t *testing.T, e *engine.Engine) []string {
 	return ids
 }
 
-func directText(t *testing.T, e *engine.Engine, op string, input map[string]any) string {
+func directText(t *testing.T, e *engine.Engine, op string, in map[string]any) string {
 	t.Helper()
-	b, _ := json.Marshal(input)
+	b, _ := json.Marshal(in)
 	p, err := ojson.Parse(b)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if op == "workplan_compact_preview" {
-		data, err := engine.ParseMutationInput("compact_preview", p.Value, engine.SurfaceNative)
+		data, err := input.ParseMutationInput("compact_preview", p.Value, input.SurfaceNative)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -622,8 +624,8 @@ func TestDoctorRuntimeFactsAreSanitized(t *testing.T) {
 		t.Fatalf("host facts rendered without being supplied: %v", rf["host"])
 	}
 
-	// D.3 (contracts §13 item 7): host facts are rendered only when
-	// supplied, type-checked and bounded.
+	// Host facts are rendered only when supplied, type-checked and
+	// bounded.
 	hc["runtimeFacts"] = map[string]any{"host": map[string]any{
 		"opencodeVersion": strings.Repeat("9", 100), "verified": "no", "verifiedVersions": []any{"2.0.19", 3, "2.0.20"},
 		"writes": "maybe", "detail": "Shiori adapter not verified",
@@ -896,14 +898,14 @@ func TestUnchangedMutationNeedsNoIntent(t *testing.T) {
 	h := start(t, Options{})
 	h.handshake()
 	hash := readHash(t, h, root, "minimal")
-	// Resetting generated Markdown to itself prepares nothing (D12).
+	// Resetting generated Markdown to itself prepares nothing.
 	r := h.call("m", "workplan_reset", root, map[string]any{"id": "minimal", "expectedHash": hash, "mode": "markdown-only"})
 	if !r.ok() || r.obj("prepared") != nil || r.text() == "" {
 		t.Fatalf("got %v", r)
 	}
 }
 
-// D.3 (contracts §13 item 1): the wipe preview is a result without an
+// The wipe preview is a result without an
 // intent; the apply is a prepared intent whose resources list the archive
 // and the sidecar deletions, and commit performs exactly that.
 func TestResetWipePreviewThenPreparedApply(t *testing.T) {
@@ -978,7 +980,7 @@ func TestErrorsCarryStructuredFields(t *testing.T) {
 	}
 }
 
-// D.1 (contracts §11 item D) on the native path: the status gate is an
+// On the native path the status gate is an
 // invalid_structure error with field-path issues and prepares nothing;
 // patch validate returns the issue list after commit.
 func TestStatusGateAndPatchValidateIssues(t *testing.T) {
@@ -1089,8 +1091,8 @@ func TestRedact(t *testing.T) {
 	}
 }
 
-// D.3.1 (contracts §14 item 1): the step status gate carries its field
-// paths too, before any intent is prepared.
+// The step status gate carries its field paths too, before any intent is
+// prepared.
 func TestStepStatusGateIssues(t *testing.T) {
 	root := fixtureRoot(t, "minimal-valid")
 	h := start(t, Options{})
@@ -1112,12 +1114,12 @@ func TestStepStatusGateIssues(t *testing.T) {
 	sameFingerprint(t, before, fingerprint(t, root))
 }
 
-// D.4 (contracts §15) on the native path: compact_preview with
+// On the native path compact_preview with
 // noteRollover is read-only, the prepared apply commits it, and the serve
 // option sets the advisor thresholds of the connection's engine.
 func TestNoteRolloverPreviewThenPreparedApply(t *testing.T) {
 	root := fixtureRoot(t, "large-paging")
-	h := start(t, Options{Compaction: &engine.CompactionThresholds{MinSavingsBytes: 1024, Notes: 10}})
+	h := start(t, Options{Compaction: &advisor.Thresholds{MinSavingsBytes: 1024, Notes: 10}})
 	h.handshake()
 	d := h.call("d", "workplan_doctor", root, map[string]any{"id": "big-plan"})
 	if !d.ok() || !strings.Contains(d.text(), `"compactionRecommended"`) {
@@ -1148,7 +1150,7 @@ func TestNoteRolloverPreviewThenPreparedApply(t *testing.T) {
 	}
 }
 
-// D.4.3 (contracts §18) on the native path: resume names the withheld
+// On the native path resume names the withheld
 // fields of a stale checkpoint, a rebuild that copies the withheld null is
 // refused before anything is prepared, merge=true keeps every field and
 // appends a validation line, and a rebuild that drops entries warns.

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -25,7 +26,7 @@ func (e *Engine) validationIssues(s *snapshot.Snapshot, requested string) ([]str
 		}
 	}
 	for _, bp := range s.BackslashPaths {
-		// D5 (approved): the manifest rewrites '\' to '/' for hash parity,
+		// The manifest rewrites '\' to '/' for hash parity,
 		// which can alias a different file. The plan stays readable; the
 		// ambiguity is diagnosed here and writers refuse new such links.
 		field := "specFiles"
@@ -47,17 +48,17 @@ func (e *Engine) validationIssues(s *snapshot.Snapshot, requested string) ([]str
 	return issues, dv
 }
 
-// msgMarkdownDrift is the D.1 non-failing warning for linked Markdown that
-// is not the generated rendering of the plan JSON (contracts §11 item C).
+// msgMarkdownDrift is the non-failing warning for linked Markdown that is
+// not the generated rendering of the plan JSON.
 const msgMarkdownDrift = "planFile: Linked Markdown is not the generated rendering of the plan JSON (handwritten or edited): %s. " +
 	"Later JSON changes (status, notes, findings, compaction) are not written into it. " +
 	"To regenerate it from the JSON (discarding the edits) use workplan_reset with mode \"markdown-only\" and replaceMarkdown=true; otherwise keep it in sync by hand."
 
 // validationWarnings are non-failing diagnostics; they never change
-// "valid": Markdown drift (D.1) and then the dependency-graph warnings
-// (D.2: order violations, cancelled prerequisites, backward links, empty
-// entries). A missing or empty Markdown is an issue, not a warning, and a
-// plan whose ids cannot render is diagnosed by the structure rules.
+// "valid": Markdown drift and then the dependency-graph warnings (order
+// violations, cancelled prerequisites, backward links, empty entries). A
+// missing or empty Markdown is an issue, not a warning, and a plan whose
+// ids cannot render is diagnosed by the structure rules.
 func (e *Engine) validationWarnings(s *snapshot.Snapshot, dv depView) []string {
 	var w []string
 	if s.Markdown.Exists && !model.Blank(string(s.Markdown.Bytes)) {
@@ -76,7 +77,7 @@ func (e *Engine) validationWarnings(s *snapshot.Snapshot, dv depView) []string {
 
 // Validate implements workplan_validate. Load failures are reported as a
 // single issue instead of an error.
-func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
+func (e *Engine) Validate(in input.ValidateInput) (ojson.Value, error) {
 	id, err := normalizeRequested(in.ID)
 	if err != nil {
 		return ojson.Value{}, err
@@ -90,9 +91,9 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 			Set("valid", ojson.BoolValue(false)).
 			Set("issueCount", ojson.IntValue(1)).
 			Set("issues", ojson.StringsValue([]string{err.Error()}))
-		// D.3 (contracts §13 item 2): the raw-byte hashes of an unreadable
-		// plan, so workplan_create overwrite can repair it.
-		if u := e.unreadableFor(id, err); u != nil {
+		// The raw-byte hashes of an unreadable plan, so workplan_create
+		// overwrite can repair it.
+		if u := e.unreadable(id, err); u != nil {
 			b.Set("planHash", ojson.StringValue(u.PlanHash)).
 				Set("stateHash", ojson.StringValue(u.StateHash))
 		}
@@ -105,7 +106,7 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 		Set("valid", ojson.BoolValue(len(issues) == 0)).
 		Set("issueCount", ojson.IntValue(int64(len(issues)))).
 		Set("issues", ojson.StringsValue(issues))
-	// D.1: additive, present only when there is something to report, so
+	// Additive, present only when there is something to report, so
 	// outputs without warnings stay byte-identical to the reference.
 	if w := e.validationWarnings(s, dv); len(w) > 0 {
 		b.Set("warnings", ojson.StringsValue(w))
@@ -121,14 +122,11 @@ func (e *Engine) Validate(in ValidateInput) (ojson.Value, error) {
 // maxMarkerList bounds the steps named in the missing-marker warning.
 const maxMarkerList = 10
 
-// missingStepMarkers is the D.3 non-failing warning (contracts §13 item
-// 4) for handwritten Markdown that lacks a step's
-// "<!-- workplan-step-id: <id> -->" marker. Generated Markdown always has
-// them. Shiori never rewrites handwritten Markdown to add them.
+// missingStepMarkers is the non-failing warning for handwritten Markdown
+// that lacks a step's "<!-- workplan-step-id: <id> -->" marker. Generated
+// Markdown always has them. Shiori never rewrites handwritten Markdown to
+// add them.
 func (e *Engine) missingStepMarkers(s *snapshot.Snapshot) string {
-	if e.noD3 {
-		return ""
-	}
 	md := string(s.Markdown.Bytes)
 	var missing []string
 	total := 0

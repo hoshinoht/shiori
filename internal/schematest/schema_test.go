@@ -1,5 +1,5 @@
 // Package schematest proves that the JSON Schemas in schema/ agree with
-// the corpus (contracts §5.1). The validator is a test-only dependency and
+// the corpus. The validator is a test-only dependency and
 // is never linked into the shipped binary.
 package schematest
 
@@ -13,7 +13,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
@@ -179,7 +179,7 @@ func TestToolSchemasAgreeWithNativeParser(t *testing.T) {
 	}
 }
 
-// TestCheckpointMergeSchemaAgreesWithParser (D.4.3, contracts §18 item 3):
+// TestCheckpointMergeSchemaAgreesWithParser:
 // the native checkpoint schema and the Go parser accept the same merge and
 // appendValidation shapes (the withheld-placeholder refusal is an
 // x-shiori-rules refinement, like the other cross-field rules).
@@ -218,7 +218,7 @@ func TestCheckpointMergeSchemaAgreesWithParser(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := engine.ParseMutationInput("checkpoint", v.Value, engine.SurfaceNative); (err == nil) != want {
+		if _, err := input.ParseMutationInput("checkpoint", v.Value, input.SurfaceNative); (err == nil) != want {
 			t.Errorf("parser %s: ok=%v want %v (%v)", in, err == nil, want, err)
 		}
 	}

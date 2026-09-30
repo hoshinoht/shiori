@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -117,7 +118,7 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 	if err := model.UniqueIDError(p); err != nil {
 		return nil, err
 	}
-	// D.4.3 (contracts §18 item 3): merge=true keeps every omitted field
+	// merge=true keeps every omitted field
 	// of the stored checkpoint (fresh, stale or legacy v1). A missing or
 	// unreadable checkpoint merges as an empty one.
 	old := classifyCheckpoint(s).cp
@@ -189,7 +190,7 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 		}
 		*f.dst = trimDedupe(l)
 	}
-	// D.4.3: appendValidation adds to recentValidation (exact duplicates
+	// appendValidation adds to recentValidation (exact duplicates
 	// of an existing or earlier line are skipped).
 	if av, ok := data.Get("appendValidation"); ok {
 		add := []string{av.Str()}
@@ -199,7 +200,7 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 		cp.RecentValidation = appendDedupe(cp.RecentValidation, add)
 	}
 	var warnings []string
-	if old != nil && !e.noD43 {
+	if old != nil {
 		warnings = checkpointDropWarnings(old, cp)
 	}
 	cpValue := model.CheckpointValue(cp, false)
@@ -235,12 +236,12 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 // mergeMissingError refuses merge=true without a value to keep: the field
 // is omitted and there is no readable stored checkpoint with it.
 func mergeMissingError(field string) error {
-	return &InputError{Tool: "checkpoint", Issues: []model.Issue{{Path: []string{field},
+	return &input.InputError{Tool: "checkpoint", Issues: []model.Issue{{Path: []string{field},
 		Message: "merge=true keeps the stored " + field + ", but there is no readable stored checkpoint — pass " + field}}}
 }
 
 // checkpointDropWarnings compares the stored checkpoint with the one being
-// written (D.4.3, contracts §18 item 2): a list whose previous entries are
+// written: a list whose previous entries are
 // not all kept is reported with its counts before → after. Shorter summary
 // or nextAction text is not a warning, and blank text is refused before
 // this point, so prose never warns.

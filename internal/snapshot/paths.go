@@ -13,8 +13,8 @@ import (
 const WorkplanDir = ".opencode/workplan"
 
 // CanonicalRoot resolves the trusted project root to an absolute path with
-// symlinks evaluated (spec 01 §4: canonical roots come from trusted
-// context, never model input).
+// symlinks evaluated (canonical roots come from trusted context, never
+// model input).
 func CanonicalRoot(root string) (string, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -76,7 +76,7 @@ func NormalizeSpecFile(root, raw string) (string, error) {
 
 // ManifestPath is the manifest identity of a project-relative path. A
 // literal backslash is rewritten to '/' for hash parity with the
-// reference (D5); such paths are reported by validation and new ones are
+// reference; such paths are reported by validation and new ones are
 // refused by writers.
 func ManifestPath(rel string) string { return strings.ReplaceAll(rel, `\`, "/") }
 
@@ -104,7 +104,7 @@ func withinRoot(root, target string) bool {
 
 // CheckWritable refuses a write target that is not a clean in-root path,
 // or whose existing path components (below the root) include a symlink:
-// writers never follow or replace symlinks (spec 01 §4).
+// writers never follow or replace symlinks.
 func CheckWritable(root, rel string) error {
 	clean, ok := relInRoot(root, rel)
 	if !ok || clean != rel {

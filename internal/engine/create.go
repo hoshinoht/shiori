@@ -11,7 +11,7 @@ import (
 )
 
 // PrepareCreate prepares workplan_create from accepted input data
-// (ParseMutationInput("create", ...)).
+// (input.ParseMutationInput("create", ...)).
 func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	rawID, _ := getStr(data, "id")
 	id, err := model.NormalizeID(rawID)
@@ -69,12 +69,10 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	if err := statusGate(p.Status, p); err != nil {
 		return nil, err
 	}
-	// D.3.1 (contracts §14 item 1): every step created in a gated status
-	// must carry its own required structure.
-	if !e.noD31 {
-		if err := stepStatusGate(&model.Plan{}, p); err != nil {
-			return nil, err
-		}
+	// Every step created in a gated status must carry its own required
+	// structure.
+	if err := stepStatusGate(&model.Plan{}, p); err != nil {
+		return nil, err
 	}
 	explicitMD, hasMD := getStr(data, "planMarkdown")
 	replaceMD := false
@@ -86,7 +84,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 	r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
 	var reads []storage.ReadEntry
 	var jsonBefore, mdBefore snapshot.Artifact
-	keepMD := false // D.3: an unreadable plan's existing Markdown is kept
+	keepMD := false // an unreadable plan's existing Markdown is kept
 	var repair *snapshot.Unreadable
 	op := "create"
 	if !overwrite {
@@ -130,17 +128,16 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			if u == nil {
 				return nil, err
 			}
-			// D.3 (contracts §13 item 2): repair an unreadable plan. The
-			// expectedHash is the raw-byte state hash that doctor, validate
-			// and list report for it.
+			// Repair an unreadable plan. The expectedHash is the raw-byte
+			// state hash that doctor, validate and list report for it.
 			if u.Journal.Exists {
 				return nil, e.errPendingJournal(id)
 			}
 			if expected != nil && *expected != u.StateHash {
 				return nil, &StaleHashError{Current: u.StateHash}
 			}
-			// D.3.1 (contracts §14 item 2b): without an explicit planFile the
-			// repair keeps the link recovered from the damaged bytes.
+			// Without an explicit planFile the repair keeps the link
+			// recovered from the damaged bytes.
 			if !planFileSet {
 				if rec := e.recoverPlanFile(id, u.JSON.Bytes); rec != "" {
 					p.PlanFile = rec
@@ -201,9 +198,9 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		{rel: p.PlanFile, kind: "markdown", before: mdBefore.Bytes, beforeOK: mdBefore.Exists, after: md, afterOK: true},
 	}
 	archiveRel := ""
-	if repair != nil && !e.noD31 {
-		// D.3.1 (contracts §14 item 2a): the exact damaged bytes are
-		// archived first, in the same transaction.
+	if repair != nil {
+		// The exact damaged bytes are archived first, in the same
+		// transaction.
 		var archive []byte
 		archiveRel, archive = e.repairArchive(id, repair, p.PlanFile, mdBefore, now)
 		targets = append([]targetSpec{{rel: archiveRel, kind: "archive", after: archive, afterOK: true}}, targets...)
@@ -230,7 +227,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			Set("path", ojson.StringValue(e.absRel(jsonRel))).
 			Set("planPath", ojson.StringValue(e.absRel(p.PlanFile)))
 		if archiveRel != "" {
-			b.Set("archivePath", ojson.StringValue(e.absRel(archiveRel))) // D.3.1 repair archive
+			b.Set("archivePath", ojson.StringValue(e.absRel(archiveRel))) // repair archive
 		}
 		return Output{Value: b.
 			Set("workplan", post.Plan.Summary()).
@@ -255,9 +252,8 @@ func optHash(data ojson.Value) *string {
 }
 
 // generatedMarkdown reports whether the stored Markdown byte-equals the
-// rendering of the stored plan, in the current or the legacy (pre-D.3.1)
-// finding style. Ids that cannot render are reported with field paths
-// (D7).
+// rendering of the stored plan, in the current or the legacy finding
+// style. Ids that cannot render are reported with field paths.
 func (e *Engine) generatedMarkdown(s *snapshot.Snapshot) (bool, error) {
 	if !s.Markdown.Exists {
 		return false, nil
@@ -269,7 +265,7 @@ func (e *Engine) generatedMarkdown(s *snapshot.Snapshot) (bool, error) {
 }
 
 // checkTargetPaths refuses targets that escape the root through symlinks
-// or are themselves symlinks (spec 01 §4).
+// or are themselves symlinks.
 func (e *Engine) checkTargetPaths(in *storage.Intent) error {
 	if in == nil {
 		return nil
@@ -282,9 +278,9 @@ func (e *Engine) checkTargetPaths(in *storage.Intent) error {
 	return nil
 }
 
-// unreadable returns the raw-byte view of a plan whose primary JSON
-// exists but cannot be loaded (D.3, contracts §13 item 2), or nil when the
-// load error is not one a repair addresses (missing plan, limits).
+// unreadable returns the raw-byte view of a plan whose primary JSON exists
+// but cannot be loaded, or nil when the load error is not one a repair
+// addresses (missing plan, limits).
 func (e *Engine) unreadable(id string, loadErr error) *snapshot.Unreadable {
 	var nf *snapshot.NotFoundError
 	if errors.As(loadErr, &nf) || IsUnsupported(loadErr) {
@@ -295,13 +291,4 @@ func (e *Engine) unreadable(id string, loadErr error) *snapshot.Unreadable {
 		return nil
 	}
 	return u
-}
-
-// unreadableFor is unreadable for the read-only reports; the D.3 members
-// are off in the test-only D.3-off engine.
-func (e *Engine) unreadableFor(id string, loadErr error) *snapshot.Unreadable {
-	if e.noD3 {
-		return nil
-	}
-	return e.unreadable(id, loadErr)
 }

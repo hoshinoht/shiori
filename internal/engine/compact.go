@@ -9,19 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/index"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 	"github.com/hoshinoht/shiori/internal/storage"
 )
 
-// Compaction (spec 01 §7): update → checkpoint → preview → authorized
-// apply. The preview token binds the state hash, reason, exact selection,
-// removed contents (their digest) and Markdown treatment. D10 (owner
-// decision): unlike the reference, neither the token nor the archive path
-// depends on the absolute project root, so the same state previewed at
-// another root yields the same token.
+// Compaction: update → checkpoint → preview → authorized apply. The
+// preview token binds the state hash, reason, exact selection, removed
+// contents (their digest) and Markdown treatment. Unlike the reference,
+// neither the token nor the archive path depends on the absolute project
+// root, so the same state previewed at another root yields the same token.
 
 const (
 	msgFreshCheckpoint = "A fresh version-2 multiartifact checkpoint is required; write a checkpoint after the latest plan update, then preview again"
@@ -49,7 +50,7 @@ type compactPlan struct {
 	cpAfter    []byte
 	freshness  string
 	canonical  ojson.Value
-	roll       *rollover // D.4 note rollover selection, when requested
+	roll       *advisor.Rollover // note rollover selection, when requested
 	jsonAfter  []byte
 	mdAfter    []byte
 }
@@ -103,7 +104,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	s, err := e.load(id)
 	if err != nil {
 		if apply {
-			return nil, e.repairHint(id, err) // D.3.1 item 2c
+			return nil, e.repairHint(id, err)
 		}
 		return nil, err
 	}
@@ -119,8 +120,8 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 		return nil, errors.New("archiveReason cannot be empty")
 	}
 	if apply {
-		if c, _ := getStr(data, "confirmation"); c != ConfirmArchive {
-			return nil, errors.New(msgApplyConfirm)
+		if c, _ := getStr(data, "confirmation"); c != input.ConfirmArchive {
+			return nil, errors.New(input.MsgApplyConfirm)
 		}
 	}
 	cp.phaseIDs, _ = getList(data, "completedPhaseIds")
@@ -154,12 +155,12 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 		seenPh[pid] = true
 	}
 	p := s.Plan
-	// D.4 (contracts §15, P3): noteRollover selects the notes.
+	// noteRollover selects the notes.
 	if hasRoll {
 		if _, ok := data.Get("noteIndexes"); ok {
-			return nil, errors.New(msgRolloverWithIndexes)
+			return nil, errors.New(input.MsgRolloverWithIndexes)
 		}
-		keep := DefaultRolloverKeep
+		keep := advisor.DefaultRolloverKeep
 		if k, ok := rollIn.Get("keepLatest"); ok {
 			f, _ := k.Float()
 			keep = int(f)
@@ -173,9 +174,9 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 				return nil, fmt.Errorf("noteRollover.pinNoteIndexes: Note index out of range: %d", i)
 			}
 		}
-		r := rolloverSelect(p, keep, pins)
+		r := advisor.SelectRollover(p, keep, pins)
 		cp.roll = &r
-		cp.noteIdx = append([]int{}, r.selected...)
+		cp.noteIdx = append([]int{}, r.Selected()...)
 	}
 	selPhases := []ojson.Value{}
 	removedPhases := []ojson.Value{}
@@ -244,7 +245,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	if cp.roll != nil {
 		// The token binds the rollover parameters as well as the notes
 		// they resolved to.
-		canonical.Set("noteRollover", cp.roll.inputValue())
+		canonical.Set("noteRollover", cp.roll.InputValue())
 	}
 	cp.canonical = canonical.Value()
 	cp.token = "v1-" + digestWith("workplan-compact-token-v1", ojson.NewObject(6).
@@ -478,7 +479,7 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 	out := ojson.NewObject(18).
 		Set("mode", ojson.StringValue("preview")).
 		Set("workplanId", ojson.StringValue(s.ID)).
-		Set("confirmationRequiredForApply", ojson.StringValue(ConfirmArchive)).
+		Set("confirmationRequiredForApply", ojson.StringValue(input.ConfirmArchive)).
 		Set("requiresFreshCheckpoint", ojson.BoolValue(true)).
 		Set("checkpointFreshness", ojson.StringValue(cp.freshness)).
 		Set("archiveReason", ojson.StringValue(cp.reason)).
@@ -487,13 +488,13 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 		Set("stateHash", ojson.StringValue(s.StateHash)).
 		Set("canonicalSelection", cp.canonical).
 		Set("selected", selected)
-	// D.4 (contracts §15, P3): the rollover breakdown and the exact byte
-	// savings of the apply intent, only in rollover mode.
+	// The rollover breakdown and the exact byte savings of the apply
+	// intent, only in rollover mode.
 	if cp.roll != nil {
-		out.Set("noteRollover", cp.roll.previewValue()).
+		out.Set("noteRollover", cp.roll.PreviewValue()).
 			Set("estimatedSavings", cp.savingsValue())
 	}
-	// D.2 (G5): archived steps that remaining steps still depend on; apply
+	// Archived steps that remaining steps still depend on; apply
 	// keeps them as terminal summaries. Present only when there are any.
 	if ap := e.archivedPrerequisites(cp); len(ap) > 0 {
 		out.Set("archivedPrerequisites", ojson.ArrayValue(ap))
@@ -519,7 +520,7 @@ func (e *Engine) CompactPreview(data ojson.Value) (ojson.Value, error) {
 // archivedPrerequisites lists each selected step with dependents that
 // stay in the plan (valid sidecar only), in selection order.
 func (e *Engine) archivedPrerequisites(cp *compactPlan) []ojson.Value {
-	if e.noGraph || len(cp.phases) == 0 {
+	if len(cp.phases) == 0 {
 		return nil
 	}
 	ix := index.Build(cp.s.Plan)
@@ -624,7 +625,7 @@ func (e *Engine) PrepareCompact(data ojson.Value) (*Prepared, error) {
 			Set("linkedMarkdownUpdated", ojson.BoolValue(cp.gen)).
 			Set("checkpointRefreshed", ojson.BoolValue(cp.cpAfter != nil))
 		if cp.roll != nil {
-			out.Set("savings", cp.savingsValue()) // D.4, rollover mode only
+			out.Set("savings", cp.savingsValue()) // rollover mode only
 		}
 		return Output{Value: out.
 			Set("planHash", ojson.StringValue(post.PlanHash)).
@@ -678,4 +679,19 @@ func (e *Engine) previewDirs(in *storage.Intent) []string {
 		level = next
 	}
 	return out
+}
+
+// savingsValue reports the exact plan JSON and Markdown bytes before and
+// after the compaction intent (the new updatedAt included).
+func (cp *compactPlan) savingsValue() ojson.Value {
+	j := advisor.ByteDelta{Before: len(cp.s.JSON.Bytes), After: len(cp.jsonAfter)}
+	m := advisor.ByteDelta{Before: len(cp.s.Markdown.Bytes), After: len(cp.s.Markdown.Bytes)}
+	if cp.gen {
+		m.After = len(cp.mdAfter)
+	}
+	t := advisor.ByteDelta{Before: j.Before + m.Before, After: j.After + m.After}
+	return ojson.NewObject(3).
+		Set("json", j.Value()).
+		Set("markdown", m.Value(ojson.Member{Key: "treatment", Value: ojson.StringValue(cp.treatment())})).
+		Set("total", t.Value()).Value()
 }

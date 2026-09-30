@@ -4,13 +4,14 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 	"github.com/hoshinoht/shiori/internal/storage"
 )
 
-// workplan_reset modes (D.3, contracts §13 item 1):
+// workplan_reset modes:
 //
 //   - "draft" resets status only: the plan, every phase and every step go
 //     back to draft and the checkpoint sidecar (execution state) is
@@ -28,16 +29,11 @@ import (
 //   - "markdown-only" regenerates the linked Markdown from the stored JSON
 //     (unchanged). Handwritten Markdown is replaced only with
 //     replaceMarkdown=true. When nothing would change, no intent is
-//     prepared and no authorization is requested (D12).
+//     prepared and no authorization is requested.
 
 const (
-	// ConfirmWipe is the wipe apply confirmation phrase.
-	ConfirmWipe        = "WIPE_PLAN_CONTENT"
-	msgWipeConfirm     = "Wipe apply requires confirmation=" + ConfirmWipe
-	msgWipeToken       = "Wipe apply requires the previewToken from a workplan_reset mode=wipe preview (call it without previewToken and confirmation first)"
-	msgWipeWrongToken  = "previewToken does not match the current snapshot, removed content, notes selection, or Markdown treatment; preview the wipe again before applying"
-	msgWipeOnlyOptions = "previewToken and confirmation apply only to mode=wipe"
-	wipeReason         = "workplan_reset mode=wipe"
+	msgWipeWrongToken = "previewToken does not match the current snapshot, removed content, notes selection, or Markdown treatment; preview the wipe again before applying"
+	wipeReason        = "workplan_reset mode=wipe"
 )
 
 // PrepareReset prepares workplan_reset.
@@ -62,7 +58,7 @@ func (e *Engine) PrepareReset(data ojson.Value) (*Prepared, error) {
 	_, hasToken := data.Get("previewToken")
 	_, hasConfirm := data.Get("confirmation")
 	if mode != "wipe" && (hasToken || hasConfirm) {
-		return nil, errors.New(msgWipeOnlyOptions)
+		return nil, errors.New(input.MsgWipeOnlyOptions)
 	}
 	gen, err := e.generatedMarkdown(s)
 	if err != nil {
@@ -89,8 +85,8 @@ func (e *Engine) PrepareReset(data ojson.Value) (*Prepared, error) {
 	return e.resetResult(&Prepared{Tool: "workplan_reset", Intent: in}, s, mode, s.Plan.PlanFile, nil), nil
 }
 
-// resetResult renders the reset output (reference shape; the D.3 members
-// appear only when they apply).
+// resetResult renders the reset output (reference shape; the members the
+// reference lacks appear only when they apply).
 func (e *Engine) resetResult(prep *Prepared, s *snapshot.Snapshot, mode, planFile string, extra func(b *ojson.Builder)) *Prepared {
 	in, id := prep.Intent, s.ID
 	prep.result = func(sync bool) (Output, error) {
@@ -115,7 +111,7 @@ func (e *Engine) resetResult(prep *Prepared, s *snapshot.Snapshot, mode, planFil
 	return finalize(prep)
 }
 
-// prepareDraftReset resets statuses only (D.3 item 1).
+// prepareDraftReset resets statuses only.
 func (e *Engine) prepareDraftReset(s *snapshot.Snapshot, replaceMD, gen bool) (*Prepared, error) {
 	p := s.Plan.Clone()
 	p.Status = "draft"
@@ -267,11 +263,11 @@ func (e *Engine) prepareWipe(s *snapshot.Snapshot, data ojson.Value, preserveNot
 	tok, hasToken := getStr(data, "previewToken")
 	conf, hasConfirm := getStr(data, "confirmation")
 	if hasToken || hasConfirm {
-		if conf != ConfirmWipe {
-			return nil, errors.New(msgWipeConfirm)
+		if conf != input.ConfirmWipe {
+			return nil, errors.New(input.MsgWipeConfirm)
 		}
 		if !hasToken {
-			return nil, errors.New(msgWipeToken)
+			return nil, errors.New(input.MsgWipeToken)
 		}
 	}
 	w, err := e.wipeSelect(s, preserveNotes, replaceMD, gen)
@@ -315,7 +311,7 @@ func (e *Engine) wipePreview(s *snapshot.Snapshot, w *wipePlan, preserveNotes bo
 		Set("mode", ojson.StringValue("wipe")).
 		Set("preview", ojson.BoolValue(true)).
 		Set("workplanId", ojson.StringValue(s.ID)).
-		Set("confirmationRequiredForApply", ojson.StringValue(ConfirmWipe)).
+		Set("confirmationRequiredForApply", ojson.StringValue(input.ConfirmWipe)).
 		Set("previewToken", ojson.StringValue(w.token)).
 		Set("planHash", ojson.StringValue(s.PlanHash)).
 		Set("stateHash", ojson.StringValue(s.StateHash)).
@@ -331,7 +327,7 @@ func (e *Engine) wipePreview(s *snapshot.Snapshot, w *wipePlan, preserveNotes bo
 			Set("lockPaths", ojson.StringsValue(lockPaths)).
 			Set("stagingPaths", ojson.StringsValue(res.Staging)).
 			Set("resources", ojson.StringsValue(resources)).Value()).
-		Set("nextStep", ojson.StringValue("Nothing was changed. To apply, call workplan_reset again with mode=wipe, the same preserveNotes and replaceMarkdown, expectedHash="+s.StateHash+", this previewToken and confirmation="+ConfirmWipe+". The complete originals are archived at archivePath before anything is removed.")).
+		Set("nextStep", ojson.StringValue("Nothing was changed. To apply, call workplan_reset again with mode=wipe, the same preserveNotes and replaceMarkdown, expectedHash="+s.StateHash+", this previewToken and confirmation="+input.ConfirmWipe+". The complete originals are archived at archivePath before anything is removed.")).
 		Set("readOnly", ojson.BoolValue(true)).Value()
 }
 

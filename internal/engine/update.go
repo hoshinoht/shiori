@@ -280,7 +280,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 
 	// Dependency sidecar: full replacement, validated against the result.
 	var depsAfter []byte
-	var depsFinal *model.Dependencies // the sidecar the result is checked against (D.2)
+	var depsFinal *model.Dependencies // the sidecar the result is checked against
 	depsWritten := has(data, "dependencies")
 	if depsWritten {
 		d := &model.Dependencies{ID: id}
@@ -296,7 +296,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			}
 			d.Entries = append(d.Entries, en)
 		}
-		// D.2 (G5): an entry must name at least one prerequisite.
+		// An entry must name at least one prerequisite.
 		var issues []string
 		for i, en := range d.Entries {
 			if len(en.DependsOn) == 0 {
@@ -311,7 +311,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		depsAfter = model.EncodeDependencies(d)
 		depsFinal = d
 	} else if s.Dependencies.Exists {
-		// D.2 (G4): replacing phases re-validates the stored sidecar in the
+		// Replacing phases re-validates the stored sidecar in the
 		// same prepared write; links it would leave dangling are refused.
 		if dv := e.dependencies(s, nil); dv.deps != nil {
 			after := index.ValidateDependencies(index.Build(p), dv.deps)
@@ -337,7 +337,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		}
 	}
 	var warnings []string
-	if depsFinal != nil && !e.noGraph {
+	if depsFinal != nil {
 		g := index.NewGraph(index.Build(p), depsFinal)
 		if depsWritten {
 			warnings = graphWarnings(g)
@@ -351,12 +351,10 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			return nil, err
 		}
 	}
-	// D.3.1 (contracts §14 item 1): steps this call moves to a gated
-	// status must carry their own required structure.
-	if !e.noD31 {
-		if err := stepStatusGate(old, p); err != nil {
-			return nil, err
-		}
+	// Steps this call moves to a gated status must carry their own
+	// required structure.
+	if err := stepStatusGate(old, p); err != nil {
+		return nil, err
 	}
 
 	// Linked Markdown.
@@ -445,7 +443,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			Set("planHash", ojson.StringValue(post.PlanHash)).
 			Set("stateHash", ojson.StringValue(post.StateHash)).
 			Set("directorySync", dirSyncValue(sync))
-		// D.2 (G2/G3/G5): non-failing order warnings, only when present.
+		// Non-failing order warnings, only when present.
 		if len(warnings) > 0 {
 			b.Set("warnings", ojson.StringsValue(warnings))
 		}

@@ -8,8 +8,8 @@ import (
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
 
-// Graph is the D.2 analysis of a valid dependency sidecar over the plan's
-// steps (contracts §12): readiness, order checks, downstream counts and
+// Graph is the analysis of a valid dependency sidecar over the plan's
+// steps: readiness, order checks, downstream counts and
 // the critical path. It is derived and never authority; callers build it
 // only when the sidecar decodes and ValidateDependencies reports nothing,
 // so every edge resolves to a plan step or an archived terminal summary
@@ -23,7 +23,7 @@ type Graph struct {
 	terminal map[StepKey]string // archived prerequisite status
 	order    map[StepKey]int    // plan order (phase-major); archived steps are absent
 	keys     []StepKey          // plan steps in plan order (first occurrence)
-	// Entries keeps the stored entries for field paths (G5 warnings).
+	// Entries keeps the stored entries for field paths (warnings).
 	Entries []model.DependencyEntry
 
 	cp   *CriticalPath

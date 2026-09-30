@@ -1,5 +1,5 @@
 // Package index builds derived, rebuildable lookup structures over a
-// decoded plan (spec 03 §2). Indexes are never authority: they are rebuilt
+// decoded plan. Indexes are never authority: they are rebuilt
 // from the snapshot bytes and carry no state of their own.
 package index
 
@@ -266,7 +266,7 @@ func ValidateDependencies(ix *Plan, d *model.Dependencies) []string {
 }
 
 // MarkerIndex maps generated Markdown markers to plan entities. Because
-// the marker format is lossy for non-ASCII ids (D8), a marker shared by
+// the marker format is lossy for non-ASCII ids, a marker shared by
 // several entities is ambiguous and is never resolved "first match wins";
 // section retrieval must fall back to heading plus ordinal.
 type MarkerIndex struct {

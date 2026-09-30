@@ -9,16 +9,15 @@ import (
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
 
-// D.2 — the dependency graph drives work (approved 2026-09-30, contracts
-// §12). Everything here is advisory: order checks warn and never refuse,
-// and the critical path and readiness ranking are recommendations only.
-// Graph additions appear only when the plan has a dependency sidecar that
-// decodes and validates; a missing or invalid sidecar keeps the D.1
-// output byte-for-byte (its issues are already reported).
+// The dependency graph drives work. Everything here is advisory: order
+// checks warn and never refuse, and the critical path and readiness
+// ranking are recommendations only. Graph additions appear only when the
+// plan has a dependency sidecar that decodes and validates; a missing or
+// invalid sidecar adds nothing (its issues are already reported).
 
 // graph returns the analysis graph for a valid recorded sidecar, else nil.
 func (e *Engine) graph(ix *index.Plan, dv depView) *index.Graph {
-	if e.noGraph || dv.deps == nil || len(dv.issues) > 0 {
+	if dv.deps == nil || len(dv.issues) > 0 {
 		return nil
 	}
 	if ix == nil {
@@ -27,7 +26,7 @@ func (e *Engine) graph(ix *index.Plan, dv depView) *index.Graph {
 	return index.NewGraph(ix, dv.deps)
 }
 
-// startedStatus is a step status that an order check applies to (G2):
+// startedStatus is a step status that an order check applies to:
 // in_progress, review or completed.
 func startedStatus(s string) bool { return s == "in_progress" || s == "review" || s == "completed" }
 
@@ -70,8 +69,8 @@ func emptyEntryWarning(i int) string {
 }
 
 // graphWarnings are the non-failing validate/doctor diagnostics: order
-// violations (G2), cancelled prerequisites (G3), backward links and empty
-// entries (G5). valid and issues are unchanged.
+// violations, cancelled prerequisites, backward links and empty entries.
+// valid and issues are unchanged.
 func graphWarnings(g *index.Graph) []string {
 	if g == nil {
 		return nil
@@ -138,7 +137,7 @@ func criticalPathValue(g *index.Graph) (ojson.Value, bool) {
 		Set("recommendation", ojson.StringValue("Advisory: finishing these steps first shortens the longest remaining dependency chain; nothing is executed automatically.")).Value(), true
 }
 
-// statusChangeWarnings are the update-time order warnings (G2/G3): steps
+// statusChangeWarnings are the update-time order warnings: steps
 // whose status the update sets to in_progress, review or completed while a
 // prerequisite is not completed, and open dependents left behind a step
 // the update cancels. The write is never refused for them.

@@ -1,14 +1,14 @@
 // Package ojson is an order-preserving JSON value model with an
 // ECMAScript-compatible serializer.
 //
-// Artifacts must round-trip unknown members exactly (contracts §6.1, D4) and
-// every hash/cursor preimage must match JavaScript's JSON.stringify output
-// (contracts §3). encoding/json cannot guarantee either: it reorders map keys,
-// collapses duplicate keys, loses number spelling and escapes <, >, & and
-// U+2028/U+2029. This package keeps object members in source order, records
-// duplicate member names instead of collapsing them, keeps the raw spelling
-// of every number literal, and serializes strings with exactly the
-// JSON.stringify escaping rules.
+// Artifacts must round-trip unknown members exactly and every hash/cursor
+// preimage must match JavaScript's JSON.stringify output. encoding/json
+// cannot guarantee either: it reorders map keys, collapses duplicate keys,
+// loses number spelling and escapes <, >, & and U+2028/U+2029. This package
+// keeps object members in source order, records duplicate member names
+// instead of collapsing them, keeps the raw spelling of every number
+// literal, and serializes strings with exactly the JSON.stringify escaping
+// rules.
 package ojson
 
 import (
@@ -92,10 +92,9 @@ func NullableString(p *string) Value {
 
 // Accessors.
 
-func (v Value) Kind() Kind        { return v.kind }
-func (v Value) IsUndefined() bool { return v.kind == Undefined }
-func (v Value) Bool() bool        { return v.b }
-func (v Value) Str() string       { return v.s }
+func (v Value) Kind() Kind  { return v.kind }
+func (v Value) Bool() bool  { return v.b }
+func (v Value) Str() string { return v.s }
 func (v Value) NumberLiteral() string {
 	if v.kind != Number {
 		return ""

@@ -15,10 +15,10 @@ import (
 	"github.com/hoshinoht/shiori/internal/storage"
 )
 
-// Explicit recovery (spec 01 §6): the journal is validated, and every
+// Explicit recovery: the journal is validated, and every
 // current target preflighted against its before/after image, BEFORE
 // authorization is requested; both are repeated under the locks. A
-// journal-only plan (primary JSON never published) is recoverable (D1);
+// journal-only plan (primary JSON never published) is recoverable;
 // its expectedHash is the doctor's interrupted-state hash.
 
 // JournalInvalidError is a journal that fails validation; nothing is
@@ -43,7 +43,7 @@ func (e *ExternalEditError) Error() string {
 
 var operationKinds = map[string]map[string]bool{
 	"create":              {"plan": true, "markdown": true},
-	"create:overwrite":    {"plan": true, "markdown": true, "archive": true}, // D.3.1: repair archive
+	"create:overwrite":    {"plan": true, "markdown": true, "archive": true}, // repair archive
 	"update":              {"plan": true, "markdown": true, "dependencies": true},
 	"patch":               {"markdown": true},
 	"reset:draft":         {"plan": true, "markdown": true, "checkpoint": true},
@@ -152,7 +152,7 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 			}
 			pid, pf, err := planFileOf(e.Root, img.data)
 			if err != nil && j.Operation == "create:overwrite" && img.dst == &beforePF {
-				// D.3 item 2: overwrite repairs an unreadable plan, so its
+				// Overwrite repairs an unreadable plan, so its
 				// before image need not decode (no link is derived from it).
 				continue
 			}
@@ -257,7 +257,7 @@ func (e *Engine) recoveryHashes(id string, j *model.Journal, ov map[string][]byt
 		return s.PlanHash, s.StateHash, nil
 	}
 	if _, nf := err.(*snapshot.NotFoundError); !nf {
-		// D.3 item 2: an unreadable primary (for example the before image
+		// An unreadable primary (for example the before image
 		// of an overwrite that repairs it) has the raw-byte hashes doctor
 		// reports for it.
 		if IsUnsupported(err) {
@@ -343,7 +343,7 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 		in.Targets = append(in.Targets, tg)
 		rels = append(rels, t.Path)
 	}
-	// D.3 item 6: an interrupted writer (for example a killed process)
+	// An interrupted writer (for example a killed process)
 	// can leave its same-directory staging files behind. Their names are
 	// derived from the journal's transaction id and target index, so no
 	// other writer owns them; recovery removes the ones present.

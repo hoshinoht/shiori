@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
 	"github.com/hoshinoht/shiori/internal/testutil"
@@ -44,6 +45,18 @@ var faultScenarios = []faultScenario{
 		}
 		tok, _ := pv.Get("previewToken")
 		return "compact", "{" + sel + `,"mode":"apply","confirmation":"ARCHIVE_SELECTED_HISTORY","previewToken":"` + tok.Str() + `"}`
+	}},
+	// The wipe (archive + plan + Markdown + two sidecar deletions), the
+	// status-only draft reset that removes a checkpoint, and the repair of
+	// an unreadable plan by create overwrite.
+	{"reset-wipe", "full-valid", "full-plan", func(t *testing.T, e *Engine) (string, string) {
+		sh := stateHashFor(t, e, "full-plan")
+		tok := wipeToken(t, e, "full-plan", sh, "")
+		return "reset", `{"id":"full-plan","mode":"wipe","expectedHash":"` + sh + `","previewToken":"` + tok + `","confirmation":"WIPE_PLAN_CONTENT"}`
+	}},
+	{"reset-draft-checkpoint", "checkpoint-stale-v2", "cp-stale", fixed("reset", `{"id":"cp-stale"}`)},
+	{"create-overwrite-unreadable", "invalid-schema", "not-json", func(t *testing.T, e *Engine) (string, string) {
+		return "create", `{"id":"not-json","goal":"repaired","overwrite":true,"expectedHash":"` + stateHashFor(t, e, "not-json") + `"}`
 	}},
 }
 
@@ -102,7 +115,7 @@ func runScenario(t *testing.T, sc faultScenario, hooks storage.Hooks, ctx contex
 	pre := machinery(t, root.Path)
 	old := semanticFiles(t, root.Path)
 	tool, in := sc.call(t, e)
-	data, err := ParseMutationInput(tool, mustJSON(t, in), SurfaceCore)
+	data, err := input.ParseMutationInput(tool, mustJSON(t, in), input.SurfaceCore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,15 +123,15 @@ func runScenario(t *testing.T, sc faultScenario, hooks storage.Hooks, ctx contex
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.Execute(ctx, p, AllowAll{}, ExecOptions{Hooks: hooks})
+	_, err = e.Execute(ctx, p, allowAll{}, ExecOptions{Hooks: hooks})
 	_ = pre
 	return root, e, old, err
 }
 
 // TestFaultInjection injects a failure at every commit stage of every
-// writer (S04) and proves the result is the old state, the new state, or
-// an explicit recovery-required state that both resume and rollback
-// complete (S08).
+// writer and proves the result is the old state, the new state, or an
+// explicit recovery-required state that both resume and rollback
+// complete.
 func TestFaultInjection(t *testing.T) {
 	freezeClock(t)
 	points := []string{storage.FaultDirs, storage.FaultLocked, storage.FaultStage + ":0", storage.FaultStage + ":1",
@@ -166,17 +179,18 @@ func TestFaultInjection(t *testing.T) {
 						}
 						return
 					}
-					// Journal present; state is recovery-required, visible read-only.
+					// Journal present; state is recovery-required, visible
+					// read-only.
 					if _, err := os.Stat(rr.JournalPath); err != nil {
 						t.Fatalf("journal missing: %v", err)
 					}
-					doc, _ := e.Doctor(DoctorInput{})
+					doc, _ := e.Doctor(input.DoctorInput{})
 					if n, _ := doc.Get("pendingTransactionCount"); n.NumberLiteral() != "1" {
 						t.Fatalf("doctor does not report the pending journal")
 					}
 					sh := stateHashFor(t, e, sc.id)
 					in := fmt.Sprintf(`{"id":%q,"recovery":%q,"expectedHash":%q}`, sc.id, mode, sh)
-					if _, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, in), AllowAll{}); err != nil {
+					if _, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, in), allowAll{}); err != nil {
 						t.Fatalf("%s recovery: %v", mode, err)
 					}
 					want := newState
@@ -196,10 +210,10 @@ func TestFaultInjection(t *testing.T) {
 }
 
 // stateHashFor returns the recovery expectedHash: the doctor hash (which
-// covers journal-only plans, D1).
+// covers journal-only plans).
 func stateHashFor(t *testing.T, e *Engine, id string) string {
 	t.Helper()
-	doc, err := e.Doctor(DoctorInput{ID: &id})
+	doc, err := e.Doctor(input.DoctorInput{ID: &id})
 	if err != nil {
 		t.Fatal(err)
 	}

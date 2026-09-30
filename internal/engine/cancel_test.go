@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/storage"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
@@ -21,7 +22,7 @@ type cancelInAuth struct{ cancel context.CancelFunc }
 
 func (c cancelInAuth) Authorize(context.Context, AuthRequest) error { c.cancel(); return nil }
 
-// S03: preparation, denial, cancellation before authorization and a late
+// Preparation, denial, cancellation before authorization and a late
 // approval after cancellation leave the workspace byte-, mode- and
 // mtime-identical: no locks, directories, staging, journals or artifacts.
 func TestNoSideEffectsBeforeCommit(t *testing.T) {
@@ -33,7 +34,7 @@ func TestNoSideEffectsBeforeCommit(t *testing.T) {
 				e, _ := New(root.Path)
 				tool, in := sc.call(t, e)
 				before := testutil.Fingerprint(t, root.Path)
-				data, err := ParseMutationInput(tool, mustJSON(t, in), SurfaceCore)
+				data, err := input.ParseMutationInput(tool, mustJSON(t, in), input.SurfaceCore)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -51,7 +52,7 @@ func TestNoSideEffectsBeforeCommit(t *testing.T) {
 				case "cancelled-before":
 					cancel()
 					var ce *storage.CancelledError
-					if _, err := e.Execute(ctx, p, AllowAll{}, ExecOptions{}); !errors.As(err, &ce) {
+					if _, err := e.Execute(ctx, p, allowAll{}, ExecOptions{}); !errors.As(err, &ce) {
 						t.Fatalf("got %v", err)
 					}
 				case "late-approval":
@@ -65,7 +66,7 @@ func TestNoSideEffectsBeforeCommit(t *testing.T) {
 				}
 				// A prepared intent is single-use.
 				if how != "prepare-only" {
-					if _, err := e.Execute(context.Background(), p, AllowAll{}, ExecOptions{}); err == nil {
+					if _, err := e.Execute(context.Background(), p, allowAll{}, ExecOptions{}); err == nil {
 						t.Fatal("prepared intent reused")
 					}
 				}
@@ -81,12 +82,12 @@ func TestCancelAfterJournal(t *testing.T) {
 	root := testutil.NewRoot(t, "full-valid")
 	e, _ := New(root.Path)
 	ctx, cancel := context.WithCancel(context.Background())
-	data, _ := ParseMutationInput("update", mustJSON(t, `{"id":"full-plan","appendNotes":["x"]}`), SurfaceCore)
+	data, _ := input.ParseMutationInput("update", mustJSON(t, `{"id":"full-plan","appendNotes":["x"]}`), input.SurfaceCore)
 	p, err := e.Prepare("update", data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.Execute(ctx, p, AllowAll{}, ExecOptions{Hooks: storage.Hooks{Fault: func(pt string) error {
+	_, err = e.Execute(ctx, p, allowAll{}, ExecOptions{Hooks: storage.Hooks{Fault: func(pt string) error {
 		if pt == storage.FaultJournalSync {
 			cancel()
 		}
@@ -99,7 +100,7 @@ func TestCancelAfterJournal(t *testing.T) {
 	if m := machinery(t, root.Path); len(m) > 0 {
 		t.Fatalf("machinery: %v", m)
 	}
-	v, _ := e.Read(ReadInput{ID: "full-plan"})
+	v, _ := e.Read(input.ReadInput{ID: "full-plan"})
 	if r, _ := v.Get("recoveryRequired"); !r.Bool() {
 		t.Fatal("read does not report recovery required")
 	}
@@ -117,10 +118,10 @@ func TestDeadOwnerReclaimedAfterGrace(t *testing.T) {
 	deadPID := cmd.Process.Pid
 	writeDeadLock(t, root.Path, ".opencode/workplan/.workspace-mutation.lock", deadPID)
 	e, _ := New(root.Path)
-	data, _ := ParseMutationInput("update", mustJSON(t, `{"id":"minimal","appendNotes":["x"]}`), SurfaceCore)
+	data, _ := input.ParseMutationInput("update", mustJSON(t, `{"id":"minimal","appendNotes":["x"]}`), input.SurfaceCore)
 	p, _ := e.Prepare("update", data)
 	hooks := storage.Hooks{Lock: storage.LockConfig{Wait: 300 * time.Millisecond, Grace: time.Minute}}
-	if _, err := e.Execute(context.Background(), p, AllowAll{}, ExecOptions{Hooks: hooks}); err != nil {
+	if _, err := e.Execute(context.Background(), p, allowAll{}, ExecOptions{Hooks: hooks}); err != nil {
 		t.Fatal(err)
 	}
 	if m := machinery(t, root.Path); len(m) > 0 {

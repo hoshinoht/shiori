@@ -51,10 +51,10 @@ func TestMarkdownVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if v.ID == "markdown/error-missing-specFiles" {
+			if x, ok := testutil.Expected(t)[v.ID]; ok && x.Has("missing-specfiles-renders") {
 				// The reference renderer throws a JavaScript TypeError on a raw
 				// legacy document; Go renders only normalized documents, where
-				// absent specFiles is [] (contracts §4). Declared divergence.
+				// absent specFiles is [].
 				if p.HasSpecFiles {
 					t.Fatal("fixture should lack specFiles")
 				}
@@ -63,9 +63,9 @@ func TestMarkdownVectors(t *testing.T) {
 				}
 				return
 			}
-			// The reference rendering is RenderMarkdownLegacy; D.3.1
-			// (contracts §14 item 5b) changes only the finding status
-			// spacing, checked below against the same oracle file.
+			// The reference rendering is RenderMarkdownLegacy; the current
+			// rendering changes only the finding status spacing, checked
+			// below against the same oracle file.
 			out, err := RenderMarkdownLegacy(p)
 			if v.Expect.Kind == "error" {
 				if err == nil || err.Error() != v.Expect.Message {
@@ -84,10 +84,10 @@ func TestMarkdownVectors(t *testing.T) {
 			if string(out) != string(want) || hex.EncodeToString(sum[:]) != v.Expect.SHA256 {
 				t.Fatalf("markdown mismatch\n got %q\nwant %q", out, want)
 			}
-			checkD31Markdown(t, v.ID, p, want)
+			checkFindingRendering(t, v.ID, p, want)
 		})
 	}
-	d31WriteMarkdown(t)
+	testutil.WritePins(t, "markdown/")
 	if n != 13 {
 		t.Fatalf("expected 13 render vectors, ran %d", n)
 	}
@@ -177,42 +177,13 @@ func TestValidDatetime(t *testing.T) {
 	}
 }
 
-// ---- D.3.1 (contracts §14 item 5b): finding rendering ----
+// ---- finding rendering ----
 
-type d31Pin struct {
-	Change          string `json:"change"`
-	OutputSha256    string `json:"outputSha256"`
-	RawOutputLength int    `json:"rawOutputLength"`
-}
-
-type d31PinFile struct {
-	Note    string            `json:"note"`
-	Vectors map[string]d31Pin `json:"vectors"`
-}
-
-var d31MarkdownPins = map[string]d31Pin{}
-
-func d31Update() bool { return os.Getenv("SHIORI_D31_UPDATE") == "1" }
-
-func readD31Pins(t *testing.T) d31PinFile {
-	var f d31PinFile
-	data, err := os.ReadFile(testutil.Testdata("d3_1", "expectations.json"))
-	if err == nil {
-		err = json.Unmarshal(data, &f)
-	}
-	if err != nil && !d31Update() {
-		t.Fatalf("reading d3_1/expectations.json: %v", err)
-	}
-	if f.Vectors == nil {
-		f.Vectors = map[string]d31Pin{}
-	}
-	return f
-}
-
-// checkD31Markdown: the current rendering equals the oracle (legacy)
-// rendering with a space before every finding's "(status)", and nothing
-// else changes. A render vector whose output changes is pinned.
-func checkD31Markdown(t *testing.T, id string, p *Plan, oracle []byte) {
+// checkFindingRendering: the current rendering equals the oracle
+// (reference) rendering with a space before every finding's "(status)",
+// and nothing else changes. A render vector whose output changes is
+// listed in testdata/expected and pinned.
+func checkFindingRendering(t *testing.T, id string, p *Plan, oracle []byte) {
 	t.Helper()
 	cur, err := RenderMarkdown(p)
 	if err != nil {
@@ -231,7 +202,7 @@ func checkD31Markdown(t *testing.T, id string, p *Plan, oracle []byte) {
 		want = strings.Replace(want, old, "- ["+f.Severity+"] "+f.Title+" ("+*f.Status+")", 1)
 	}
 	if string(cur) != want {
-		t.Fatalf("D.3.1 rendering differs beyond the finding status spacing\n got %q\nwant %q", cur, want)
+		t.Fatalf("rendering differs beyond the finding status spacing\n got %q\nwant %q", cur, want)
 	}
 	// Markdown generated either way is recognized as generated.
 	for _, md := range [][]byte{oracle, cur} {
@@ -239,41 +210,16 @@ func checkD31Markdown(t *testing.T, id string, p *Plan, oracle []byte) {
 			t.Fatalf("IsGeneratedMarkdown = %v, %v", gen, err)
 		}
 	}
-	listed := readD31Pins(t).Vectors[id]
+	x, listed := testutil.Expected(t)[id]
 	if string(cur) == string(oracle) {
-		if listed.OutputSha256 != "" {
-			t.Fatalf("%s is pinned in d3_1 but renders like the oracle", id)
+		if listed {
+			t.Fatalf("%s is listed in %s but renders like the oracle", id, testutil.ExpectedFile)
 		}
 		return
+	}
+	if !listed || !x.Has("finding-rendering") {
+		t.Fatalf("%s renders differently from the oracle but is not listed with finding-rendering", id)
 	}
 	sum := sha256.Sum256(cur)
-	pin := d31Pin{Change: "item 5b finding rendering", OutputSha256: hex.EncodeToString(sum[:]), RawOutputLength: len(cur)}
-	if d31Update() {
-		d31MarkdownPins[id] = pin
-		return
-	}
-	if listed != pin {
-		t.Fatalf("%s: D.3.1 pin %+v, got %+v (SHIORI_D31_UPDATE=1 to re-pin after review)", id, listed, pin)
-	}
-}
-
-// d31WriteMarkdown rewrites the markdown/ entries of d3_1/expectations.json
-// (internal/engine owns the other prefixes).
-func d31WriteMarkdown(t *testing.T) {
-	if !d31Update() {
-		return
-	}
-	f := readD31Pins(t)
-	for id := range f.Vectors {
-		if strings.HasPrefix(id, "markdown/") {
-			delete(f.Vectors, id)
-		}
-	}
-	for id, p := range d31MarkdownPins {
-		f.Vectors[id] = p
-	}
-	data, _ := json.MarshalIndent(f, "", "  ")
-	if err := os.WriteFile(testutil.Testdata("d3_1", "expectations.json"), append(data, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testutil.CheckPin(t, id, x, hex.EncodeToString(sum[:]), len(cur), true)
 }

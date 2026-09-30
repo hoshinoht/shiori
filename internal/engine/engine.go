@@ -1,8 +1,7 @@
 // Package engine implements the read-only workplan operations (list, read,
 // inspect, validate, resume, doctor) over byte-exact snapshots. Every
 // operation opens artifacts read-only; none writes defaults, upgrades a
-// format, repairs, creates locks or changes a file's mtime (spec 01 §3,
-// spec 05 stage B exit gate).
+// format, repairs, creates locks or changes a file's mtime.
 package engine
 
 import (
@@ -12,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -24,39 +24,13 @@ type Engine struct {
 	Root          string // canonical (symlinks resolved)
 	Limits        snapshot.Limits
 	// MaxResponseBytes bounds a single operation's serialized output
-	// (contracts §5.2, D9). Zero means the default 64 MiB.
+	// (the protocol frame limit). Zero means the default 64 MiB.
 	MaxResponseBytes int
 
-	// noGraph turns off the D.2 dependency-graph additions (contracts
-	// §12). Test-only: the corpus comparators prove that a D.2 output
-	// differs from the D.2-off output only by the approved change.
-	noGraph bool
-	// noD3 turns off the D.3 read-path additions (contracts §13). Test-
-	// only, like noGraph: the corpus comparators prove that a D.3 output
-	// differs from the D.3-off output only by the approved change.
-	noD3 bool
-	// noD31 turns off the D.3.1 changes (contracts §14): the step status
-	// gate, the repair archive and recovered planFile, the unreadable-plan
-	// repair hint, the resume stale diagnostic and critical path, the
-	// wiped-plan doctor note, and the new finding rendering and
-	// whole-second timestamps. Test-only, like noD3.
-	noD31 bool
-	// noD4 turns off the D.4 compaction advice in resume and doctor
-	// (contracts §15). Test-only, like noD31: every corpus vector must be
-	// byte-identical with and without it unless it is pinned.
-	noD4 bool
-	// noD43 turns off the D.4.3 read and result additions (contracts §18):
-	// the resume checkpoint.withheld list and its instruction, and the
-	// checkpoint write warnings. Test-only, like noD4: the corpus
-	// comparators prove that a D.4.3 output differs from the D.4.3-off
-	// output only by the approved change. The input rules (merge,
-	// appendValidation, the withheld-placeholder refusal) are not gated.
-	noD43 bool
-
-	// Compaction configures the D.4 compaction advisor thresholds (nil:
-	// DefaultCompactionThresholds). Set by the trusted caller (CLI or
-	// serve flag), never by model input.
-	Compaction *CompactionThresholds
+	// Compaction configures the compaction advisor thresholds (nil: the
+	// defaults). Set by the trusted caller (CLI or serve flag), never by
+	// model input.
+	Compaction *advisor.Thresholds
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.
@@ -171,7 +145,7 @@ func (v depView) value() ojson.Value {
 
 // sliceValue is value() restricted to entries whose source step is
 // selected or that depend on a selected step, and the terminal summaries
-// those entries reference (D.1 filtered read). Issues stay complete.
+// those entries reference (filtered read). Issues stay complete.
 func (v depView) sliceValue(sel map[model.StepRef]bool) ojson.Value {
 	if v.deps == nil {
 		return v.value()
@@ -201,7 +175,7 @@ func (v depView) sliceValue(sel map[model.StepRef]bool) ojson.Value {
 	return v.value()
 }
 
-// Checkpoint freshness classes (contracts §7).
+// Checkpoint freshness classes.
 const (
 	FreshnessMissing = "missing"
 	FreshnessFresh   = "fresh"
@@ -222,10 +196,10 @@ type cpView struct {
 	issue      string
 	diagnostic string
 	// staleDetail names what differs from a stale v2 checkpoint's
-	// manifest (D.3, contracts §13 item 5); doctor appends it.
+	// manifest; doctor appends it.
 	staleDetail string
 	// staleChanged are the manifest paths behind staleDetail, in the same
-	// order (D.3.1: the compact resume diagnostic).
+	// order (for the compact resume diagnostic).
 	staleChanged []string
 }
 
@@ -264,7 +238,7 @@ func classifyCheckpoint(s *snapshot.Snapshot) cpView {
 }
 
 // maxDiagnosticPaths and maxDiagnosticUnits bound the compact resume
-// diagnostic of a stale checkpoint (D.3.1, contracts §14 item 3).
+// diagnostic of a stale checkpoint.
 const (
 	maxDiagnosticPaths = 3
 	maxDiagnosticUnits = 240
@@ -365,7 +339,7 @@ func recoveryPacket(s *snapshot.Snapshot, tool string) ojson.Value {
 	return b.Value()
 }
 
-// errUnsupported builds the bounded-output refusal (D9).
+// errUnsupported builds the bounded-output refusal.
 func (e *Engine) checkResponse(v ojson.Value, tool, id string) (ojson.Value, error) {
 	if len(ojson.Pretty(v)) > e.maxResponse() {
 		return ojson.Value{}, fmt.Errorf("%w: %s output for %s exceeds the %d-byte response limit; use includeMarkdown=false, workplan_inspect or workplan_resume", snapshot.ErrUnsupported, tool, id, e.maxResponse())
@@ -375,3 +349,17 @@ func (e *Engine) checkResponse(v ojson.Value, tool, id string) (ojson.Value, err
 
 // IsUnsupported reports an unsupported_capability error.
 func IsUnsupported(err error) bool { return errors.Is(err, snapshot.ErrUnsupported) }
+
+// compactionAdvice is the compaction advice for a loaded plan, or nil when
+// compaction is not recommended. withMarkdown (doctor) adds the linked
+// Markdown estimate, which needs a full render.
+func (e *Engine) compactionAdvice(s *snapshot.Snapshot, freshness string, withMarkdown bool) *advisor.Advice {
+	o := advisor.Options{Thresholds: e.Compaction.Resolve(), Freshness: freshness, Now: e.nowISO()}
+	if withMarkdown {
+		o.Generated = func() bool {
+			gen, err := e.generatedMarkdown(s)
+			return err == nil && gen
+		}
+	}
+	return advisor.Advise(s, o)
+}

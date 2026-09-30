@@ -1,6 +1,6 @@
 // Package snapshot reads a plan's complete artifact set (primary JSON,
 // linked Markdown, linked specs and sidecars) as exact bytes and computes
-// the frozen manifest hashes (spec 01 §5, contracts §3). It never writes.
+// the frozen manifest hashes. It never writes.
 package snapshot
 
 import (

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 	"github.com/hoshinoht/shiori/internal/storage"
@@ -16,7 +17,7 @@ func ErrorClass(err error) string {
 	if c, ok := mutationErrorClass(err); ok {
 		return c
 	}
-	var ie *InputError
+	var ie *input.InputError
 	var de *model.DecodeError
 	var nf *snapshot.NotFoundError
 	var ij *snapshot.InvalidJSONError
@@ -41,7 +42,7 @@ func ErrorClass(err error) string {
 	return "internal"
 }
 
-// mutationErrorClass maps stage C errors to protocol error classes.
+// mutationErrorClass maps mutation errors to protocol error classes.
 func mutationErrorClass(err error) (string, bool) {
 	var stale *StaleHashError
 	var sstale *storage.StaleError
@@ -88,9 +89,9 @@ func mutationErrorClass(err error) (string, bool) {
 		strings.HasPrefix(msg, "Workplan destination is claimed"), strings.HasPrefix(msg, "Ambiguous pending workplan"):
 		return "ownership_conflict", true
 	case strings.HasPrefix(msg, "Invalid dependency metadata"):
-		// D.2 (contracts §12): every dependency refusal (writes, phase
-		// replacement, compaction of an invalid sidecar) is a structure
-		// error; the message text is unchanged.
+		// Every dependency refusal (writes, phase replacement, compaction
+		// of an invalid sidecar) is a structure error; the message text is
+		// unchanged.
 		return "invalid_structure", true
 	case strings.HasPrefix(msg, "Refusing to replace handwritten"):
 		return "invalid_input", true

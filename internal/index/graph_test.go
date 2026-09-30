@@ -23,7 +23,7 @@ func entry(p, s string, on ...model.StepRef) model.DependencyEntry {
 }
 
 // TestGraphCriticalPathWeights: by step count the a→b→c chain wins; with
-// estimates the heavier two-step x→y chain wins (D.2 G6).
+// estimates the heavier two-step x→y chain wins.
 func TestGraphCriticalPathWeights(t *testing.T) {
 	build := func(ex, ey string) *Graph {
 		p := &model.Plan{Phases: []model.Phase{{ID: "p", Steps: []model.Step{

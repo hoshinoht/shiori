@@ -47,7 +47,7 @@ func hostname(t *testing.T) string {
 	return h
 }
 
-// S11: live, foreign, ambiguous and reused owners are never reclaimed,
+// Live, foreign, ambiguous and reused owners are never reclaimed,
 // however old; a proven-dead same-host owner is reclaimed only after the
 // grace period.
 func TestLockNeverReclaimedByAgeAlone(t *testing.T) {

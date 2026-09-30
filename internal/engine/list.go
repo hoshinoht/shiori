@@ -7,12 +7,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 )
 
-// Artifact classification kinds (spec 01 §4).
+// Artifact classification kinds.
 const (
 	kindCheckpoint   = "checkpoint"
 	kindDependencies = "dependencies"
@@ -59,13 +60,13 @@ type dirListing struct {
 	primary  []string // plan file names without ".json", UTF-16 order
 	sidecars []dirEntry
 	// other are root-level files that classify as nothing (not listed by
-	// list; doctor reports those that are not linked Markdown, D.1).
+	// list; doctor reports those that are not linked Markdown).
 	other []string
 }
 
 // scanDir enumerates .opencode/workplan without following or modifying
 // anything. Primary plans and sidecars are ordered by UTF-16 code units
-// (D6: no dependence on locale or readdir order).
+// (no dependence on locale or readdir order).
 func (e *Engine) scanDir() (dirListing, error) {
 	var l dirListing
 	ents, err := os.ReadDir(e.dir())
@@ -118,7 +119,7 @@ func artifactIssues(s *snapshot.Snapshot) []string {
 }
 
 // List implements workplan_list.
-func (e *Engine) List(ListInput) (ojson.Value, error) {
+func (e *Engine) List(input.ListInput) (ojson.Value, error) {
 	l, err := e.scanDir()
 	if err != nil {
 		return ojson.Value{}, err
@@ -132,7 +133,7 @@ func (e *Engine) List(ListInput) (ojson.Value, error) {
 		}
 		s, err := e.load(name)
 		if err != nil {
-			plans = append(plans, e.listInvalid(name, err.Error(), e.unreadableFor(name, err)))
+			plans = append(plans, e.listInvalid(name, err.Error(), e.unreadable(name, err)))
 			continue
 		}
 		issues := artifactIssues(s)
@@ -159,17 +160,10 @@ func (e *Engine) List(ListInput) (ojson.Value, error) {
 		Set("sidecars", ojson.ArrayValue(sidecars)).Value(), nil
 }
 
-// listInvalid is the entry of a plan that cannot be listed normally. D.3
-// (contracts §13 item 5): the same "issues" array as every other entry
-// (was a single "issue" string), and for an unreadable plan the raw-byte
-// hashes and the recovery flag (item 2).
+// listInvalid is the entry of a plan that cannot be listed normally: the
+// same "issues" array as every other entry, and for an unreadable plan the
+// raw-byte hashes and the recovery flag.
 func (e *Engine) listInvalid(name, issue string, u *snapshot.Unreadable) ojson.Value {
-	if e.noD3 {
-		return ojson.NewObject(3).
-			Set("id", ojson.StringValue(name)).
-			Set("valid", ojson.BoolValue(false)).
-			Set("issue", ojson.StringValue(issue)).Value()
-	}
 	b := ojson.NewObject(6).
 		Set("id", ojson.StringValue(name)).
 		Set("valid", ojson.BoolValue(false)).

@@ -10,7 +10,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
 
-// C01/D4: unknown members keep their values, nesting and exact number
+// Unknown members keep their values, nesting and exact number
 // spelling across an unrelated write; known members keep schema order and
 // the absent legacy specFiles key stays absent.
 func TestUnknownMetadataSurvivesUpdate(t *testing.T) {
@@ -23,7 +23,7 @@ func TestUnknownMetadataSurvivesUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, _ := New(root.Path)
-	if _, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, `{"id":"legacy-plan","appendNotes":["touch"]}`), AllowAll{}); err != nil {
+	if _, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, `{"id":"legacy-plan","appendNotes":["touch"]}`), allowAll{}); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(p)
@@ -40,7 +40,7 @@ func TestUnknownMetadataSurvivesUpdate(t *testing.T) {
 	}
 }
 
-// D5: new links containing a backslash are refused with a field path.
+// New links containing a backslash are refused with a field path.
 func TestBackslashLinksRefused(t *testing.T) {
 	root := testutil.NewRoot(t, "minimal-valid")
 	e, _ := New(root.Path)
@@ -48,12 +48,12 @@ func TestBackslashLinksRefused(t *testing.T) {
 		`{"id":"n","goal":"g","specFiles":["docs\\a.md"]}`,
 		`{"id":"n","goal":"g","planFile":".opencode/workplan/a\\b.md"}`,
 	} {
-		_, err := runMutation(context.Background(), e, "workplan_create", mustJSON(t, in), AllowAll{})
+		_, err := runMutation(context.Background(), e, "workplan_create", mustJSON(t, in), allowAll{})
 		if err == nil || !strings.Contains(err.Error(), "Linked path contains a backslash") {
 			t.Fatalf("%s: %v", in, err)
 		}
 	}
-	_, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, `{"id":"minimal","addSpecFiles":["x\\y.md"]}`), AllowAll{})
+	_, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, `{"id":"minimal","addSpecFiles":["x\\y.md"]}`), allowAll{})
 	if err == nil || !strings.HasPrefix(err.Error(), "addSpecFiles.0: Linked path contains a backslash") {
 		t.Fatalf("update: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSymlinkTargetsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, _ := New(root.Path)
-	_, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, `{"id":"minimal","planFile":".opencode/workplan/link/x.md"}`), AllowAll{})
+	_, err := runMutation(context.Background(), e, "workplan_update", mustJSON(t, `{"id":"minimal","planFile":".opencode/workplan/link/x.md"}`), allowAll{})
 	if err == nil {
 		t.Fatal("move through a symlinked directory was accepted")
 	}

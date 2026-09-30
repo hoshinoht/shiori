@@ -43,8 +43,8 @@ func entriesEqual(t *testing.T, got []Entry, want []Entry) {
 
 // TestFixtureSnapshots checks every per-fixture snapshot vector: manifest
 // membership and order, hashes, missing artifacts, path normalization and
-// the error cases (engine-specific JSON parse text is compared by prefix,
-// contracts §6.2 rule 3).
+// the error cases (engine-specific JSON parse text is compared by
+// prefix).
 func TestFixtureSnapshots(t *testing.T) {
 	files, _ := filepath.Glob(testutil.Testdata("vectors", "hash", "fixtures", "*.json"))
 	if len(files) != 29 {

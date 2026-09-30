@@ -16,7 +16,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/storage"
 )
 
-// Mutation flow (spec 01 §6, spec 02 §3): Prepare* validates input and
+// Mutation flow: Prepare* validates input and
 // state, reads the complete artifact set and returns a Prepared intent
 // without creating any file, lock or directory. Execute asks the
 // Authorizer about exactly that intent and only then commits it through
@@ -32,18 +32,13 @@ type AuthRequest struct {
 
 // Authorizer grants or refuses a prepared intent. It must not change any
 // file. The CLI implements it with a TTY prompt or --yes; the native
-// OpenCode host authorizer is stage D.
+// protocol with the host's permission decision.
 type Authorizer interface {
 	Authorize(ctx context.Context, req AuthRequest) error
 }
 
 // ErrDenied is a refused authorization.
 var ErrDenied = errors.New("Workplan mutation was not authorized; nothing was changed")
-
-// AllowAll authorizes everything (tests and trusted in-process callers).
-type AllowAll struct{}
-
-func (AllowAll) Authorize(context.Context, AuthRequest) error { return nil }
 
 // Prepared is a single-use prepared mutation.
 type Prepared struct {
@@ -74,6 +69,26 @@ func (o Output) String() string {
 // ExecOptions are trusted, non-model collaborators of Execute.
 type ExecOptions struct {
 	Hooks storage.Hooks
+}
+
+// Prepare dispatches a mutating tool ("create", "update", "patch",
+// "reset", "checkpoint", "compact", "compact_preview") on accepted input.
+func (e *Engine) Prepare(tool string, data ojson.Value) (*Prepared, error) {
+	switch tool {
+	case "create":
+		return e.PrepareCreate(data)
+	case "checkpoint":
+		return e.PrepareCheckpoint(data)
+	case "compact", "compact_preview":
+		return e.PrepareCompact(data)
+	case "patch":
+		return e.PreparePatch(data)
+	case "reset":
+		return e.PrepareReset(data)
+	case "update":
+		return e.PrepareUpdate(data)
+	}
+	return nil, fmt.Errorf("unsupported mutation tool: %s", tool)
 }
 
 // Execute authorizes and commits a prepared mutation.
@@ -132,31 +147,20 @@ func finalize(p *Prepared) *Prepared {
 var Clock = func() time.Time { return time.Now() }
 
 // nowISO is the timestamp new writes record: whole-second UTC
-// ("2006-01-02T15:04:05Z", D.3.1, contracts §14 item 5b). Readers keep
+// ("2006-01-02T15:04:05Z"). Readers keep
 // accepting milliseconds and every other isoDatetimeUtc form.
 func (e *Engine) nowISO() string {
-	if e.noD31 {
-		return Clock().UTC().Format("2006-01-02T15:04:05.000Z")
-	}
 	return Clock().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05Z")
 }
 
-// render is the generated Markdown of a plan (the legacy finding style in
-// the test-only D.3.1-off engine).
+// render is the generated Markdown of a plan.
 func (e *Engine) render(p *model.Plan) ([]byte, error) {
-	if e.noD31 {
-		return model.RenderMarkdownLegacy(p)
-	}
 	return model.RenderMarkdown(p)
 }
 
 // isGenerated reports whether md is the generated rendering of p. Both
-// the current and the legacy (pre-D.3.1) finding style count.
+// the current and the legacy finding style count.
 func (e *Engine) isGenerated(p *model.Plan, md []byte) (bool, error) {
-	if e.noD31 {
-		out, err := model.RenderMarkdownLegacy(p)
-		return err == nil && string(out) == string(md), err
-	}
 	return model.IsGeneratedMarkdown(p, md)
 }
 
@@ -168,8 +172,8 @@ func (e *Engine) errPendingJournal(id string) error {
 // StaleHashError is the reference stale-state refusal.
 type StaleHashError struct{ Current string }
 
-// staleHashGuidance is appended to the reference stale-state refusal
-// (D.4.1, contracts §16); it adds no hash of its own.
+// staleHashGuidance is appended to the reference stale-state refusal; it
+// adds no hash of its own.
 const staleHashGuidance = " Use workplan_resume or workplan_inspect for that re-read before retrying, so the retry is based on the current plan."
 
 func (e *StaleHashError) Error() string {
@@ -177,7 +181,7 @@ func (e *StaleHashError) Error() string {
 }
 
 // DuplicateMembersError refuses to mutate a plan whose stored JSON repeats
-// member names (D4): the plan stays readable, writes fail closed.
+// member names: the plan stays readable, writes fail closed.
 type DuplicateMembersError struct {
 	ID    string
 	Paths []string
@@ -196,7 +200,7 @@ func (e *Engine) loadForMutation(raw string, expected *string) (*snapshot.Snapsh
 	}
 	s, err := e.load(id)
 	if err != nil {
-		return nil, e.repairHint(id, err) // D.3.1 item 2c
+		return nil, e.repairHint(id, err)
 	}
 	if s.Journal.Exists {
 		return nil, e.errPendingJournal(id)
@@ -230,7 +234,7 @@ func readsOf(entries []snapshot.Entry) []storage.ReadEntry {
 // fileMode returns the existing permission bits of a file. A new plan
 // JSON or linked Markdown takes the mode of the existing primary plans in
 // the workplan root, with owner read/write added, or 0644 minus the
-// process umask when there is none (D.3, contracts §13 item 5). Every
+// process umask when there is none. Every
 // other new file (sidecars, archives) stays 0600.
 func (e *Engine) fileMode(rel, kind string) fs.FileMode {
 	if st, err := os.Stat(e.absRel(rel)); err == nil {
@@ -345,7 +349,7 @@ func (e *Engine) claimCheck(id string, newRels []string, markdownRels []string) 
 	}
 	// Paths compare case-folded: on case-insensitive filesystems (APFS
 	// default) differently cased links alias one file, so ambiguous
-	// claims fail closed everywhere (contracts §10, case policy).
+	// claims fail closed everywhere.
 	want := map[string]bool{}
 	for _, r := range newRels {
 		want[strings.ToLower(r)] = true
@@ -419,13 +423,4 @@ func newTargets(in *storage.Intent) (all, markdown []string) {
 		}
 	}
 	return all, markdown
-}
-
-// relPath is the project-relative form of an absolute path under root.
-func (e *Engine) relPath(p string) string {
-	r, err := filepath.Rel(e.Root, p)
-	if err != nil {
-		return p
-	}
-	return filepath.ToSlash(r)
 }

@@ -16,14 +16,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 	"github.com/hoshinoht/shiori/internal/storage"
 )
 
-// DefaultIdleTimeout is the approved idle exit (contracts §5.4).
+// DefaultIdleTimeout is the approved idle exit.
 const DefaultIdleTimeout = 10 * time.Minute
 
 // Options configure one stdio connection.
@@ -43,9 +45,9 @@ type Options struct {
 	Durability *Durability
 	// WriteSupported overrides the platform write gate (tests).
 	WriteSupported *bool
-	// Compaction sets the D.4 compaction advisor thresholds (nil: the
+	// Compaction sets the compaction advisor thresholds (nil: the
 	// defaults); from the trusted serve flag, never from a frame.
-	Compaction *engine.CompactionThresholds
+	Compaction *advisor.Thresholds
 }
 
 // ErrIdle is returned by Serve after an idle exit.
@@ -396,7 +398,7 @@ func (s *server) handshake(req request) *frameError {
 	return nil
 }
 
-// PlatformSupported is the approved write/read gate (contracts §5.6).
+// PlatformSupported is the approved write/read gate.
 func PlatformSupported(goos, goarch string) bool {
 	return (goos == "darwin" && goarch == "arm64") || (goos == "linux" && goarch == "amd64")
 }
@@ -475,7 +477,7 @@ func (s *server) dispatch(ctx context.Context, req request) {
 		s.respond(req.id, func() ojson.Value { return resultFrame(req.id, text, value) })
 		return
 	}
-	data, err := engine.ParseMutationInput(tool, req.input, engine.SurfaceNative)
+	data, err := input.ParseMutationInput(tool, req.input, input.SurfaceNative)
 	if err != nil {
 		fail(err)
 		return
@@ -647,13 +649,13 @@ func (s *server) failRequest(id string, err error) string {
 		lr.responded = true
 	}
 	s.writeErrorLocked(id, class, err.Error(), func(b *ojson.Builder) {
-		var ie *engine.InputError
+		var ie *input.InputError
 		var gate interface{ StructuredIssues() []model.Issue }
 		var list []model.Issue
 		if errors.As(err, &ie) {
 			list = ie.Issues
 		} else if errors.As(err, &gate) {
-			list = gate.StructuredIssues() // D.1 plan / D.3.1 step status gate field paths
+			list = gate.StructuredIssues() // plan / step status gate field paths
 		}
 		if len(list) > 0 {
 			issues := make([]ojson.Value, len(list))
@@ -796,37 +798,37 @@ func randomHex(n int) string {
 }
 
 // runRead validates native input and runs a read-only operation.
-func runRead(e *engine.Engine, tool string, input ojson.Value, h *hostContext) (string, ojson.Value, error) {
-	s := engine.SurfaceNative
+func runRead(e *engine.Engine, tool string, raw ojson.Value, h *hostContext) (string, ojson.Value, error) {
+	s := input.SurfaceNative
 	var v ojson.Value
 	var err error
 	switch tool {
 	case "list":
-		in, perr := engine.ParseListInput(input, s)
+		in, perr := input.ParseListInput(raw, s)
 		if perr != nil {
 			return "", v, perr
 		}
 		v, err = e.List(in)
 	case "read":
-		in, perr := engine.ParseReadInput(input, s)
+		in, perr := input.ParseReadInput(raw, s)
 		if perr != nil {
 			return "", v, perr
 		}
 		v, err = e.Read(in)
 	case "inspect":
-		in, perr := engine.ParseInspectInput(input, s)
+		in, perr := input.ParseInspectInput(raw, s)
 		if perr != nil {
 			return "", v, perr
 		}
 		v, err = e.Inspect(in)
 	case "validate":
-		in, perr := engine.ParseValidateInput(input, s)
+		in, perr := input.ParseValidateInput(raw, s)
 		if perr != nil {
 			return "", v, perr
 		}
 		v, err = e.Validate(in)
 	case "resume":
-		in, perr := engine.ParseResumeInput(input, s)
+		in, perr := input.ParseResumeInput(raw, s)
 		if perr != nil {
 			return "", v, perr
 		}
@@ -840,7 +842,7 @@ func runRead(e *engine.Engine, tool string, input ojson.Value, h *hostContext) (
 		}
 		return text, v, nil
 	case "doctor":
-		in, perr := engine.ParseDoctorInput(input, s)
+		in, perr := input.ParseDoctorInput(raw, s)
 		if perr != nil {
 			return "", v, perr
 		}

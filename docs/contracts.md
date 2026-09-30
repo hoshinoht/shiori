@@ -353,6 +353,7 @@ testdata/
   vectors/resume/<fixture>/ resume at maxChars 4096 / 12000 / 64000 (exact outputText)
   vectors/paging/          inspect and resume cursor chains, cursor misuse errors
   vectors/mutations/       pre-authorization rejections and frozen-clock successes (+ <case>.after/ bytes)
+  expected/                documented differences: expectations.json (not part of the oracle corpus)
   perf/                    baseline fixtures (100 KiB raw; 1 MiB and 10 MiB as .tar.gz)
 ```
 
@@ -386,6 +387,24 @@ Counts:
 To regenerate, rerun the out-of-repo harness against an oracle whose file
 fingerprints equal `MANIFEST.oracle.files`. A fingerprint mismatch invalidates
 the corpus, and requires review before replacement.
+
+**Documented differences.** Every vector whose Go output intentionally
+differs from the oracle is listed once in
+[`testdata/expected/expectations.json`](../testdata/expected/expectations.json):
+a one-line reason, the section of this contract that approves it, and the
+comparators that prove only that difference occurs. Approved design
+changes also pin the SHA-256 and UTF-16 length of the Go output
+(root-normalized; for a refusal, of the error text); oracle divergences
+(section 7) are proved by their comparators alone. The black-box suite
+`internal/conformance` runs every vector against the final engine: an
+unlisted vector must equal the oracle byte-for-byte, and a listed one must
+equal it after its comparators peel off each documented difference (each
+checked against an independent restatement from the fixture's raw bytes).
+The stage sections below record how each change was first proved, with
+test-only switches that turned it off; the switches were removed in the
+cleanup, and the same comparators now run against the oracle directly.
+`SHIORI_EXPECTED_UPDATE=1 go test ./internal/conformance ./internal/model`
+re-pins after review.
 
 ## 9. Owner decisions (APPROVED 2026-09-30)
 
@@ -462,7 +481,7 @@ reproduces them byte-for-byte; the vectors named are the evidence.
   lists danger fields first, then the rest, in packet order, capped at 4·*L*.
   All 87 `resume/` and 74 `paging/` vectors reproduce exactly.
   *D.1 (§11 item A) replaces this policy; 35 of those vectors now differ on
-  purpose and are pinned in `testdata/d1/`.*
+  purpose and are pinned in `testdata/expected/`.*
 - **Checkpoint diagnostics.** A checkpoint that is JSON but matches neither
   version is `checkpoint: : Invalid input` in doctor and
   `Invalid workplan checkpoint document at <path>: : Invalid input` in resume
@@ -580,10 +599,10 @@ generated Markdown bytes and every other argument shape. The only schema
 change is the new optional `includeNotes` boolean on `workplan_read`.
 
 The oracle corpus is not edited. Vectors whose output changes on purpose
-are listed in [`testdata/d1/expectations.json`](../testdata/d1/expectations.json)
+are listed in the D.1 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 with the SHA-256 and UTF-16 length of the pinned Go output, and each one
 passes a comparator that proves only the approved change differs
-(`internal/engine/d1_vectors_test.go`). There are 56 such tool vectors
+(`internal/conformance/resume_budget_test.go`). There are 56 such tool vectors
 (A: 35 resume/paging, B: 3 filtered reads, C/F: 18 validate/doctor) and
 one mutation vector (`mutations/patch-validate`, item D).
 
@@ -594,7 +613,7 @@ returned fewer page items. On the roadmap, the default 12000 budget gave
 code unit. A first D.1 version returned fewer items before any shortening,
 which gave 2 of 44 items at 12000 and was too few for surveying work; the
 coordinator's review on 2026-09-30 rebalanced it to a target page. The
-order (see `chooseResume` in `internal/engine/resume.go`):
+order (see `Packet.Render` in `internal/resume/budget.go`):
 
 1. **Target page** of min(limit, *T*) items: *T* = 8 at `maxChars` ≥ 12000,
    4 at ≥ 6000, 2 below. While the target still fits, text shrinks first
@@ -745,9 +764,9 @@ met only when it is `completed`, either as a plan step or as an archived
 nor `cancelled`.
 
 The oracle corpus is not edited. Vectors whose output changes on purpose
-are listed in [`testdata/d2/expectations.json`](../testdata/d2/expectations.json)
+are listed in the D.2 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 (SHA-256 and UTF-16 length of the pinned Go output). Each one is judged
-twice (`internal/engine/d2_vectors_test.go`). The same engine with the
+twice (`internal/conformance/graph_test.go`). The same engine with the
 graph additions turned off must still pass the oracle, D.1 pin or
 divergence check it passed before, and the D.2 output must pass a
 comparator against that output which restates readiness, downstream counts
@@ -854,7 +873,7 @@ compaction apply over an invalid sidecar) now has the protocol and CLI
 `--json` error class `invalid_structure` instead of `internal` (owner
 decision, 2026-09-30). The message text is unchanged, so the oracle
 mutation vectors (which record messages only) still pass unchanged; the
-class is pinned by `TestD2PhaseReplacement` and `TestD2DependencyWrites`.
+class is pinned by `TestPhaseReplacement` and `TestDependencyWrites`.
 
 ## 13. Approved design changes D.3 (APPROVED 2026-09-30)
 
@@ -867,10 +886,10 @@ generated Markdown bytes. D.1's resume budgeting and D.2's graph behaviour
 are unchanged; resume output is not touched by D.3.
 
 The oracle corpus is not edited. Vectors whose output changes on purpose
-are pinned in [`testdata/d3/expectations.json`](../testdata/d3/expectations.json)
+are pinned in the D.3 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 (SHA-256 and UTF-16 length of the root-normalized Go output; for a refusal,
 of the error text). Read vectors are judged like D.2
-(`internal/engine/d3_vectors_test.go`): the same engine with the D.3
+(`internal/conformance/diagnostics_test.go`): the same engine with the D.3
 additions off (`Engine.noD3`, test-only) must pass every earlier check
 (oracle, D.1/D.2 pins, declared divergences) unchanged, the D.3 output
 minus the approved members must equal that output byte-for-byte, and the
@@ -956,7 +975,7 @@ still refused. Recovery of such an overwrite accepts an undecodable
 before-image of the primary (only for `create:overwrite`) and uses the
 raw-byte hashes, so rollback restores the exact corrupt bytes. Pinned by
 the `tools/invalid-schema/*` and `tools/list-mixed/*` doctor/validate/list
-vectors, `TestD3UnreadablePlanRepair` (truncated plan → doctor hash →
+vectors, `TestUnreadablePlanRepair` (truncated plan → doctor hash →
 create overwrite) and the fault-injection scenario
 `create-overwrite-unreadable`.
 
@@ -1019,7 +1038,7 @@ Markdown always has the markers. Handwritten Markdown is never rewritten.
   when there is none. Replaced files keep their mode. New sidecars,
   journals, staging files and archives stay `0600`.
 
-**6. Interrupted-write recovery.** `TestD3KillRecovery` runs a mutation in
+**6. Interrupted-write recovery.** `TestKillRecovery` runs a mutation in
 a separate process and SIGKILLs it at deterministic commit points (journal
 published; mid-publication). Doctor then reports `recoveryRequired` with a
 state hash. Recovery inside the 5-minute abandonment grace fails with
@@ -1064,10 +1083,10 @@ The oracle corpus is not edited. Every vector runs with the D.3.1 changes
 off (`Engine.noD31`, test-only), which must pass every earlier check
 (oracle, D.1/D.2/D.3 pins, declared divergences) unchanged, and with them
 on. A vector whose output or written files differ is pinned in
-[`testdata/d3_1/expectations.json`](../testdata/d3_1/expectations.json)
+the D.3.1 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 (SHA-256 and UTF-16 length of the root-normalized output; for a refusal,
 of the error text) and passes a comparator
-(`internal/engine/d3_1_vectors_test.go`):
+(`internal/conformance`):
 
 - read vectors: removing the approved members (resume
   `checkpoint.diagnostic` back to `null` and `criticalPath`; doctor
@@ -1164,7 +1183,7 @@ on the path. The full path stays in `workplan_inspect` and
 D.3. The member is advisory, so it is dropped before any text would go
 below the D.1 minimums (the level ladder is retried without it before the
 emergency caps). `TestResumeBudgetSweep` passes unchanged, and
-`TestD31ResumeBudget` checks every budget from 4096 to 16000 (step 8
+`TestResumeAdvisoryBudget` checks every budget from 4096 to 16000 (step 8
 below 6000) on the synthetic graph roadmap with a stale checkpoint.
 
 **5. Wiped plans and cosmetics.**
@@ -1207,8 +1226,8 @@ change is the optional `noteRollover` member of `workplan_compact` and
 The oracle corpus is not edited. Every tools/resume/paging vector runs
 with the D.4 advice off (`Engine.noD4`, test-only), which must pass every
 earlier check unchanged, and with it on; a difference must be pinned in
-[`testdata/d4/expectations.json`](../testdata/d4/expectations.json) and
-pass a comparator (`internal/engine/d4_vectors_test.go`): removing
+the D.4 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json)) and
+pass a comparator (`internal/conformance/compaction_advice_test.go`): removing
 `compactionRecommended` gives the D.4-off text byte-for-byte and the
 advice counts restate from the raw plan JSON by an independent
 implementation of the rules below. With the default thresholds **no
@@ -1216,7 +1235,7 @@ corpus vector changes** (the largest eligible history, `large-paging`,
 could save 13 080 of its 45 232 JSON bytes, under the 32 KiB minimum), so
 the list is empty:
 plans without qualifying history give output byte-identical to D.3.1.
-`TestD4ComparatorOnCorpus` runs the same comparator with lowered
+`TestCompactionAdviceOnCorpus` runs the same comparator with lowered
 thresholds. No mutation vector changes (they never pass `noteRollover`).
 
 **1. Compaction advisor (P2).** Advice only; nothing is archived.
@@ -1360,9 +1379,9 @@ reference snapshot byte-for-byte (`d1.referenceSha256`, checked by
 `plugin.test.ts`).
 
 The oracle corpus is not edited. Vectors whose error text changes are
-pinned in [`testdata/d4_1/expectations.json`](../testdata/d4_1/expectations.json)
+pinned in the D.4.1 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 (SHA-256 and UTF-16 length of the root-normalized error text) and pass a
-comparator (`internal/engine/d4_1_vectors_test.go`): each guidance suffix
+comparator (`internal/conformance/writes_test.go`): each guidance suffix
 directly follows its reference sentence, echoes no hash, and removing the
 suffixes gives the oracle text byte-for-byte. There are 6 such vectors: 5
 mutating-input vectors (native surface; core unchanged) and 1 mutation
@@ -1428,12 +1447,12 @@ spawned core as the trusted `shiori serve --stdio --compaction-advice
 configuration, never model input.
 
 The oracle corpus is not edited.
-[`testdata/d4_2/expectations.json`](../testdata/d4_2/expectations.json)
+The D.4.2 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 lists no vector: with the default thresholds no corpus fixture is
 recommended for compaction and no oracle vector passes `noteRollover`, so
 every vector is byte-identical to D.4.1 (`TestCorpusParity`'s D.4 split
 still runs every read vector with the advice on and off).
-`TestD4ComparatorOnCorpus` (lowered thresholds) now applies the
+`TestCompactionAdviceOnCorpus` (lowered thresholds) now applies the
 comparator to every advised resume packet, small budgets included, with
 no budget-cost exemption.
 
@@ -1472,7 +1491,7 @@ pinned safety item like the D.3.1 stale diagnostic: field names are never
 shortened, the instruction is protected text, and the packet is chosen by
 the unchanged D.1–D.3.1 levels with the member present, so it can cost page
 content at a tight budget. On the synthetic 13-phase/38-step roadmap with a
-stale checkpoint and every list set (`TestD43ResumeBudget`, 951 packets
+stale checkpoint and every list set (`TestResumeWithheldBudget`, 951 packets
 from 4096 to 16000 with limits 1, 8 and 20) every packet fits, 383 keep the
 D.4.3-off level exactly, and 42 carry one page item fewer; the rest use a
 lower text tier. The human `shiori resume` output adds a `withheld:` line.
@@ -1553,7 +1572,7 @@ The oracle corpus is not edited. Every tools/resume/paging vector runs
 with the D.4.3 additions off (`Engine.noD43`, test-only), which must pass
 every earlier check unchanged, and with them on; mutation vectors run the
 earlier checks with them off and are then compared on against off.
-[`testdata/d4_3/expectations.json`](../testdata/d4_3/expectations.json)
+The D.4.3 set (now in [`testdata/expected/expectations.json`](../testdata/expected/expectations.json))
 pins 7 vectors: the 6 resume vectors of `checkpoint-stale-v2` and
 `checkpoint-legacy-v1` (comparator: `withheld` equals the list restated
 from the raw checkpoint file, the instruction is the D.1 text plus the

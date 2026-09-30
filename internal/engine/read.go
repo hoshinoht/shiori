@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
 
 // Read implements workplan_read: the normalized document, an optional
 // phase/step selection, the linked Markdown and the dependency view.
-func (e *Engine) Read(in ReadInput) (ojson.Value, error) {
+func (e *Engine) Read(in input.ReadInput) (ojson.Value, error) {
 	id, err := normalizeRequested(in.ID)
 	if err != nil {
 		return ojson.Value{}, err
@@ -28,9 +29,9 @@ func (e *Engine) Read(in ReadInput) (ojson.Value, error) {
 		return ojson.Value{}, err
 	}
 	filtered := in.PhaseID != nil || in.StepID != nil
-	// D.1 (approved 2026-09-30, contracts §11 item B): a filtered read is a
-	// slice. Linked Markdown is included only on an explicit
-	// includeMarkdown=true; an unfiltered read keeps the default true.
+	// A filtered read is a slice. Linked Markdown is included only on an
+	// explicit includeMarkdown=true; an unfiltered read keeps the default
+	// true.
 	includeMD := in.IncludeMarkdown == nil || *in.IncludeMarkdown
 	if filtered {
 		includeMD = in.IncludeMarkdown != nil && *in.IncludeMarkdown
@@ -78,7 +79,7 @@ func (e *Engine) Read(in ReadInput) (ojson.Value, error) {
 				Set("full", ojson.StringValue("workplan_read id="+p.ID)).Value()).
 			Value()
 	}
-	// D9: the reference returns unbounded output; Go refuses above the
+	// The reference returns unbounded output; Go refuses above the
 	// response frame limit. Estimate cheaply before measuring exactly.
 	est := 3*len(s.JSON.Bytes) + 2*len(s.Markdown.Bytes)
 	if est > e.maxResponse()/2 {
@@ -171,25 +172,7 @@ func selectPhases(p *model.Plan, phaseID, stepID *string) (ojson.Value, error) {
 		}
 	}
 	return ojson.NewObject(3).
-		Set("phaseId", ptrValue(phaseID)).
-		Set("stepId", ptrValue(stepID)).
+		Set("phaseId", ojson.NullableString(phaseID)).
+		Set("stepId", ojson.NullableString(stepID)).
 		Set("phases", ojson.ArrayValue(phases)).Value(), nil
-}
-
-// MarkdownGenerated reports whether the linked Markdown byte-equals the
-// generated rendering of the normalized stored JSON (the reference's
-// "generated" classification; handwritten Markdown is never regenerated).
-func (e *Engine) MarkdownGenerated(id string) (generated, present bool, err error) {
-	s, err := e.load(id)
-	if err != nil {
-		return false, false, err
-	}
-	if !s.Markdown.Exists {
-		return false, false, nil
-	}
-	gen, err := e.isGenerated(s.Plan, s.Markdown.Bytes)
-	if err != nil {
-		return false, true, err
-	}
-	return gen, true, nil
 }

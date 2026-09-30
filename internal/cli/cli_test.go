@@ -49,25 +49,16 @@ func TestJSONOutputMatchesVectors(t *testing.T) {
 				t.Fatalf("CLI wrote: %v", d)
 			}
 			got := root.Normalize(strings.TrimSuffix(out, "\n"))
-			// D.1 (contracts §11), D.2 (§12) and D.3.1 (§14) vectors are
-			// pinned in testdata/d1, d2 and d3_1; the latest pin is the
-			// final output.
-			for _, stage := range []string{"d3_1", "d2", "d1"} {
-				var pins struct {
-					Vectors map[string]struct {
-						OutputSha256 string `json:"outputSha256"`
-					} `json:"vectors"`
+			// A vector whose output differs on purpose is pinned in
+			// testdata/expected.
+			if x, ok := testutil.Expected(t)[strings.TrimSuffix(c.vector, ".json")]; ok && x.Pinned() {
+				if !root.SameLength() && strings.HasPrefix(c.vector, "resume/") {
+					t.Skip("budget-sensitive vector needs a generation-length root")
 				}
-				testutil.ReadJSON(t, testutil.Testdata(stage, "expectations.json"), &pins)
-				if x, ok := pins.Vectors[strings.TrimSuffix(c.vector, ".json")]; ok {
-					if !root.SameLength() && strings.HasPrefix(c.vector, "resume/") {
-						t.Skip("budget-sensitive vector needs a generation-length root")
-					}
-					if sum := sha256hex(got); sum != x.OutputSha256 {
-						t.Fatalf("%s sha %s want %s", stage, sum, x.OutputSha256)
-					}
-					return
+				if sum := sha256hex(got); sum != x.OutputSha256 {
+					t.Fatalf("sha %s want the pinned %s", sum, x.OutputSha256)
 				}
+				return
 			}
 			if v.Expect.OutputText != nil && got != *v.Expect.OutputText {
 				t.Fatalf("resume text differs")
@@ -115,7 +106,7 @@ func TestExitCodesAndErrors(t *testing.T) {
 	}
 }
 
-// TestReadSliceFlags covers the D.1 filtered-read flags.
+// TestReadSliceFlags covers the filtered-read flags.
 func TestReadSliceFlags(t *testing.T) {
 	root := testutil.NewRoot(t, "full-valid")
 	code, out, _ := run("read", "full-plan", "--phase", "phase-b", "--json", "--root", root.Path)

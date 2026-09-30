@@ -24,20 +24,20 @@ func StepMarker(id string) (string, error) {
 }
 
 // RenderMarkdown renders the generated Markdown for a normalized plan.
-// Markers use the lossy normalized id (D8); a marker that normalizes to
-// empty is an error. D.3.1 (contracts §14 item 5b): a finding renders as
-// "title (status)" with a space; everything else is byte-identical to the
-// reference rendering (RenderMarkdownLegacy, testdata/vectors/markdown).
+// Markers use the lossy normalized id; a marker that normalizes to empty is
+// an error. A finding renders as "title (status)" with a space; everything
+// else is byte-identical to the reference rendering (RenderMarkdownLegacy,
+// testdata/vectors/markdown).
 func RenderMarkdown(p *Plan) ([]byte, error) { return renderMarkdown(p, false) }
 
 // RenderMarkdownLegacy is the reference rendering ("title(status)"), as
-// produced by the TypeScript reference and Shiori before D.3.1. It is kept
-// so Markdown generated that way is still recognized as generated.
+// produced by the TypeScript reference and earlier Shiori versions. It is
+// kept so Markdown generated that way is still recognized as generated.
 func RenderMarkdownLegacy(p *Plan) ([]byte, error) { return renderMarkdown(p, true) }
 
 // IsGeneratedMarkdown reports whether md is the generated rendering of p
-// in either the current or the legacy finding style (D.3.1), so Markdown
-// generated before D.3.1 is never misclassified as hand-edited.
+// in either the current or the legacy finding style, so Markdown generated
+// the legacy way is never misclassified as hand-edited.
 func IsGeneratedMarkdown(p *Plan, md []byte) (bool, error) {
 	out, err := RenderMarkdown(p)
 	if err != nil {

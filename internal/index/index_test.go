@@ -81,7 +81,7 @@ func TestSeverityBucketsKeepStableOrder(t *testing.T) {
 	}
 }
 
-// TestMarkerCollisionIsAmbiguous is D8: lossy markers that collide are
+// TestMarkerCollisionIsAmbiguous: lossy markers that collide are
 // ambiguous, never resolved first-match-wins.
 func TestMarkerCollisionIsAmbiguous(t *testing.T) {
 	p := &model.Plan{Phases: []model.Phase{

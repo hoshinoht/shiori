@@ -3,16 +3,17 @@ package engine
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/index"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/resume"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 )
 
-// Resume defaults and bounds (spec 01 §8).
+// Resume defaults and bounds.
 const (
 	DefaultResumeMaxChars = 12000
 	DefaultResumeLimit    = 20
@@ -25,8 +26,8 @@ const (
 	instructionStale = "Checkpoint guidance is not fresh. Reconfirm unverified guardrails, blockers and references before relying on them; nextAction is withheld."
 )
 
-// instructionWithheld is the D.4.3 stale/legacy instruction (contracts §18
-// item 1): the D.1 stale text, then where the withheld fields are and how
+// instructionWithheld is the stale/legacy instruction when stored fields
+// are withheld: the stale text, then where the withheld fields are and how
 // to refresh the checkpoint without losing them. workplan_read does not
 // return the checkpoint, so it names the sidecar file.
 func instructionWithheld(checkpointRel string) string {
@@ -35,10 +36,10 @@ func instructionWithheld(checkpointRel string) string {
 }
 
 // withheldFields names the stored checkpoint fields a non-fresh resume
-// packet does not show (D.4.3, contracts §18 item 1): summary and
-// nextAction always (a stored checkpoint never has them blank), and each
-// of guardrails, references and recentValidation that has entries.
-// Blockers are shown, so they are never withheld.
+// packet does not show: summary and nextAction always (a stored
+// checkpoint never has them blank), and each of guardrails, references
+// and recentValidation that has entries. Blockers are shown, so they are
+// never withheld.
 func withheldFields(cp *model.Checkpoint) []string {
 	out := []string{"summary", "nextAction"}
 	if len(cp.Guardrails) > 0 {
@@ -53,144 +54,9 @@ func withheldFields(cp *model.Checkpoint) []string {
 	return out
 }
 
-type currentView struct {
-	phaseID, phaseTitle, phaseStatus string
-	stepID, stepTitle, stepStatus    string
-	target, action, validation       *string
-	readiness                        readinessView
-}
-
-// readinessView is the D.2 readiness of an open step (contracts §12
-// G1/G6), shown only when the plan has a valid dependency sidecar.
-type readinessView struct {
-	shown     bool
-	ready     bool
-	blockedBy []index.Prereq // prerequisites not completed, stored order
-	unblocks  int            // open steps held up, transitively
-}
-
-func readinessOf(g *index.Graph, k index.StepKey) readinessView {
-	if g == nil {
-		return readinessView{}
-	}
-	unmet := g.Unmet(k)
-	return readinessView{shown: true, ready: len(unmet) == 0, blockedBy: unmet, unblocks: g.Unblocks(k)}
-}
-
-// set adds readiness members compactly: a ready step carries how many
-// open steps it unblocks, a blocked one its unmet prerequisites (ids and
-// status only, at most the pinned-list cap, with the omitted count).
-func (r readinessView) set(b *ojson.Builder, listCap int) {
-	if !r.shown {
-		return
-	}
-	if r.ready {
-		b.Set("readiness", ojson.StringValue("ready")).
-			Set("unblocks", ojson.IntValue(int64(r.unblocks)))
-		return
-	}
-	n := shown(len(r.blockedBy), listCap)
-	refs := make([]ojson.Value, n)
-	for i := 0; i < n; i++ {
-		refs[i] = stepRefStatus(r.blockedBy[i].Key, r.blockedBy[i].Status)
-	}
-	b.Set("readiness", ojson.StringValue("blocked")).
-		Set("blockedBy", ojson.ArrayValue(refs))
-	if o := len(r.blockedBy) - n; o > 0 {
-		b.Set("blockedByOmitted", ojson.IntValue(int64(o)))
-	}
-}
-
-type findingView struct {
-	index           int
-	severity, title string
-	detail, source  *string
-	status          string
-	metadataOmitted bool
-}
-
-type pageItem struct {
-	kind string // active-work | finding | reference
-	// active-work
-	phaseID, phaseTitle, phaseStatus, stepID, title, status string
-	target, action, validation                              *string
-	readiness                                               readinessView
-	// finding
-	finding findingView
-	// reference
-	reference, source string
-}
-
-// resumeModel is the complete, untruncated continuation state.
-type resumeModel struct {
-	path, planFile      string
-	planHash, stateHash string
-	planFresh           bool
-	cpExists, cpFresh   bool
-	freshness           string
-	withheld            []string // D.4.3: stored fields not shown (non-fresh)
-	sourceUpdatedAt     *string
-	summary, nextAction *string
-	current             *currentView
-	blockers            []string
-	blockersTotal       int
-	guardrails          []string // shown candidates (withheld when not fresh)
-	guardrailsTotal     int
-	references          []string
-	referencesTotal     int
-	recentValidation    []string
-	diagnostic          *string
-	id                  string
-	title               *string
-	goal, status        string
-	scope, nonGoals     []string
-	constraints         []string
-	relevantFiles       []string
-	updatedAt           string
-	depsRecorded        bool
-	depsValid           bool
-	currentDeps         []model.StepRef
-	critical            *criticalView // D.3.1 compact critical path
-	compaction          *advice       // D.4 compaction advice (compact form)
-	high                []findingView
-	highCounts          [3]int
-	warnings            []string
-	items               []pageItem
-	offset, limit       int
-	maxChars            int
-	phaseFilter         *string
-	stepFilter          *string
-	activeWorkTotal     int
-	findingsTotal       int
-	referencesPageTotal int
-	historicalNotes     int
-	resolvedFindings    int
-	instruction         string
-}
-
-// criticalView is resume's compact critical path (D.3.1, contracts §14
-// item 4): its length and the first open step on it. The full path stays
-// in workplan_inspect and workplan_doctor.
-type criticalView struct {
-	length int
-	next   index.StepKey
-}
-
-// resumeParams is one degradation level. Caps are UTF-16 code units
-// including the trailing ellipsis; 0 means the class is not truncated.
-type resumeParams struct {
-	listCap   int // pinned list length cap
-	titleCap  int // titles (plan, phase, step, finding)
-	longCap   int // goal, page-item target/action/validation, list entries
-	pinnedCap int // current work: summary, next action, current step prose
-	protCap   int // file paths, references, instruction
-	items     int // page items to include
-	compact   bool
-}
-
 // Resume implements workplan_resume: a bounded continuation packet whose
 // complete serialized text (UTF-16 code units) never exceeds maxChars.
-func (e *Engine) Resume(in ResumeInput) (ojson.Value, string, error) {
+func (e *Engine) Resume(in input.ResumeInput) (ojson.Value, string, error) {
 	id, err := normalizeRequested(in.ID)
 	if err != nil {
 		return ojson.Value{}, "", err
@@ -206,33 +72,32 @@ func (e *Engine) Resume(in ResumeInput) (ojson.Value, string, error) {
 	if err := model.UniqueIDError(s.Plan); err != nil {
 		return ojson.Value{}, "", err
 	}
-	m, err := e.resumeModel(s, in)
+	m, err := e.resumePacket(s, in)
 	if err != nil {
 		return ojson.Value{}, "", err
 	}
-	v, text, err := chooseResume(m)
-	return v, text, err
+	return m.Render()
 }
 
-func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel, error) {
+func (e *Engine) resumePacket(s *snapshot.Snapshot, in input.ResumeInput) (*resume.Packet, error) {
 	p := s.Plan
 	ix := index.Build(p)
-	m := &resumeModel{
-		path: s.JSON.Path, planFile: p.PlanFile,
-		planHash: s.PlanHash, stateHash: s.StateHash,
-		planFresh: len(s.MissingPlanArtifacts) == 0,
-		id:        p.ID, title: p.Title, goal: p.Goal, status: p.Status,
-		scope: p.Scope, nonGoals: p.NonGoals, constraints: p.Constraints,
-		relevantFiles: p.RelevantFiles, updatedAt: p.UpdatedAt,
-		maxChars: DefaultResumeMaxChars, limit: DefaultResumeLimit,
-		phaseFilter: in.PhaseID, stepFilter: in.StepID,
-		historicalNotes: len(p.Notes),
+	m := &resume.Packet{
+		Path: s.JSON.Path, PlanFile: p.PlanFile,
+		PlanHash: s.PlanHash, StateHash: s.StateHash,
+		PlanFresh: len(s.MissingPlanArtifacts) == 0,
+		ID:        p.ID, Title: p.Title, Goal: p.Goal, Status: p.Status,
+		Scope: p.Scope, NonGoals: p.NonGoals, Constraints: p.Constraints,
+		RelevantFiles: p.RelevantFiles, UpdatedAt: p.UpdatedAt,
+		MaxChars: DefaultResumeMaxChars, Limit: DefaultResumeLimit,
+		PhaseFilter: in.PhaseID, StepFilter: in.StepID,
+		HistoricalNotes: len(p.Notes),
 	}
 	if in.MaxChars != nil {
-		m.maxChars = *in.MaxChars
+		m.MaxChars = *in.MaxChars
 	}
 	if in.Limit != nil {
-		m.limit = *in.Limit
+		m.Limit = *in.Limit
 	}
 
 	// Filters.
@@ -263,39 +128,36 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 
 	// Checkpoint.
 	cv := classifyCheckpoint(s)
-	m.cpExists = cv.exists
-	m.freshness = cv.freshness
-	m.cpFresh = cv.freshness == FreshnessFresh
+	m.CheckpointExists = cv.exists
+	m.Freshness = cv.freshness
+	m.CheckpointFresh = cv.freshness == FreshnessFresh
 	var warnings []string
-	// D.2 cancelled-prerequisite warnings go after the checkpoint issue
-	// (when there is one) and before the unverified checkpoint lines, so
-	// the pinned list cap does not hide current plan facts behind them.
-	d2At := 0
+	// Cancelled-prerequisite warnings go after the checkpoint issue (when
+	// there is one) and before the unverified checkpoint lines, so the
+	// pinned list cap does not hide current plan facts behind them.
+	depAt := 0
 	if cv.cp != nil {
 		sua := cv.cp.SourceUpdatedAt
-		m.sourceUpdatedAt = &sua
-		m.blockers = cv.cp.Blockers
-		m.blockersTotal = len(cv.cp.Blockers)
-		m.guardrailsTotal = len(cv.cp.Guardrails)
-		m.referencesTotal = len(cv.cp.References)
-		if m.cpFresh {
+		m.SourceUpdatedAt = &sua
+		m.Blockers = cv.cp.Blockers
+		m.BlockersTotal = len(cv.cp.Blockers)
+		m.GuardrailsTotal = len(cv.cp.Guardrails)
+		m.ReferencesTotal = len(cv.cp.References)
+		if m.CheckpointFresh {
 			sum, next := cv.cp.Summary, cv.cp.NextAction
-			m.summary, m.nextAction = &sum, &next
-			m.guardrails = cv.cp.Guardrails
-			m.references = cv.cp.References
-			m.recentValidation = cv.cp.RecentValidation
+			m.Summary, m.NextAction = &sum, &next
+			m.Guardrails = cv.cp.Guardrails
+			m.References = cv.cp.References
+			m.RecentValidation = cv.cp.RecentValidation
 		} else {
 			warnings = append(warnings, cv.issue)
-			d2At = 1
-			// D.4.3 (contracts §18 item 1): name what is withheld.
-			if !e.noD43 {
-				m.withheld = withheldFields(cv.cp)
-			}
-			// D.3.1 (contracts §14 item 3): a stale checkpoint names what
-			// changed, compactly (the doctor issue has the full detail).
-			if cv.freshness == FreshnessStale && !e.noD31 {
+			depAt = 1
+			m.Withheld = withheldFields(cv.cp)
+			// A stale checkpoint names what changed, compactly (the
+			// doctor issue has the full detail).
+			if cv.freshness == FreshnessStale {
 				d := staleDiagnostic(cv.staleChanged)
-				m.diagnostic = &d
+				m.Diagnostic = &d
 			}
 			for _, g := range cv.cp.Guardrails {
 				warnings = append(warnings, "Unverified checkpoint guardrail: "+g)
@@ -309,24 +171,24 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		}
 	} else if cv.freshness == FreshnessInvalid {
 		d := cv.diagnostic
-		m.diagnostic = &d
+		m.Diagnostic = &d
 		warnings = append(warnings, d)
-		d2At = 1
+		depAt = 1
 	}
 	switch {
-	case m.cpFresh:
-		m.instruction = instructionFresh
-	case m.withheld != nil:
-		m.instruction = instructionWithheld(snapshot.SidecarRel(p.ID, ".checkpoint.json"))
+	case m.CheckpointFresh:
+		m.Instruction = instructionFresh
+	case m.Withheld != nil:
+		m.Instruction = instructionWithheld(snapshot.SidecarRel(p.ID, ".checkpoint.json"))
 	default:
-		m.instruction = instructionStale
+		m.Instruction = instructionStale
 	}
 
 	// Current step: a fresh checkpoint's recorded position when it still
 	// resolves; otherwise the first in-progress step, else the first
 	// unfinished step. Stale guidance never drives it.
 	var cur *index.StepKey
-	if m.cpFresh && cv.cp.Current != nil {
+	if m.CheckpointFresh && cv.cp.Current != nil {
 		k := index.StepKey{PhaseID: cv.cp.Current.PhaseID, StepID: cv.cp.Current.StepID}
 		if _, ok := ix.StepByKey[k]; ok {
 			cur = &k
@@ -339,74 +201,75 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 		loc := ix.StepByKey[*cur]
 		ph := &p.Phases[loc.Phase]
 		st := &ph.Steps[loc.Step]
-		m.current = &currentView{
-			phaseID: ph.ID, phaseTitle: ph.Title, phaseStatus: ph.Status,
-			stepID: st.ID, stepTitle: st.Title, stepStatus: st.Status,
-			target: st.Target, action: st.Action, validation: st.Validation,
+		m.Current = &resume.Current{
+			PhaseID: ph.ID, PhaseTitle: ph.Title, PhaseStatus: ph.Status,
+			StepID: st.ID, StepTitle: st.Title, StepStatus: st.Status,
+			Target: st.Target, Action: st.Action, Validation: st.Validation,
 		}
 	}
 
 	// Dependencies.
 	dv := e.dependencies(s, ix)
-	m.depsRecorded = dv.recorded
-	m.depsValid = len(dv.issues) == 0
+	m.DepsRecorded = dv.recorded
+	m.DepsValid = len(dv.issues) == 0
 	for _, is := range dv.issues {
 		warnings = append(warnings, "Dependency metadata warning: "+is)
 	}
 	if dv.deps != nil && cur != nil {
 		for _, en := range dv.deps.Entries {
 			if en.PhaseID == cur.PhaseID && en.StepID == cur.StepID {
-				m.currentDeps = append(m.currentDeps, en.DependsOn...)
+				m.CurrentDeps = append(m.CurrentDeps, en.DependsOn...)
 			}
 		}
 	}
-	// D.2 (G1/G3/G6): readiness of the current step and the open items;
-	// open steps behind a cancelled prerequisite are flagged.
+	// Readiness of the current step and the open items; open steps behind
+	// a cancelled prerequisite are flagged.
 	g := e.graph(ix, dv)
 	if g != nil {
 		if cur != nil {
-			m.current.readiness = readinessOf(g, *cur)
+			m.Current.Readiness = resume.ReadinessOf(g, *cur)
 		}
-		var d2 []string
+		var cancelled []string
 		for _, k := range g.Steps() {
 			st, _ := g.Status(k)
 			if !index.IsOpen(st) {
 				continue
 			}
 			if c := cancelledOf(g.Unmet(k)); len(c) > 0 {
-				d2 = append(d2, "Dependency order warning: "+strings.TrimPrefix(cancelledWarning(k, c), "dependencies: "))
+				cancelled = append(cancelled, "Dependency order warning: "+strings.TrimPrefix(cancelledWarning(k, c), "dependencies: "))
 			}
 		}
-		if len(d2) > 0 {
-			warnings = append(warnings[:d2At:d2At], append(d2, warnings[d2At:]...)...)
+		if len(cancelled) > 0 {
+			warnings = append(warnings[:depAt:depAt], append(cancelled, warnings[depAt:]...)...)
 		}
-		// D.3.1 (contracts §14 item 4): the critical path's length and the
-		// first open step on it, when it chains at least two open steps.
-		if !e.noD31 {
-			if cp := g.Critical(); len(cp.Steps) >= 2 {
-				for _, k := range cp.Steps {
-					if st, _ := g.Status(k); index.IsOpen(st) {
-						m.critical = &criticalView{length: len(cp.Steps), next: k}
-						break
-					}
+		// The critical path's length and the first open step on it, when
+		// it chains at least two open steps.
+		if cp := g.Critical(); len(cp.Steps) >= 2 {
+			for _, k := range cp.Steps {
+				if st, _ := g.Status(k); index.IsOpen(st) {
+					m.Critical = &resume.Critical{Length: len(cp.Steps), Next: k}
+					break
 				}
 			}
 		}
 	}
-	m.warnings = warnings
-	// D.4 (contracts §15, P2): advice only; D.4.2 (§17): its compact form
-	// is shown only when it costs no page content (chooseResume).
-	m.compaction = e.compactionAdvice(s, false)
+	m.Warnings = warnings
+	// Advice only; its compact form is shown only when it costs no page
+	// content (Packet.Render).
+	if a := e.compactionAdvice(s, cv.freshness, false); a != nil {
+		v := a.CompactValue()
+		m.Compaction = &v
+	}
 
 	// Findings.
 	buckets := index.BuildBuckets(p)
-	m.resolvedFindings = buckets.Resolved
+	m.ResolvedFindings = buckets.Resolved
 	for _, i := range buckets.High() {
-		m.high = append(m.high, findingOf(p, i))
-		m.highCounts[index.SeverityRank[p.Findings[i].Severity]]++
+		m.High = append(m.High, resume.FindingOf(p, i))
+		m.HighCounts[index.SeverityRank[p.Findings[i].Severity]]++
 	}
 	low := buckets.Low()
-	m.findingsTotal = len(m.high) + len(low)
+	m.FindingsTotal = len(m.High) + len(low)
 
 	// Page: active work (excluding current), low findings, references.
 	activeFiltered := 0
@@ -427,53 +290,53 @@ func (e *Engine) resumeModel(s *snapshot.Snapshot, in ResumeInput) (*resumeModel
 				continue
 			}
 			activeFiltered++
-			m.items = append(m.items, pageItem{kind: "active-work",
-				phaseID: ph.ID, phaseTitle: ph.Title, phaseStatus: ph.Status,
-				stepID: st.ID, title: st.Title, status: st.Status,
-				target: st.Target, action: st.Action, validation: st.Validation,
-				readiness: readinessOf(g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})})
+			m.Items = append(m.Items, resume.Item{Kind: "active-work",
+				PhaseID: ph.ID, PhaseTitle: ph.Title, PhaseStatus: ph.Status,
+				StepID: st.ID, Title: st.Title, Status: st.Status,
+				Target: st.Target, Action: st.Action, Validation: st.Validation,
+				Readiness: resume.ReadinessOf(g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})})
 		}
 	}
 	if g != nil {
-		// D.2 (G1/G6): ready work first, ranked by how many open steps it
-		// unblocks (ties keep plan order), then blocked work in plan order.
-		sort.SliceStable(m.items, func(i, j int) bool {
-			a, b := m.items[i].readiness, m.items[j].readiness
-			if a.ready != b.ready {
-				return a.ready
+		// Ready work first, ranked by how many open steps it unblocks
+		// (ties keep plan order), then blocked work in plan order.
+		sort.SliceStable(m.Items, func(i, j int) bool {
+			a, b := m.Items[i].Readiness, m.Items[j].Readiness
+			if a.Ready != b.Ready {
+				return a.Ready
 			}
-			return a.ready && a.unblocks > b.unblocks
+			return a.Ready && a.Unblocks > b.Unblocks
 		})
 	}
-	m.activeWorkTotal = activeFiltered
+	m.ActiveWorkTotal = activeFiltered
 	if cur != nil {
-		m.activeWorkTotal++
+		m.ActiveWorkTotal++
 	}
 	for _, i := range low {
-		m.items = append(m.items, pageItem{kind: "finding", finding: findingOf(p, i)})
+		m.Items = append(m.Items, resume.Item{Kind: "finding", Finding: resume.FindingOf(p, i)})
 	}
 	for _, r := range p.RelevantFiles {
-		m.items = append(m.items, pageItem{kind: "reference", reference: r, source: "current-plan"})
+		m.Items = append(m.Items, resume.Item{Kind: "reference", Reference: r, Source: "current-plan"})
 	}
-	m.referencesPageTotal = len(p.RelevantFiles)
-	if m.cpFresh {
+	m.ReferencesPageTotal = len(p.RelevantFiles)
+	if m.CheckpointFresh {
 		for _, r := range cv.cp.References {
-			m.items = append(m.items, pageItem{kind: "reference", reference: r, source: "checkpoint"})
+			m.Items = append(m.Items, resume.Item{Kind: "reference", Reference: r, Source: "checkpoint"})
 		}
-		m.referencesPageTotal += len(cv.cp.References)
+		m.ReferencesPageTotal += len(cv.cp.References)
 	}
 
 	// Cursor.
 	if in.Cursor != nil {
-		c, err := parseResumeCursor(*in.Cursor)
+		c, err := resume.ParseCursor(*in.Cursor)
 		if err != nil {
 			return nil, err
 		}
-		if c.stateHash != s.StateHash || c.maxChars != m.maxChars || c.limit != m.limit ||
-			!eqPtr(c.phaseID, filterDigest(in.PhaseID)) || !eqPtr(c.stepID, filterDigest(in.StepID)) || c.offset > len(m.items) {
-			return nil, errResumeCursorStale
+		if c.StateHash != s.StateHash || c.MaxChars != m.MaxChars || c.Limit != m.Limit ||
+			!resume.EqualPtr(c.PhaseID, resume.FilterDigest(in.PhaseID)) || !resume.EqualPtr(c.StepID, resume.FilterDigest(in.StepID)) || c.Offset > len(m.Items) {
+			return nil, resume.ErrCursorStale
 		}
-		m.offset = c.offset
+		m.Offset = c.Offset
 	}
 	return m, nil
 }
@@ -496,608 +359,4 @@ func firstActive(p *model.Plan) *index.StepKey {
 		}
 	}
 	return nil
-}
-
-func findingOf(p *model.Plan, i int) findingView {
-	f := &p.Findings[i]
-	status := "open"
-	if f.Status != nil {
-		status = *f.Status
-	}
-	return findingView{index: i, severity: f.Severity, title: f.Title, detail: f.Detail, source: f.Source,
-		status: status, metadataOmitted: len(f.Unknown) > 0}
-}
-
-// textClass selects the display cap of a packet string (D.1, contracts
-// §11). Protected strings are file paths, references and the fixed
-// instruction; ids, hashes, enums, counts and retrieval pointers are never
-// passed through truncation at all.
-type textClass int
-
-const (
-	clsProtected textClass = iota
-	clsTitle
-	clsLong
-	clsPinned // current work: summary, next action, current target/action/validation
-)
-
-// truncState records truncated display fields in traversal order.
-type truncState struct {
-	caps        [4]int // per textClass; 0 = no cap
-	danger      []string
-	other       []string
-	dangerCount int
-}
-
-func (t *truncState) str(path, s string, cls textClass, danger bool) ojson.Value {
-	c := t.caps[cls]
-	if c <= 0 {
-		return ojson.StringValue(s)
-	}
-	out, cut := ojson.TruncateUTF16(s, c)
-	if cut {
-		t.record(path, danger)
-	}
-	return ojson.StringValue(out)
-}
-
-func (t *truncState) ptr(path string, s *string, cls textClass, danger bool) ojson.Value {
-	if s == nil {
-		return ojson.NullValue()
-	}
-	return t.str(path, *s, cls, danger)
-}
-
-func (t *truncState) record(path string, danger bool) {
-	if danger {
-		t.danger = append(t.danger, path)
-		t.dangerCount++
-	} else {
-		t.other = append(t.other, path)
-	}
-}
-
-func (t *truncState) list(path string, items []string, cap int, cls textClass, danger bool) ojson.Value {
-	n := len(items)
-	if n > cap {
-		n = cap
-	}
-	out := make([]ojson.Value, n)
-	for i := 0; i < n; i++ {
-		out[i] = t.str(path+"["+strconv.Itoa(i)+"]", items[i], cls, danger)
-	}
-	return ojson.ArrayValue(out)
-}
-
-func shown(total, cap int) int {
-	if total > cap {
-		return cap
-	}
-	return total
-}
-
-func (t *truncState) finding(path string, f findingView, withKind bool, danger bool) ojson.Value {
-	b := ojson.NewObject(9)
-	if withKind {
-		b.Set("kind", ojson.StringValue("finding"))
-	}
-	b.Set("index", ojson.IntValue(int64(f.index))).
-		Set("severity", ojson.StringValue(f.severity)).
-		Set("title", t.str(path+".title", f.title, clsTitle, danger)).
-		Set("detail", t.ptr(path+".detail", f.detail, clsLong, danger)).
-		Set("source", t.ptr(path+".source", f.source, clsLong, danger)).
-		Set("status", ojson.StringValue(f.status)).
-		Set("metadataOmitted", ojson.BoolValue(f.metadataOmitted))
-	if f.metadataOmitted {
-		t.record(path+".customMetadata", danger)
-	}
-	return b.Value()
-}
-
-// build renders the packet for one degradation level.
-func (m *resumeModel) build(pr resumeParams) ojson.Value {
-	t := &truncState{caps: [4]int{pr.protCap, pr.titleCap, pr.longCap, pr.pinnedCap}}
-	L := pr.listCap
-
-	pathV := t.str("path", m.path, clsProtected, false)
-	planFileV := t.str("planFile", m.planFile, clsProtected, false)
-	// The summary is truncated (and listed) before the current position.
-	summaryV := t.ptr("checkpoint.summary", m.summary, clsPinned, false)
-	var current ojson.Value
-	if m.current == nil {
-		current = ojson.NullValue()
-	} else {
-		c := m.current
-		cb := ojson.NewObject(12).
-			Set("phaseId", ojson.StringValue(c.phaseID)).
-			Set("phaseTitle", t.str("checkpoint.current.phaseTitle", c.phaseTitle, clsTitle, false)).
-			Set("phaseStatus", ojson.StringValue(c.phaseStatus)).
-			Set("stepId", ojson.StringValue(c.stepID)).
-			Set("stepTitle", t.str("checkpoint.current.stepTitle", c.stepTitle, clsTitle, false)).
-			Set("stepStatus", ojson.StringValue(c.stepStatus))
-		c.readiness.set(cb, L)
-		current = cb.
-			Set("target", t.ptr("checkpoint.current.target", c.target, clsPinned, false)).
-			Set("action", t.ptr("checkpoint.current.action", c.action, clsPinned, false)).
-			Set("validation", t.ptr("checkpoint.current.validation", c.validation, clsPinned, false)).Value()
-	}
-	cpb := ojson.NewObject(21).
-		Set("exists", ojson.BoolValue(m.cpExists)).
-		Set("fresh", ojson.BoolValue(m.cpFresh)).
-		Set("freshness", ojson.StringValue(m.freshness))
-	if m.withheld != nil {
-		// D.4.3: field names, never shortened (like enums).
-		cpb.Set("withheld", ojson.StringsValue(m.withheld))
-	}
-	checkpoint := cpb.
-		Set("sourceUpdatedAt", ojson.NullableString(m.sourceUpdatedAt)).
-		Set("summary", summaryV).
-		Set("current", current).
-		Set("nextAction", t.ptr("checkpoint.nextAction", m.nextAction, clsPinned, false)).
-		Set("blockers", t.list("checkpoint.blockers", m.blockers, L, clsLong, true)).
-		Set("blockersTotal", ojson.IntValue(int64(m.blockersTotal))).
-		Set("guardrails", t.list("checkpoint.guardrails", m.guardrails, L, clsLong, true)).
-		Set("guardrailsTotal", ojson.IntValue(int64(m.guardrailsTotal))).
-		Set("references", t.list("checkpoint.references", m.references, L, clsProtected, true)).
-		Set("referencesTotal", ojson.IntValue(int64(m.referencesTotal))).
-		Set("recentValidation", t.list("checkpoint.recentValidation", m.recentValidation, L, clsLong, true)).
-		Set("evidenceStatus", ojson.StringValue("unverified")).
-		Set("diagnostic", t.ptr("checkpoint.diagnostic", m.diagnostic, clsLong, false)).Value()
-
-	var titleV ojson.Value
-	if m.title == nil {
-		titleV = ojson.NullValue()
-	} else {
-		titleV = t.str("workplan.title", *m.title, clsTitle, false)
-	}
-	workplan := ojson.NewObject(12).
-		Set("id", ojson.StringValue(m.id)).
-		Set("title", titleV).
-		Set("goal", t.str("workplan.goal", m.goal, clsLong, false)).
-		Set("status", ojson.StringValue(m.status)).
-		Set("scope", t.list("workplan.scope", m.scope, L, clsLong, true)).
-		Set("scopeTotal", ojson.IntValue(int64(len(m.scope)))).
-		Set("nonGoals", t.list("workplan.nonGoals", m.nonGoals, L, clsLong, true)).
-		Set("nonGoalsTotal", ojson.IntValue(int64(len(m.nonGoals)))).
-		Set("constraints", t.list("workplan.constraints", m.constraints, L, clsLong, true)).
-		Set("constraintsTotal", ojson.IntValue(int64(len(m.constraints)))).
-		Set("relevantFiles", t.list("workplan.relevantFiles", m.relevantFiles, L, clsProtected, false)).
-		Set("updatedAt", ojson.StringValue(m.updatedAt)).Value()
-
-	depRefs := make([]ojson.Value, 0, shown(len(m.currentDeps), L))
-	for i := 0; i < shown(len(m.currentDeps), L); i++ {
-		depRefs = append(depRefs, refValue(m.currentDeps[i]))
-	}
-	currentDependencies := ojson.NewObject(4).
-		Set("recorded", ojson.BoolValue(m.depsRecorded)).
-		Set("valid", ojson.BoolValue(m.depsValid)).
-		Set("total", ojson.IntValue(int64(len(m.currentDeps)))).
-		Set("references", ojson.ArrayValue(depRefs)).Value()
-	var criticalPath ojson.Value
-	if m.critical != nil {
-		criticalPath = ojson.NewObject(2).
-			Set("length", ojson.IntValue(int64(m.critical.length))).
-			Set("nextStep", ojson.NewObject(2).
-				Set("phaseId", ojson.StringValue(m.critical.next.PhaseID)).
-				Set("stepId", ojson.StringValue(m.critical.next.StepID)).Value()).Value()
-	}
-
-	high := make([]ojson.Value, 0, shown(len(m.high), L))
-	for i := 0; i < shown(len(m.high), L); i++ {
-		high = append(high, t.finding("safety.highFindings["+strconv.Itoa(i)+"]", m.high[i], false, true))
-	}
-	warnings := t.list("safety.unverifiedWarnings", m.warnings, L, clsLong, true)
-
-	omitted := [8]int{
-		len(m.constraints) - shown(len(m.constraints), L),
-		len(m.blockers) - shown(len(m.blockers), L),
-		len(m.high) - shown(len(m.high), L),
-		len(m.currentDeps) - shown(len(m.currentDeps), L),
-		len(m.guardrails) - shown(len(m.guardrails), L),
-		len(m.references) - shown(len(m.references), L),
-		len(m.scope) - shown(len(m.scope), L),
-		len(m.nonGoals) - shown(len(m.nonGoals), L),
-	}
-
-	// Page items.
-	total := len(m.items)
-	n := pr.items
-	if rem := total - m.offset; n > rem {
-		n = rem
-	}
-	if n < 0 {
-		n = 0
-	}
-	items := make([]ojson.Value, 0, n)
-	for i := 0; i < n; i++ {
-		it := &m.items[m.offset+i]
-		base := "page.items[" + strconv.Itoa(i) + "]"
-		switch it.kind {
-		case "active-work":
-			ib := ojson.NewObject(13).
-				Set("kind", ojson.StringValue(it.kind)).
-				Set("phaseId", ojson.StringValue(it.phaseID)).
-				Set("phaseTitle", t.str(base+".phaseTitle", it.phaseTitle, clsTitle, false)).
-				Set("phaseStatus", ojson.StringValue(it.phaseStatus)).
-				Set("stepId", ojson.StringValue(it.stepID)).
-				Set("title", t.str(base+".title", it.title, clsTitle, false)).
-				Set("status", ojson.StringValue(it.status))
-			it.readiness.set(ib, L)
-			items = append(items, ib.
-				Set("target", t.ptr(base+".target", it.target, clsLong, false)).
-				Set("action", t.ptr(base+".action", it.action, clsLong, false)).
-				Set("validation", t.ptr(base+".validation", it.validation, clsLong, false)).Value())
-		case "finding":
-			items = append(items, t.finding(base, it.finding, true, false))
-		default:
-			items = append(items, ojson.NewObject(3).
-				Set("kind", ojson.StringValue(it.kind)).
-				Set("reference", t.str(base+".reference", it.reference, clsProtected, false)).
-				Set("source", ojson.StringValue(it.source)).Value())
-		}
-	}
-	next := ojson.NullValue()
-	if m.offset+n < total {
-		next = ojson.StringValue(encodeCursor(resumeDomain, resumeCursor{
-			stateHash: m.stateHash, maxChars: m.maxChars, limit: m.limit,
-			phaseID: m.phaseFilter, stepID: m.stepFilter, offset: m.offset + n,
-		}.fields()))
-	}
-	page := ojson.NewObject(7).
-		Set("total", ojson.IntValue(int64(total))).
-		Set("offset", ojson.IntValue(int64(m.offset))).
-		Set("limit", ojson.IntValue(int64(m.limit))).
-		Set("returned", ojson.IntValue(int64(n))).
-		Set("omitted", ojson.IntValue(int64(total-m.offset-n))).
-		Set("items", ojson.ArrayValue(items)).
-		Set("nextCursor", next).Value()
-
-	instruction := t.str("instruction", m.instruction, clsProtected, false)
-
-	omittedSum := 0
-	for _, o := range omitted {
-		omittedSum += o
-	}
-	// Overflow is any omitted danger item or any truncated display field
-	// (reference behaviour; a page that merely continues is not overflow).
-	overflow := omittedSum > 0 || t.dangerCount > 0 || len(t.danger)+len(t.other) > 0
-	pointers := []string{}
-	if overflow {
-		pointers = []string{"workplan_read:" + m.id, "workplan_inspect:" + m.id}
-	}
-	safety := ojson.NewObject(12).
-		Set("highFindings", ojson.ArrayValue(high)).
-		Set("highFindingsTotal", ojson.IntValue(int64(len(m.high)))).
-		Set("highFindingCounts", ojson.NewObject(3).
-			Set("blocker", ojson.IntValue(int64(m.highCounts[0]))).
-			Set("critical", ojson.IntValue(int64(m.highCounts[1]))).
-			Set("major", ojson.IntValue(int64(m.highCounts[2]))).Value()).
-		Set("unverifiedWarnings", warnings).
-		Set("unverifiedWarningCount", ojson.IntValue(int64(len(m.warnings)))).
-		Set("unverifiedWarningsOmitted", ojson.IntValue(int64(len(m.warnings)-shown(len(m.warnings), L)))).
-		Set("overflow", ojson.BoolValue(overflow)).
-		Set("truncatedDangerFieldCount", ojson.IntValue(int64(t.dangerCount))).
-		Set("omittedDangerCounts", ojson.NewObject(8).
-			Set("constraints", ojson.IntValue(int64(omitted[0]))).
-			Set("blockers", ojson.IntValue(int64(omitted[1]))).
-			Set("highFindings", ojson.IntValue(int64(omitted[2]))).
-			Set("dependencies", ojson.IntValue(int64(omitted[3]))).
-			Set("guardrails", ojson.IntValue(int64(omitted[4]))).
-			Set("references", ojson.IntValue(int64(omitted[5]))).
-			Set("scope", ojson.IntValue(int64(omitted[6]))).
-			Set("nonGoals", ojson.IntValue(int64(omitted[7]))).Value()).
-		Set("overflowPointers", ojson.StringsValue(pointers)).Value()
-
-	all := append(append([]string{}, t.danger...), t.other...)
-	pathCap := resumePathCap(m.maxChars)
-	listed := all
-	if len(listed) > pathCap {
-		listed = listed[:pathCap]
-	}
-
-	out := ojson.NewObject(16).
-		Set("path", pathV).
-		Set("planFile", planFileV).
-		Set("hashes", ojson.NewObject(2).
-			Set("planHash", ojson.StringValue(m.planHash)).
-			Set("stateHash", ojson.StringValue(m.stateHash)).Value()).
-		Set("planFresh", ojson.BoolValue(m.planFresh)).
-		Set("checkpoint", checkpoint).
-		Set("workplan", workplan).
-		Set("currentDependencies", currentDependencies)
-	if m.critical != nil {
-		out.Set("criticalPath", criticalPath)
-	}
-	if m.compaction != nil {
-		out.Set("compactionRecommended", m.compaction.compactValue())
-	}
-	return out.
-		Set("safety", safety).
-		Set("page", page).
-		Set("counts", ojson.NewObject(6).
-			Set("activeWorkTotal", ojson.IntValue(int64(m.activeWorkTotal))).
-			Set("findingsTotal", ojson.IntValue(int64(m.findingsTotal))).
-			Set("highFindingsTotal", ojson.IntValue(int64(len(m.high)))).
-			Set("referencesTotal", ojson.IntValue(int64(m.referencesPageTotal))).
-			Set("historicalNotesOmitted", ojson.IntValue(int64(m.historicalNotes))).
-			Set("resolvedFindingsOmitted", ojson.IntValue(int64(m.resolvedFindings))).Value()).
-		Set("retrieval", ojson.NewObject(3).
-			Set("read", ojson.StringValue("workplan_read id="+m.id)).
-			Set("inspect", ojson.StringValue("workplan_inspect id="+m.id)).
-			Set("dependencies", ojson.StringValue(snapshot.SidecarRel(m.id, ".dependencies.json"))).Value()).
-		Set("truncatedFields", ojson.StringsValue(listed)).
-		Set("truncatedFieldCount", ojson.IntValue(int64(len(all)))).
-		Set("truncatedFieldPathsOmitted", ojson.IntValue(int64(len(all)-len(listed)))).
-		Set("instruction", instruction).Value()
-}
-
-func (m *resumeModel) render(pr resumeParams) (ojson.Value, []byte) {
-	v := m.build(pr)
-	if pr.compact {
-		return v, ojson.Compact(v)
-	}
-	return v, ojson.Pretty(v)
-}
-
-// Resume budget policy (D.1, approved 2026-09-30; contracts §11 item A).
-//
-// The reference shortened every display string (down to 1 code unit)
-// before it returned fewer page items, so a default-budget packet for a
-// long roadmap carried ~30-character fragments. D.1 balances readable
-// text against a useful page: a target page of min(limit, T) items, T = 8
-// at maxChars >= 12000, 4 at >= 6000 and 2 below.
-//
-//  1. While the page can still hold the target, text shrinks first:
-//     readability tiers from uncapped down to prose 240 / titles 80, then
-//     the floor prose 120 / titles 80; each tier returns the largest page
-//     (>= target) that fits. Current work (checkpoint summary, next
-//     action, current step target/action/validation) keeps at least 512.
-//  2. Below the target, the existing order continues: at the floor the
-//     page shrinks to one item (the cursor carries the rest), then current
-//     work drops to the floor, then the pinned lists (scope, constraints,
-//     guardrails, ...) show fewer entries, down to one each; the totals
-//     and omittedDangerCounts that exist stay exact and overflow is set.
-//  3. Only when not even one page item (or, with nothing left to page,
-//     the pinned packet alone) fits that way, text shortens below the
-//     minimums (emergency caps), then paths/references too.
-//     Every shortened string ends in "…" and is listed in
-//     truncatedFields, and safety.overflow is set.
-//  4. As a last resort the page is dropped (zero items).
-//
-// File paths, references and the instruction are never shortened before
-// step 3; ids, hashes, enums, counts and retrieval pointers never are.
-// Within a level the pretty packet is preferred unless the compact one
-// carries more page items. Every accepted budget still yields a packet
-// within maxChars unless machine ids alone exceed it (contracts §10a
-// item 2, unchanged).
-const (
-	resumeMinTitle   = 80
-	resumeMinLong    = 120
-	resumeTargetLong = 240 // prose floor while the page is above target
-	resumePinnedMin  = 512 // current-work cap while the page is at target
-)
-
-// resumeTiers are the readability tiers {longCap, titleCap} used while
-// the target page still fits; 0 = uncapped.
-var resumeTiers = [][2]int{{0, 0}, {2048, 512}, {1024, 256}, {512, 200}, {resumeTargetLong, resumeMinTitle}, {resumeMinLong, resumeMinTitle}}
-
-// resumeEmergencyCaps apply below the readability minimums (step 3).
-var resumeEmergencyCaps = []int{100, 80, 64, 48, 32, 24, 16, 10, 4, 2, 1}
-
-// resumeTargetPage is the page size text shrinks to protect (step 1).
-func resumeTargetPage(maxChars, limit int) int {
-	t := 2
-	switch {
-	case maxChars >= 12000:
-		t = 8
-	case maxChars >= 6000:
-		t = 4
-	}
-	if limit < t {
-		return limit
-	}
-	return t
-}
-
-// chooseResume applies the budget policy: the first degradation level
-// whose complete text fits maxChars (UTF-16 code units). The D.3.1
-// critical path is advisory (the detail stays in inspect/doctor), so it is
-// dropped before any text goes below the D.1 minimums.
-//
-// The D.4 compaction advice never costs page content (D.4.2, contracts
-// §17 item 2): the packet is first chosen without it by the D.1–D.3.1
-// rules, and the advice is added only when the packet with it has the same
-// degradation level (page items, compact form and every text cap) as the
-// packet without it (the chosen level rendered with the advice still
-// fits maxChars); otherwise it is omitted (doctor keeps the full advice).
-func chooseResume(m *resumeModel) (ojson.Value, string, error) {
-	adv := m.compaction
-	m.compaction = nil
-	v, text, pr, ok := chooseResumeReadable(m)
-	if !ok {
-		return chooseResumeEmergency(m)
-	}
-	if adv != nil {
-		// The same level with the advice: identical to the chosen packet
-		// plus the member, kept only when it still fits.
-		m.compaction = adv
-		if av, ab := m.render(pr); ojson.UTF16LenBytes(ab) <= m.maxChars {
-			return av, string(ab), nil
-		}
-		m.compaction = nil
-	}
-	return v, text, nil
-}
-
-// chooseResumeReadable is the D.1–D.3.1 readable policy: the levels with
-// the critical path, then without it.
-func chooseResumeReadable(m *resumeModel) (ojson.Value, string, resumeParams, bool) {
-	if v, text, pr, ok := chooseResumeLevels(m); ok {
-		return v, text, pr, true
-	}
-	if m.critical != nil {
-		m.critical = nil
-		if v, text, pr, ok := chooseResumeLevels(m); ok {
-			return v, text, pr, true
-		}
-	}
-	return ojson.Value{}, "", resumeParams{}, false
-}
-
-// chooseResumeLevels tries the readable levels (steps 1 and 2) and
-// returns the chosen level.
-func chooseResumeLevels(m *resumeModel) (ojson.Value, string, resumeParams, bool) {
-	L := resumeListCap(m.maxChars)
-	remaining := len(m.items) - m.offset
-	if remaining < 0 {
-		remaining = 0
-	}
-	maxN := m.limit
-	if maxN > remaining {
-		maxN = remaining
-	}
-	target := resumeTargetPage(m.maxChars, m.limit)
-	if target > maxN {
-		target = maxN
-	}
-	try := func(pr resumeParams) (ojson.Value, []byte, bool) {
-		v, b := m.render(pr)
-		return v, b, ojson.UTF16LenBytes(b) <= m.maxChars
-	}
-	// fitN is the largest page size in 1..maxN that fits (0 if none).
-	// Packet length grows with the page except that the last page drops
-	// its cursor, so maxN is tried first and the rest is bisected.
-	fitN := func(base resumeParams) int {
-		base.items = maxN
-		if _, _, ok := try(base); ok {
-			return maxN
-		}
-		lo, hi := 0, maxN-1
-		for lo < hi {
-			mid := (lo + hi + 1) / 2
-			base.items = mid
-			if _, _, ok := try(base); ok {
-				lo = mid
-			} else {
-				hi = mid - 1
-			}
-		}
-		return lo
-	}
-	pinned := func(long int) int {
-		if long == 0 || long >= resumePinnedMin {
-			return long
-		}
-		return resumePinnedMin
-	}
-	type level struct{ long, title, pinned, list, min int }
-	var levels []level
-	for _, tier := range resumeTiers {
-		levels = append(levels, level{tier[0], tier[1], pinned(tier[0]), L, target})
-	}
-	levels = append(levels,
-		level{resumeMinLong, resumeMinTitle, resumePinnedMin, L, 1},
-		level{resumeMinLong, resumeMinTitle, resumeMinLong, L, 1})
-	for l := L - 1; l >= 1; l-- {
-		levels = append(levels, level{resumeMinLong, resumeMinTitle, resumeMinLong, l, 1})
-	}
-	for _, lv := range levels {
-		base := resumeParams{listCap: lv.list, longCap: lv.long, titleCap: lv.title, pinnedCap: lv.pinned}
-		if maxN == 0 {
-			for _, compact := range []bool{false, true} {
-				base.compact = compact
-				if v, b, ok := try(base); ok {
-					return v, string(b), base, true
-				}
-			}
-			continue
-		}
-		nP := fitN(base)
-		nC := 0
-		if nP < maxN {
-			cb := base
-			cb.compact = true
-			nC = fitN(cb)
-		}
-		min := lv.min
-		if min < 1 {
-			min = 1
-		}
-		if nP < min && nC < min {
-			continue
-		}
-		if nP >= nC {
-			base.items = nP
-		} else {
-			base.items, base.compact = nC, true
-		}
-		v, b := m.render(base)
-		return v, string(b), base, true
-	}
-	return ojson.Value{}, "", resumeParams{}, false
-}
-
-// chooseResumeEmergency applies the emergency caps (steps 3 and 4).
-func chooseResumeEmergency(m *resumeModel) (ojson.Value, string, error) {
-	remaining := len(m.items) - m.offset
-	if remaining < 0 {
-		remaining = 0
-	}
-	maxN := m.limit
-	if maxN > remaining {
-		maxN = remaining
-	}
-	try := func(pr resumeParams) (ojson.Value, []byte, bool) {
-		v, b := m.render(pr)
-		return v, b, ojson.UTF16LenBytes(b) <= m.maxChars
-	}
-	one := maxN
-	if one > 1 {
-		one = 1
-	}
-	for _, protect := range []bool{true, false} {
-		for _, c := range resumeEmergencyCaps {
-			pr := resumeParams{listCap: 1, longCap: c, titleCap: c, pinnedCap: c, items: one}
-			if !protect {
-				pr.protCap = c
-			}
-			for _, compact := range []bool{false, true} {
-				pr.compact = compact
-				if v, b, ok := try(pr); ok {
-					return v, string(b), nil
-				}
-			}
-		}
-	}
-	for _, compact := range []bool{false, true} {
-		if v, b, ok := try(resumeParams{listCap: 1, longCap: 1, titleCap: 1, pinnedCap: 1, protCap: 1, compact: compact}); ok {
-			return v, string(b), nil
-		}
-	}
-	return ojson.Value{}, "", fmt.Errorf("resume packet cannot fit maxChars=%d", m.maxChars)
-}
-
-// resumeListCap is the pinned-list cap for a budget: floor(maxChars/900)
-// clamped to 4..8. The corpus pins 4 at 4096 and 8 at 12000 and 64000;
-// the values in between were measured on the reference (stage C,
-// contracts §10) by sweeping maxChars across 4096..12000.
-func resumeListCap(maxChars int) int {
-	l := maxChars / 900
-	if l < 4 {
-		return 4
-	}
-	if l > 8 {
-		return 8
-	}
-	return l
-}
-
-// resumePathCap bounds the listed truncatedFields paths: floor(maxChars/
-// 256), at most 32 (measured on the reference like resumeListCap).
-func resumePathCap(maxChars int) int {
-	c := maxChars / 256
-	if c > 32 {
-		return 32
-	}
-	return c
 }

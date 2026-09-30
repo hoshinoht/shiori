@@ -14,7 +14,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/snapshot"
 )
 
-// D.3.1 (contracts §14 item 2): repair of unparseable plans.
+// Repair of unparseable plans:
 //
 //   - doctor recovers the old planFile link from the raw bytes with a
 //     tolerant scan (recoveredPlanFile) when it is found, unambiguous and
@@ -35,9 +35,6 @@ var planFileMember = regexp.MustCompile(`"planFile"\s*:\s*("(?:[^"\\\x00-\x1f]|\
 // under .opencode/workplan/, Markdown, no backslash, not a symlink) or is
 // the linked Markdown of another readable plan.
 func (e *Engine) recoverPlanFile(id string, raw []byte) string {
-	if e.noD31 {
-		return ""
-	}
 	found := ""
 	for _, m := range planFileMember.FindAllSubmatch(raw, 8) {
 		parsed, err := ojson.Parse(m[1])
@@ -110,7 +107,7 @@ func (e *Engine) repairArchive(id string, u *snapshot.Unreadable, planFile strin
 }
 
 // UnreadablePlanError is a writer's refusal of a plan whose primary JSON
-// cannot be loaded; it names the explicit repair (D.3.1). The load error
+// cannot be loaded; it names the explicit repair. The load error
 // stays the cause, so the error class is unchanged.
 type UnreadablePlanError struct {
 	Err       error
@@ -126,9 +123,6 @@ func (e *UnreadablePlanError) Unwrap() error { return e.Err }
 
 // repairHint wraps a writer's load error for an unreadable plan.
 func (e *Engine) repairHint(id string, loadErr error) error {
-	if e.noD31 {
-		return loadErr
-	}
 	var already *UnreadablePlanError
 	if errors.As(loadErr, &already) {
 		return loadErr

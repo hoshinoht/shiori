@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
 
-// Separate-process barrier tests (spec 05 §5, S02): each child prepares
+// Separate-process barrier tests: each child prepares
 // its mutation, signals readiness, waits for a shared "go" file, then
 // authorizes and commits. All children therefore prepared against the
 // same state; the locks and the locked recheck must produce exactly one
@@ -28,7 +29,7 @@ func TestMain(m *testing.M) {
 		os.Exit(barrierChild())
 	}
 	if os.Getenv("SHIORI_KILL_CHILD") == "1" {
-		os.Exit(killChild()) // D.3 item 6 (d3_test.go)
+		os.Exit(killChild()) // recovery_test.go
 	}
 	os.Exit(m.Run())
 }
@@ -40,7 +41,7 @@ type childResult struct {
 }
 
 func barrierChild() int {
-	root, tool, input, dir, name := os.Getenv("B_ROOT"), os.Getenv("B_TOOL"), os.Getenv("B_INPUT"), os.Getenv("B_DIR"), os.Getenv("B_NAME")
+	root, tool, raw, dir, name := os.Getenv("B_ROOT"), os.Getenv("B_TOOL"), os.Getenv("B_INPUT"), os.Getenv("B_DIR"), os.Getenv("B_NAME")
 	report := func(r childResult) int {
 		data, _ := json.Marshal(r)
 		os.WriteFile(filepath.Join(dir, name+".result"), data, 0o644)
@@ -50,7 +51,7 @@ func barrierChild() int {
 	if err != nil {
 		return report(childResult{Error: err.Error(), Phase: "new"})
 	}
-	data, err := ParseMutationInput(tool, mustJSONPlain(input), SurfaceCore)
+	data, err := input.ParseMutationInput(tool, mustJSONPlain(raw), input.SurfaceCore)
 	if err != nil {
 		return report(childResult{Error: err.Error(), Phase: "parse"})
 	}
@@ -69,7 +70,7 @@ func barrierChild() int {
 	if os.Getenv("B_HOLD") != "" {
 		hooks.AfterLock = func() { time.Sleep(150 * time.Millisecond) }
 	}
-	if _, err := e.Execute(context.Background(), p, AllowAll{}, ExecOptions{Hooks: hooks}); err != nil {
+	if _, err := e.Execute(context.Background(), p, allowAll{}, ExecOptions{Hooks: hooks}); err != nil {
 		return report(childResult{Error: err.Error(), Phase: "commit"})
 	}
 	return report(childResult{OK: true})
@@ -189,7 +190,7 @@ func TestBarrierMoveMoveSharedDestination(t *testing.T) {
 	root := testutil.NewRoot(t, "empty-workspace")
 	e, _ := New(root.Path)
 	for _, id := range []string{"p1", "p2", "p3"} {
-		if _, err := runMutation(context.Background(), e, "workplan_create", mustJSON(t, `{"id":"`+id+`","goal":"g"}`), AllowAll{}); err != nil {
+		if _, err := runMutation(context.Background(), e, "workplan_create", mustJSON(t, `{"id":"`+id+`","goal":"g"}`), allowAll{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -246,15 +247,15 @@ func TestPendingJournalClaimUnderLock(t *testing.T) {
 	e, _ := New(root.Path)
 	dest := ".opencode/workplan/claimed.md"
 	// B prepares first (destination free).
-	dataB, _ := ParseMutationInput("create", mustJSON(t, `{"id":"b","goal":"g","planFile":"`+dest+`"}`), SurfaceCore)
+	dataB, _ := input.ParseMutationInput("create", mustJSON(t, `{"id":"b","goal":"g","planFile":"`+dest+`"}`), input.SurfaceCore)
 	pb, err := e.Prepare("create", dataB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A crashes after publishing its journal (claims dest, file absent).
-	dataA, _ := ParseMutationInput("create", mustJSON(t, `{"id":"a","goal":"g","planFile":"`+dest+`"}`), SurfaceCore)
+	dataA, _ := input.ParseMutationInput("create", mustJSON(t, `{"id":"a","goal":"g","planFile":"`+dest+`"}`), input.SurfaceCore)
 	pa, _ := e.Prepare("create", dataA)
-	_, err = e.Execute(context.Background(), pa, AllowAll{}, ExecOptions{Hooks: storage.Hooks{Fault: func(p string) error {
+	_, err = e.Execute(context.Background(), pa, allowAll{}, ExecOptions{Hooks: storage.Hooks{Fault: func(p string) error {
 		if p == storage.FaultJournalSync {
 			return errors.New("crash")
 		}
@@ -264,7 +265,7 @@ func TestPendingJournalClaimUnderLock(t *testing.T) {
 	if !errors.As(err, &rr) {
 		t.Fatalf("A: %v", err)
 	}
-	_, err = e.Execute(context.Background(), pb, AllowAll{}, ExecOptions{})
+	_, err = e.Execute(context.Background(), pb, allowAll{}, ExecOptions{})
 	if err == nil || !strings.Contains(err.Error(), "Workplan destination is claimed by pending transaction") {
 		t.Fatalf("B: %v", err)
 	}
@@ -290,14 +291,14 @@ func mustJSONPlain(s string) ojson.Value {
 	return p.Value
 }
 
-// Case policy (contracts §10): linked Markdown ownership compares
+// Case policy: linked Markdown ownership compares
 // case-folded paths, so differently cased links that alias one file on a
 // case-insensitive filesystem fail closed on every platform.
 func TestOwnershipIsCaseFolded(t *testing.T) {
 	freezeClock(t)
 	root := testutil.NewRoot(t, "empty-workspace")
 	e, _ := New(root.Path)
-	if _, err := runMutation(context.Background(), e, "workplan_create", mustJSON(t, `{"id":"x","goal":"g","planFile":".opencode/workplan/Alias.md"}`), AllowAll{}); err != nil {
+	if _, err := runMutation(context.Background(), e, "workplan_create", mustJSON(t, `{"id":"x","goal":"g","planFile":".opencode/workplan/Alias.md"}`), allowAll{}); err != nil {
 		t.Fatal(err)
 	}
 	os.Remove(filepath.Join(root.Path, ".opencode/workplan/Alias.md")) // absent but still owned

@@ -33,7 +33,7 @@ func readRel(t *testing.T, root, rel string) *string {
 	return &s
 }
 
-// S05–S07: forged, foreign, duplicate, invented-link and third-state
+// Forged, foreign, duplicate, invented-link and third-state
 // journals are rejected before authorization and the journal is kept.
 func TestRecoveryRejectsForgedJournals(t *testing.T) {
 	freezeClock(t)

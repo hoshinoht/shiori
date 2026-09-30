@@ -23,6 +23,7 @@ sections below keep the full record.
 | D.4.1 expectedHash guidance (error text, tool descriptions) | done | `422ef05` (pushed) |
 | D.4.2 | done | `cdcaa24` (pushed) |
 | D.4.3 | done | `8b98602` (pushed) |
+| cleanup | done | (owner adds id) |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
@@ -63,8 +64,8 @@ OpenCode. Nothing in
 **Fixtures and evidence.**
 
 - In the repository: the frozen oracle corpus and fixtures (`testdata/`,
-  `testdata/MANIFEST.json` pins the oracle hashes), the stage pins
-  (`testdata/d1`, `d2`, `d3`, `d3_1`, `d4`, `d4_1`, `d4_2`, `d4_3/expectations.json`), perf
+  `testdata/MANIFEST.json` pins the oracle hashes), the documented
+  differences and their pins (`testdata/expected/expectations.json`), perf
   fixtures (`testdata/perf/*.tar.gz`, unpacked by the benchmarks into
   `$TMPDIR/shiori-perf-<go version>/`).
 - Owner-plan evidence (never copied into the repository): read-only
@@ -314,7 +315,7 @@ scripts live outside this repository, and only their fingerprints are recorded.
 | Package / file | Role |
 | --- | --- |
 | `internal/storage` | Prepared `Intent` (exact read preconditions, write/delete/archive targets with before/after digests and modes, staging, journal, lock-protocol paths, directories; `Digest()` binds an approval); locks with lock-owner-v1 metadata; `Commit` (workspace lock → plan lock → locked recheck → exclusive same-directory staging with fsync → durable journal → atomic publication → directory sync → journal removal → release); explicit recovery reuses the same engine; fault-injection points |
-| `internal/engine/mutinput.go` | Strict input parsing for the 7 mutating tools on both surfaces, including every `x-shiori-rules` refinement; unknown keys reject at every level (D2) |
+| `internal/input/mutation.go` | Strict input parsing for the 7 mutating tools on both surfaces, including every `x-shiori-rules` refinement; unknown keys reject at every level (D2) |
 | `internal/engine/{create,update,patch,reset,checkpoint,compact,recovery}.go` | Preparation for each writer (no filesystem side effects); `Execute` = authorize exactly that intent, then commit |
 | `internal/engine/mutate.go` | `Authorizer` interface, `Prepared`, workspace linkage (pending-journal claims, Markdown ownership), D4 refusal, stale-hash check |
 | `internal/cli/mutate.go` | CLI mutations: prints the prepared intent, TTY `yes` prompt or `--yes`, `--expected-hash`/`--legacy-unhashed`, compact `--apply --preview-token --confirm`, `update --recovery` |
@@ -650,21 +651,21 @@ not touched. The decisions and exact behaviour are in
 
 | Item | What changed | Where |
 | --- | --- | --- |
-| A resume | New degradation order around a target page of min(limit, 8/4/2) items (budget ≥12000 / ≥6000 / below): while the target fits, text shrinks first (uncapped → prose 240 / titles 80 → floor 120/80; current work keeps ≥512); below the target, fewer items at the floor, then current work at the floor, then fewer pinned-list entries; only then emergency caps below the minimums, then paths, then an empty page. Paths, references and the instruction are protected; kinds and severities are never truncated. (Rebalanced after coordinator review: the first version dropped items before any shortening and returned 2/44 at 12000) | `internal/engine/resume.go` (`chooseResume`, `resumeTargetPage`, `textClass`) |
-| B filtered read | `phaseId`/`stepId` return a slice: header without phases (and without findings/notes unless `includeNotes`), the selection, `plan` without content unless `includeMarkdown:true`, dependency entries touching the selection, hashes, and a `slice` descriptor. New input `includeNotes` (both surfaces; CLI `--notes`, plus `--markdown`) | `internal/engine/read.go`, `engine.go` (`sliceValue`), `input.go`, `internal/cli/cli.go`, `schema/v1/tools/workplan_read.input.schema.json`, `adapter/opencode/src/registration.json` (+ `scripts/snapshot-registration.ts`) |
+| A resume | New degradation order around a target page of min(limit, 8/4/2) items (budget ≥12000 / ≥6000 / below): while the target fits, text shrinks first (uncapped → prose 240 / titles 80 → floor 120/80; current work keeps ≥512); below the target, fewer items at the floor, then current work at the floor, then fewer pinned-list entries; only then emergency caps below the minimums, then paths, then an empty page. Paths, references and the instruction are protected; kinds and severities are never truncated. (Rebalanced after coordinator review: the first version dropped items before any shortening and returned 2/44 at 12000) | `internal/resume/budget.go` (`Packet.Render`, `TargetPage`), `internal/resume/packet.go` (`textClass`) |
+| B filtered read | `phaseId`/`stepId` return a slice: header without phases (and without findings/notes unless `includeNotes`), the selection, `plan` without content unless `includeMarkdown:true`, dependency entries touching the selection, hashes, and a `slice` descriptor. New input `includeNotes` (both surfaces; CLI `--notes`, plus `--markdown`) | `internal/engine/read.go`, `engine.go` (`sliceValue`), `internal/input/input.go`, `internal/cli/cli.go`, `schema/v1/tools/workplan_read.input.schema.json`, `adapter/opencode/src/registration.json` (+ `scripts/snapshot-registration.ts`) |
 | C drift | `warnings` (only when nonempty) in validate, doctor plan entries and patch validation when the linked Markdown is not the generated rendering; `valid` unchanged | `internal/engine/validate.go` (`validationWarnings`), `doctor.go`, `patch.go`, CLI human output |
 | D gate | create/update refuse `in_progress`/`review`/`completed` while the structure rules fail on the resulting plan (`StatusGateError`, class `invalid_structure`, field-path `issues` in the CLI `--json` and protocol errors, before authorization); patch `validate` returns `validation.issues` | `internal/engine/planedit.go`, `create.go`, `update.go`, `errclass.go`, `patch.go`, `internal/protocol/server.go`, `internal/cli/cli.go` |
 | F strays | doctor `strayArtifacts`/`strayArtifactCount`/`omittedStrayArtifacts`/`warnings` (only when present) for orphaned checkpoint/dependency sidecars and unclassified root files (e.g. `*.patch`, unlinked `*.md`); suggests `archive/`, never moves or deletes | `internal/engine/doctor.go`, `list.go` (`dirListing.other`) |
 
 ### Vector expectations
 
-The oracle corpus is unchanged. `testdata/d1/expectations.json` pins the
+The oracle corpus is unchanged. The D.1 set (now in `testdata/expected/expectations.json`) pins the
 new Go output (SHA-256 of the root-normalized text and UTF-16 length) of
 every vector that differs on purpose. Each one also passes a D.1
 comparator against the unchanged oracle vector
-(`internal/engine/d1_vectors_test.go`). A listed vector that becomes
+(`internal/conformance/resume_budget_test.go`). A listed vector that becomes
 identical to the oracle, or an unlisted vector that diverges, fails.
-Re-pin after review with `SHIORI_D1_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
+Re-pin after review with `SHIORI_EXPECTED_UPDATE=1 go test ./internal/conformance -run TestCorpusParity`.
 
 | Category | Pass (oracle-exact) | Earlier approved divergence | D.1 divergence | Fail |
 | --- | --- | --- | --- | --- |
@@ -690,18 +691,18 @@ oracle bytes, or the earlier D1/D6 comparator result.
 
 ### New tests
 
-- `d1_test.go`:
-  - `TestD1ResumeReadability`: a synthetic 13-phase/38-step roadmap at
+- `internal/engine`:
+  - `TestResumeReadability`: a synthetic 13-phase/38-step roadmap at
     64000/20000/12000/8000/6000, paged to the end. Minimums hold;
     ≥20000 truncates nothing; current work keeps ≥512 at 12000; a page
     below the target only has floor-level item prose; the default budget
-    returns at least 4 items. `TestD1ResumeTargetPage` pins the targets.
-  - `TestD1ResumeMinimumBudget`
-  - `TestD1FilteredRead`
-  - `TestD1MarkdownDrift`
-  - `TestD1StatusGate`: create and update, allowed statuses, same-call
+    returns at least 4 items. `TestTargetPage` pins the targets.
+  - `TestResumeMinimumBudget`
+  - `TestFilteredRead`
+  - `TestMarkdownDrift`
+  - `TestStatusGate`: create and update, allowed statuses, same-call
     completion, patch issue list.
-  - `TestD1DoctorStrays`
+  - `TestDoctorStrays`
 - `TestResumeBudgetSweep`: extended with 6000, the synthetic roadmap and
   the readability/protection/target-order invariants.
 - `TestResumeCapsBetweenCorpusBudgets`: now checks the unchanged caps
@@ -795,7 +796,7 @@ every output is byte-identical to D.1.
 
 | Item | What changed | Where |
 | --- | --- | --- |
-| G1 readiness | `checkpoint.current` and each `active-work` item: `readiness`, plus `unblocks` (ready) or `blockedBy[{phaseId, stepId, status}]` capped at the pinned-list cap, with `blockedByOmitted` (blocked) | `internal/engine/resume.go` (`readinessView`), `internal/index/graph.go` |
+| G1 readiness | `checkpoint.current` and each `active-work` item: `readiness`, plus `unblocks` (ready) or `blockedBy[{phaseId, stepId, status}]` capped at the pinned-list cap, with `blockedByOmitted` (blocked) | `internal/resume/packet.go` (`Readiness`), `internal/index/graph.go` |
 | G2 order warnings | update that sets `in_progress`/`review`/`completed` with unmet prerequisites succeeds with `warnings`; validate, doctor plan entries and patch validation add non-failing `dependencies: Order warning: ...` | `internal/engine/graph.go` (`graphWarnings`, `statusChangeWarnings`), `update.go`, `validate.go` (`validationWarnings` is now an engine method), `doctor.go`, `patch.go` |
 | G3 cancelled prerequisites | open dependents of a cancelled step (plan or archived terminal summary) are flagged in validate/doctor/patch validation and in resume `safety.unverifiedWarnings` (placed before the unverified checkpoint lines) and `blockedBy` status; cancelling a step with open dependents warns in the update result | `graph.go`, `resume.go`, `index.Graph.Status` |
 | G4 phase replacement | `update {phases}` without `dependencies` re-validates the stored sidecar against the result during preparation; new dangling links are refused before authorization (`Invalid dependency metadata: ...; the phase replacement would leave these dependency links dangling...`) | `internal/engine/update.go` |
@@ -805,7 +806,7 @@ every output is byte-identical to D.1.
 
 ### Vector expectations
 
-The oracle corpus is unchanged. `testdata/d2/expectations.json` pins the 11
+The oracle corpus is unchanged. The D.2 set (now in `testdata/expected/expectations.json`) pins the 11
 vectors whose output gains graph members: 6 resume (`full-valid`,
 `list-mixed/b-plan` at 4096/12000/64000), `tools/full-valid/{doctor,
 doctor-limit1, full-plan--doctor, full-plan--inspect}` and
@@ -819,7 +820,7 @@ readiness, `blockedBy` prefix and omitted count, `unblocks`, ranking,
 prerequisites/dependents, and a critical path of the restated maximum
 length along stored edges. A listed vector that stops differing, or an
 unlisted one that starts, fails. Re-pin after review with
-`SHIORI_D2_UPDATE=1 go test ./internal/engine -run TestCorpusParity`.
+`SHIORI_EXPECTED_UPDATE=1 go test ./internal/conformance -run TestCorpusParity`.
 
 | Category | Pass (oracle-exact) | Earlier approved divergence | D.1 divergence | D.2 divergence | Fail |
 | --- | --- | --- | --- | --- | --- |
@@ -835,21 +836,21 @@ The CLI `--json` vector checks use the D.2 pins before the D.1 pins.
 - `internal/index/graph_test.go`: estimate weighting (including ignored
   non-positive estimates), unblocks, slack, readiness through completed and
   cancelled terminal summaries.
-- `internal/engine/d2_test.go`, on the D.1 synthetic 13-phase/38-step
+- `internal/engine` tests, on the D.1 synthetic 13-phase/38-step
   roadmap with a 12-entry cross-phase graph (M1 p2–p5 → M2 p6–p9 → M3
   p10–p12, invented content):
-  - `TestD2ResumeReadiness`: exact ranked order, `unblocks` 12/11, `blockedBy`.
-  - `TestD2ResumeBudgets`: 6 budgets × 2 limits paged to the end with the
+  - `TestResumeReadiness`: exact ranked order, `unblocks` 12/11, `blockedBy`.
+  - `TestResumeGraphBudgets`: 6 budgets × 2 limits paged to the end with the
     D.1 invariants and the D.2 order. It logs D.2 against D.2-off page sizes.
-  - `TestD2OrderWarnings`: G2 (in_progress, review, completed) on
+  - `TestOrderWarnings`: G2 (in_progress, review, completed) on
     update/validate/doctor; `valid` unchanged.
-  - `TestD2CancelledPrerequisite`: G3, including cancelled and completed
+  - `TestCancelledPrerequisite`: G3, including cancelled and completed
     terminal summaries.
-  - `TestD2PhaseReplacement`: G4 refusals (class `invalid_structure`)
+  - `TestPhaseReplacement`: G4 refusals (class `invalid_structure`)
     before authorization (no bytes written) and the accepted cases.
-  - `TestD2DependencyWrites`: G5 (empty entry, backward link, inspect view,
+  - `TestDependencyWrites`: G5 (empty entry, backward link, inspect view,
     compaction preview differs from D.2-off only by `archivedPrerequisites`).
-  - `TestD2CriticalPath`: path, slack, inspect/doctor agreement, no members
+  - `TestCriticalPath`: path, slack, inspect/doctor agreement, no members
     without a sidecar.
 - `TestResumeBudgetSweep` now also sweeps the graph roadmap and checks the
   D.2 order on every page (33 budgets × 4 limits × 6 plans).
@@ -954,23 +955,23 @@ paging vector changed).
 
 | Item | What changed | Where |
 | --- | --- | --- |
-| 1 reset | `draft` resets statuses only (plan/phases/steps → draft, checkpoint removed, content and dependency graph kept; handwritten Markdown kept unless `replaceMarkdown`). New `wipe`: read-only preview → exact `previewToken` + `confirmation: WIPE_PLAN_CONTENT`; archive of the complete originals first, then plan/Markdown, checkpoint and dependency sidecars deleted in the same transaction (`reset:wipe`). Schema, registration (`d3` key), CLI `--preview-token/--confirm` | `internal/engine/reset.go`, `mutinput.go`, `recovery.go`, `schema/v1/tools/workplan_reset.input.schema.json`, `adapter/opencode/src/registration.json`, `scripts/snapshot-registration.ts`, `internal/cli` |
+| 1 reset | `draft` resets statuses only (plan/phases/steps → draft, checkpoint removed, content and dependency graph kept; handwritten Markdown kept unless `replaceMarkdown`). New `wipe`: read-only preview → exact `previewToken` + `confirmation: WIPE_PLAN_CONTENT`; archive of the complete originals first, then plan/Markdown, checkpoint and dependency sidecars deleted in the same transaction (`reset:wipe`). Schema, registration (`d3` key), CLI `--preview-token/--confirm` | `internal/engine/reset.go`, `internal/input/mutation.go`, `recovery.go`, `schema/v1/tools/workplan_reset.input.schema.json`, `adapter/opencode/src/registration.json`, `scripts/snapshot-registration.ts`, `internal/cli` |
 | 2 unreadable plans | raw-byte `planHash`/`stateHash` in doctor/validate/list; `create --overwrite` accepts that hash (Markdown kept unless `replaceMarkdown`); recovery handles the undecodable before-image | `internal/snapshot/snapshot.go` (`LoadUnreadable`), `create.go`, `validate.go`, `doctor.go`, `list.go`, `recovery.go` |
 | 3 stale Markdown | doctor stray kind `stale-markdown` for `<id>.md` of a plan that links elsewhere | `doctor.go` |
 | 4 markers | non-failing warning for steps whose marker is missing from handwritten Markdown | `validate.go` (`missingStepMarkers`) |
 | 5 polish | stale-checkpoint detail (doctor); title-slug ids with `-N` on collision; missing `specFiles` refused (`invalid_input`); list `issues` array on every entry; 16 KiB note limit; new plan/Markdown mode from existing plans (else 0644 minus umask), archives/sidecars 0600 | `engine.go` (`staleDetail`), `planedit.go`, `update.go`, `list.go`, `mutate.go` (`fileMode`), `umask_*.go`, `errclass.go` |
-| 6 recovery | separate-process SIGKILL test; recovery also deletes the interrupted transaction's staging files | `d3_test.go` (`TestD3KillRecovery`), `recovery.go` |
+| 6 recovery | separate-process SIGKILL test; recovery also deletes the interrupted transaction's staging files | `internal/engine` (`TestKillRecovery`), `recovery.go` |
 | 7 host versions | unverified OpenCode: read-only tools work, mutating tools refused (`unsupported_capability`), bridge not started; doctor `runtimeFacts.host` | `adapter/opencode/src/plugin.ts`, `doctor.go` (`runtimeFacts`) |
 
 ### Vector expectations
 
-The oracle corpus is unchanged. `testdata/d3/expectations.json` pins 24
+The oracle corpus is unchanged. The D.3 set (now in `testdata/expected/expectations.json`) pins 24
 vectors: 20 tools vectors (items 2/4/5: raw-byte hashes, marker warnings,
 stale-checkpoint detail, list shape) and four mutation vectors. Read
 vectors are judged against the same engine with the D.3 additions off
 (`Engine.noD3`), which must pass every earlier check; removing the approved
 members must give that output byte-for-byte, and the additions are restated
-from raw fixture bytes. `SHIORI_D3_UPDATE=1` re-pins.
+from raw fixture bytes. `SHIORI_EXPECTED_UPDATE=1` re-pins.
 
 | Category | Pass (oracle-exact) | Earlier approved | D.1 | D.2 | D.3 | Fail |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -991,12 +992,12 @@ unchanged, so not pinned). Input vector `reset--bad-mode` lists `"wipe"`.
 
 ### New tests
 
-- `d3_test.go`: `TestD3DraftResetKeepsStructure`, `TestD3WipePreviewConfirm`,
-  `TestD3UnreadablePlanRepair` (truncated plan → doctor hash → create
-  overwrite), `TestD3StaleMarkdownCopy`, `TestD3StepMarkers`,
-  `TestD3StaleCheckpointDetail`, `TestD3GeneratedIDs`,
-  `TestD3SpecFilesMustExist`, `TestD3NoteLimit`, `TestD3FileModes`,
-  `TestD3KillRecovery` (6 child processes: wipe killed after the journal
+- `internal/engine`: `TestDraftResetKeepsStructure`, `TestWipePreviewConfirm`,
+  `TestUnreadablePlanRepair` (truncated plan → doctor hash → create
+  overwrite), `TestStaleMarkdownCopy`, `TestStepMarkers`,
+  `TestStaleCheckpointDetail`, `TestGeneratedIDs`,
+  `TestSpecFilesMustExist`, `TestNoteLimit`, `TestFileModes`,
+  `TestKillRecovery` (6 child processes: wipe killed after the journal
   and mid-publication, update mid-publication; each resumed and rolled
   back).
 - `TestFaultInjection` adds `reset-wipe`, `reset-draft-checkpoint` and
@@ -1072,7 +1073,7 @@ after. Before is `e47e667`, after is the working tree.
    owner-writable new files (0644).
 5. The list entries lose the single `issue` string (replaced by `issues`).
 6. Recovery after a real crash waits out the 5-minute lock grace (S11,
-   unchanged); `TestD3KillRecovery` simulates the elapsed grace with the
+   unchanged); `TestKillRecovery` simulates the elapsed grace with the
    lock clock.
 
 ### Remaining issues (D.3)
@@ -1103,7 +1104,7 @@ No tool input schema or registration changed.
 | 2b recovered link | doctor `recoveredPlanFile` from a tolerant raw scan (single value, plan-file policy, not another plan's link); the repair keeps that Markdown path unless `planFile` is given | `repair.go` (`recoverPlanFile`), `doctor.go`, `create.go`, CLI human output |
 | 2c repair hint | update/patch/reset/checkpoint/compact apply on an unreadable plan name `workplan_create overwrite=true and expectedHash=<stateHash>`; class unchanged | `repair.go` (`UnreadablePlanError`), `mutate.go`, `compact.go` |
 | 3 stale diagnostic | resume `checkpoint.diagnostic` = `changed: <path>[, …] [+N more]` (≤3 paths, ≤240 units) for a stale v2 checkpoint | `engine.go` (`staleDiagnostic`), `resume.go` |
-| 4 critical path | resume `criticalPath {length, nextStep}` with a valid sidecar and ≥2 open steps; dropped before any text would go below the D.1 minimums | `resume.go` (`criticalView`, `chooseResume` split into levels/emergency) |
+| 4 critical path | resume `criticalPath {length, nextStep}` with a valid sidecar and ≥2 open steps; dropped before any text would go below the D.1 minimums | `internal/resume/packet.go` (`Critical`), `internal/resume/budget.go` (levels/emergency) |
 | 5a wiped note | doctor warning for an empty draft plan with a `reset:wipe` archive; validate unchanged | `doctor.go` (`wipedNote`) |
 | 5b cosmetics | findings render `title (status)`; generated detection accepts old and new renderings everywhere; new writes whole-second UTC | `internal/model/markdown.go` (`RenderMarkdownLegacy`, `IsGeneratedMarkdown`), `engine/mutate.go` (`nowISO`, `render`, `isGenerated`), `create.go`, `update.go`, `reset.go`, `compact.go`, `validate.go`, `read.go` |
 
@@ -1111,9 +1112,8 @@ No tool input schema or registration changed.
 
 The oracle corpus is unchanged. Every vector runs with the D.3.1 changes
 off (`Engine.noD31`), which passes every earlier check unchanged, and on;
-a difference must be pinned in `testdata/d3_1/expectations.json` and pass
-the D.3.1 comparator (contracts §14). `SHIORI_D31_UPDATE=1 go test
-./internal/engine ./internal/model` re-pins (run the packages one at a
+a difference must be pinned in the D.3.1 set (now in `testdata/expected/expectations.json`) and pass
+the D.3.1 comparator (contracts §14). `SHIORI_EXPECTED_UPDATE=1 go test ./internal/conformance ./internal/model` re-pins (run the packages one at a
 time; each rewrites only its own prefixes).
 
 | Category | Pass (oracle-exact) | Earlier approved | D.1 | D.2 | D.3 | D.3.1 | Fail |
@@ -1135,26 +1135,26 @@ refreshes the old-rendering Markdown. No vector exercises item 1 or 2c.
 
 ### New tests
 
-- `d3_1_test.go`: `TestD31StepStatusGate` (all three gated statuses,
+- `internal/engine`: `TestStepStatusGate` (all three gated statuses,
   paths, no write, allowed statuses, same-call completion, addSteps /
   addPhases / phases replacement, unchanged gated step editable),
-  `TestD31UnreadableRepair` (recovered link, hint on update/reset/
+  `TestRepairRecoveredLink` (recovered link, hint on update/reset/
   checkpoint, archive bytes/mode/layout, base64 for non-UTF-8, explicit
   `planFile` wins, ambiguous/unsafe/missing members and another plan's
   link give nothing),
-  `TestD31ResumeStaleDiagnostic` (one path, `+N more`, cap, legacy null),
-  `TestD31ResumeCriticalPath` (agrees with inspect; byte-identical without
-  a sidecar on three fixtures), `TestD31ResumeBudget` (4096–16000, three
+  `TestResumeStaleDiagnostic` (one path, `+N more`, cap, legacy null),
+  `TestResumeCriticalPath` (agrees with inspect; byte-identical without
+  a sidecar on three fixtures), `TestResumeAdvisoryBudget` (4096–16000, three
   limits: fits, diagnostic present, critical path never kept below the
-  minimums; fails without the drop), `TestD31WipedNote`,
-  `TestD31LegacyGeneratedMarkdown` (old rendering: generated, no drift
+  minimums; fails without the drop), `TestWipedNote`,
+  `TestLegacyGeneratedMarkdown` (old rendering: generated, no drift
   warning, update and markdown-only refresh it; a real hand edit is still
-  handwritten), `TestD31Timestamps`.
+  handwritten), `TestWholeSecondTimestamps`.
 - `internal/model`: `TestMarkdownVectors` checks the legacy rendering
   against the oracle and the D.3.1 rendering against it, and that both
   are detected as generated.
 - CLI `TestStepStatusGateCLI`, `TestCreateStepStatusGateCLI`; protocol
-  `TestStepStatusGateIssues`. `TestD31StepStatusGate` also covers create.
+  `TestStepStatusGateIssues`. `TestStepStatusGate` also covers create.
 - `TestFaultInjection` `create-overwrite-unreadable` now includes the
   archive target at every fault point.
 
@@ -1268,22 +1268,22 @@ are unchanged; the only input change is the optional `noteRollover` on
 
 | Item | What changed | Where |
 | --- | --- | --- |
-| P2 advisor | exact plan JSON saving of archiving archivable completed phases, rollover notes and resolved findings (pretty-encoding footprints, archive pointer and `updatedAt` included); recommended at ≥32 KiB saving plus one threshold (50 eligible notes, archivable phases ≥25% of the JSON, JSON ≥192 KiB); doctor plan entry `compactionRecommended` (estimate incl. generated-Markdown render, counts, kept reasons, reasons, selection, thresholds, instruction); resume compact `compactionRecommended {savedJsonBytes, savedJsonPercent, notes, terminalSteps, resolvedFindings}`, dropped (before the D.3.1 critical path) before any text would go below the D.1 minimums | `internal/engine/advisor.go`, `resume.go` (`chooseResume`), `doctor.go`, `engine.go` (`Compaction`, `noD4`) |
-| thresholds | `--compaction-advice off\|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N` on `resume`, `doctor` and `serve` (protocol `Options.Compaction`); never model input | `advisor.go` (`ParseCompactionThresholds`), `internal/cli/cli.go`, `serve.go`, `internal/protocol/server.go` |
-| P3 rollover | `noteRollover {keepLatest 1–10000 (20), pinNoteIndexes}`: selects notes older than the latest N except pinned (`[pinned]`/indexes), decision records, open-step/open-finding references and archive pointers; token binds `canonicalSelection.noteRollover`; combination with `noteIndexes` is an input error; rollover-mode preview adds `noteRollover` and `estimatedSavings`, apply adds `savings`; archive and apply unchanged | `advisor.go` (`rolloverSelect`), `compact.go`, `mutinput.go` (`kInt`, `rolloverSpec`, refine), schemas, `registration.json` (`d4`), `scripts/snapshot-registration.ts`, CLI `--rollover --keep-notes --pin-note` |
+| P2 advisor | exact plan JSON saving of archiving archivable completed phases, rollover notes and resolved findings (pretty-encoding footprints, archive pointer and `updatedAt` included); recommended at ≥32 KiB saving plus one threshold (50 eligible notes, archivable phases ≥25% of the JSON, JSON ≥192 KiB); doctor plan entry `compactionRecommended` (estimate incl. generated-Markdown render, counts, kept reasons, reasons, selection, thresholds, instruction); resume compact `compactionRecommended {savedJsonBytes, savedJsonPercent, notes, terminalSteps, resolvedFindings}`, dropped (before the D.3.1 critical path) before any text would go below the D.1 minimums | `internal/advisor/advisor.go`, `internal/resume/budget.go` (`Packet.Render`), `doctor.go`, `engine.go` (`Compaction`) |
+| thresholds | `--compaction-advice off\|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N` on `resume`, `doctor` and `serve` (protocol `Options.Compaction`); never model input | `internal/advisor/advisor.go` (`ParseThresholds`), `internal/cli/cli.go`, `serve.go`, `internal/protocol/server.go` |
+| P3 rollover | `noteRollover {keepLatest 1–10000 (20), pinNoteIndexes}`: selects notes older than the latest N except pinned (`[pinned]`/indexes), decision records, open-step/open-finding references and archive pointers; token binds `canonicalSelection.noteRollover`; combination with `noteIndexes` is an input error; rollover-mode preview adds `noteRollover` and `estimatedSavings`, apply adds `savings`; archive and apply unchanged | `internal/advisor/advisor.go` (`SelectRollover`), `compact.go`, `internal/input/mutation.go` (`kInt`, `rolloverSpec`, refine), schemas, `registration.json` (`d4`), `scripts/snapshot-registration.ts`, CLI `--rollover --keep-notes --pin-note` |
 | CLI output | human `resume`/`doctor` show the advice | `internal/cli/human.go` |
 
 ### Vector expectations
 
 The oracle corpus is unchanged. Every tools/resume/paging vector runs with
 the advice off (`Engine.noD4`), which passes every earlier check, and on;
-`testdata/d4/expectations.json` lists **no** vector: with the default
+the D.4 set (now in `testdata/expected/expectations.json`) lists **no** vector: with the default
 thresholds no corpus fixture qualifies (`large-paging`, the largest
 eligible history, could save 13 080 of 45 232 JSON bytes), so all 360
 read vectors are byte-identical to D.3.1. Mutation (70) and mutating-input
 (39) vectors are unchanged. Parity: tools 149 pass / 50 approved
 divergences, resume 74 / 13, paging 43 / 31, 0 fail (same as D.3.1).
-`TestD4ComparatorOnCorpus` runs the comparator (output minus the advice =
+`TestCompactionAdviceOnCorpus` runs the comparator (output minus the advice =
 D.4-off text; counts restated from the raw plan by an independent
 implementation) on 10 doctor/resume vectors with lowered thresholds; one
 4096-budget resume packet pays for the advice with a page item and is
@@ -1291,20 +1291,20 @@ skipped there.
 
 ### New tests
 
-- `d4_test.go`: `TestD4AdvisorReport` (counts per keep reason, restated;
+- `internal/engine`: `TestAdvisorReport` (counts per keep reason, restated;
   resume = doctor figures; off/unmet thresholds byte-identical to
-  D.4-off), `TestD4AdviceMatchesApply` (applying the advised selection
+  D.4-off), `TestAdviceMatchesApply` (applying the advised selection
   writes exactly the estimated JSON and Markdown sizes; advice then gone),
-  `TestD4RolloverPreviewApply` (selection, token binds keepLatest/pins,
+  `TestRolloverPreviewApply` (selection, token binds keepLatest/pins,
   wrong parameters and stale checkpoint refused before authorization,
   archive holds the complete original notes and plan JSON, remaining
-  notes = kept + pointer), `TestD4RolloverInput` (both surfaces, both
-  tools), `TestD4ResumeBudget` (4096–16000 × 3 limits on a heavy header:
+  notes = kept + pointer), `TestRolloverInput` (both surfaces, both
+  tools), `TestAdviceResumeBudget` (4096–16000 × 3 limits on a heavy header:
   fits; advice never kept below the minimums; a packet without it equals
-  D.4-off; shown 860, dropped 91), `TestD4NoEligibleHistoryIdentical`,
-  `TestParseCompactionThresholds`.
-- `d4_vectors_test.go`: the D.4 split in `TestCorpusParity`, the
-  comparator and `TestD4ComparatorOnCorpus`.
+  D.4-off; shown 860, dropped 91), `TestNoEligibleHistoryUnchanged`,
+  `TestParseThresholds`.
+- `internal/conformance/compaction_advice_test.go`: the D.4 split in `TestCorpusParity`, the
+  comparator and `TestCompactionAdviceOnCorpus`.
 - CLI `TestCompactRolloverCLI`, `TestCompactionAdviceFlag`; protocol
   `TestNoteRolloverPreviewThenPreparedApply`; adapter registration differs
   from the reference only by the `d1`/`d3`/`d4` changes.
@@ -1419,7 +1419,7 @@ No input shape, error class or output member changed.
 
 | Item | What changed | Where |
 | --- | --- | --- |
-| missing hash | native refusal (update, patch, reset, checkpoint, compact apply, create overwrite) appends ` — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first`; leading sentence, path and class unchanged; no hash echoed; core surface unchanged | `internal/engine/mutinput.go` (`nativeHashGuidance`, `msgNativeHash`) |
+| missing hash | native refusal (update, patch, reset, checkpoint, compact apply, create overwrite) appends ` — pass expectedHash set to the stateHash from your last successful write, or re-read with workplan_resume or workplan_inspect first`; leading sentence, path and class unchanged; no hash echoed; core surface unchanged | `internal/input/mutation.go` (`nativeHashGuidance`, `msgNativeHash`) |
 | stale hash | `stale_state` refusal keeps its reference text and appends ` Use workplan_resume or workplan_inspect for that re-read before retrying, so the retry is based on the current plan.` (the reference text already names the current hash; the addition names none) | `internal/engine/mutate.go` (`staleHashGuidance`) |
 | descriptions | one `expectedHash` sentence on the six mutating tools (create: `With overwrite=true, …`; compact: `In apply mode, …`; others `Pass expectedHash = the stateHash from your latest read or successful write.`) | `adapter/opencode/src/registration.json` (key `d4_1`), `scripts/snapshot-registration.ts`, `schema/v1/tools/workplan_{create,update,patch,reset,checkpoint,compact}.input.schema.json` (`description`, `x-shiori-rules` native text) |
 
@@ -1432,16 +1432,16 @@ the same `d4_1` key when it is next run.
 
 ### Vector expectations
 
-The oracle corpus is unchanged. `testdata/d4_1/expectations.json` pins 6
+The oracle corpus is unchanged. The D.4.1 set (now in `testdata/expected/expectations.json`) pins 6
 vectors (SHA-256 and UTF-16 length of the error text): 5 mutating-input
 vectors on the native surface (`compact--apply-no-token`,
 `create--overwrite-without-hash`, `update--no-hash`,
 `update--recovery-with-replaceMarkdown`, `update--recovery-with-title`)
 and 1 mutation vector (`mutations/create-overwrite-stale-hash`). The
-comparator (`internal/engine/d4_1_vectors_test.go`) requires each
+comparator (`internal/conformance/writes_test.go`) requires each
 guidance to follow its reference sentence, to contain no hash, and the
 text without the guidance to equal the oracle message byte-for-byte.
-`SHIORI_D41_UPDATE=1 go test ./internal/engine -run
+`SHIORI_EXPECTED_UPDATE=1 go test ./internal/conformance -run
 'TestMutationInputVectors|TestMutationVectors'` re-pins. Everything else
 is byte-identical to D.4: tools 149 pass / 50 approved, resume 74 / 13,
 paging 43 / 31, mutations 56 pass (one of them the D.4.1 pin) / 14
@@ -1450,11 +1450,12 @@ pins on the native surface), 0 fail.
 
 ### New tests
 
-- `d4_1_vectors_test.go`: the pin/comparator used by
-  `TestMutationInputVectors` and `TestMutationVectors`, and
-  `TestD41Guidance` (all six native writers carry the guidance with class
-  `invalid_input` and no hash; the core surface never does; the stale
-  message keeps its prefix, names the hash once and has class
+- `internal/conformance/writes_test.go`: the pin/comparator used by
+  `TestMutationInputVectors` and `TestMutationVectors`;
+  `TestNativeHashGuidance` (`internal/input`: all six native writers
+  carry the guidance with class `invalid_input` and no hash; the core
+  surface never does) and `TestStaleHashGuidance` (`internal/engine`: the
+  stale message keeps its prefix, names the hash once and has class
   `stale_state`).
 - Adapter `plugin.test.ts`: the registration test checks the `d4_1`
   changes (six tools, description-only, exact sentence) and restores
@@ -1484,32 +1485,33 @@ No V2 field, tool identity, input shape or error class changed.
 | Item | What changed | Where |
 | --- | --- | --- |
 | 1 decision records | confirmed unchanged (decision words or uppercase `USER`) | contracts §17 item 1 |
-| 2 resume advice | the packet is chosen without the advice by the unchanged D.1–D.3.1 rules; the chosen level is rendered once more with `compactionRecommended` and kept only if it still fits, so a packet with the advice is always the advice-off packet plus the member (same page items, item form and text caps); emergency packets never carry it; doctor unchanged | `internal/engine/resume.go` (`chooseResume`, `chooseResumeReadable`; `chooseResumeLevels` returns the chosen level) |
-| 3 pointer notes | rollover keeps the latest 3 `Compaction archive: ` notes (over the whole list); older ones roll over like ordinary notes (archived with complete text); the advisor's eligible counts, bytes, estimate and selection follow (same selection); `noteRollover` descriptions updated | `internal/engine/advisor.go` (`KeepArchivePointers`, `rolloverSelect`), `schema/v1/tools/workplan_compact{,_preview}.input.schema.json`, `adapter/opencode/src/registration.json` and `scripts/snapshot-registration.ts` (the `d4` property text only) |
+| 2 resume advice | the packet is chosen without the advice by the unchanged D.1–D.3.1 rules; the chosen level is rendered once more with `compactionRecommended` and kept only if it still fits, so a packet with the advice is always the advice-off packet plus the member (same page items, item form and text caps); emergency packets never carry it; doctor unchanged | `internal/resume/budget.go` (`Packet.Render`, `chooseReadable`; `chooseLevels` returns the chosen level) |
+| 3 pointer notes | rollover keeps the latest 3 `Compaction archive: ` notes (over the whole list); older ones roll over like ordinary notes (archived with complete text); the advisor's eligible counts, bytes, estimate and selection follow (same selection); `noteRollover` descriptions updated | `internal/advisor/advisor.go` (`KeepArchivePointers`, `SelectRollover`), `schema/v1/tools/workplan_compact{,_preview}.input.schema.json`, `adapter/opencode/src/registration.json` and `scripts/snapshot-registration.ts` (the `d4` property text only) |
 | 4 adapter option | plugin option `compactionAdvice`: `"off"` or `{minSavingsKiB, notes, terminalPercent, planKiB, keepNotes}`, validated at load (invalid fails plugin load before any core/bridge starts), passed as `serve --stdio --compaction-advice <spec>`; absent or `{}`: no flag | `adapter/opencode/src/plugin.ts` (`compactionAdviceArgs`), README "OpenCode adapter" |
 
 ### Vector expectations
 
-The oracle corpus is unchanged. `testdata/d4_2/expectations.json` lists
+The oracle corpus is unchanged. The D.4.2 set (now in `testdata/expected/expectations.json`) lists
 **no** vector: with the default thresholds no corpus fixture is
 recommended for compaction and no oracle vector passes `noteRollover`, so
 every vector is byte-identical to D.4.1 (tools 149 pass / 50 approved,
 resume 74 / 13, paging 43 / 31, mutations 56 / 14, mutating input 39, 0
-fail; `testdata/d4/expectations.json` stays empty).
-`TestD4ComparatorOnCorpus` (lowered thresholds) no longer exempts
+fail; the D.4 set (now in `testdata/expected/expectations.json`) stays empty).
+`TestCompactionAdviceOnCorpus` (lowered thresholds) no longer exempts
 small-budget resume packets: all 10 advised doctor/resume vectors pass the
 comparator (output minus the advice = advice-off output; counts restated,
 including the new pointer rule, by the independent implementation).
 
 ### New tests
 
-- `d4_2_test.go`: `TestD42ArchivePointerRetention` (six successive
+- `internal/engine`: `TestArchivePointerRetention` (six successive
   rollovers with `keepLatest` 2: `kept.archivePointer` = min(pointers, 3),
   exactly the older pointers archived with complete text, pointers after
-  apply 2, 3, 4, 4, 4, 4), `TestD42AdvisorPointerEstimate` (9 older
+  apply 2, 3, 4, 4, 4, 4), `TestAdvisorPointerEstimate` (9 older
   pointers: 3 kept, 6 eligible; restated; applying the advised selection
-  writes exactly the estimated JSON size), `TestD42Expectations`.
-- `TestD4ResumeBudget` (4096–16000 × limits 1/8/20) now also asserts that
+  writes exactly the estimated JSON size), `TestD42Expectations` (checked
+  the old per-stage pin files; removed with them in the cleanup).
+- `TestAdviceResumeBudget` (4096–16000 × limits 1/8/20) now also asserts that
   every packet with the advice has the advice-off page item count and
   equals the advice-off packet plus the member byte-for-byte (shown 736,
   dropped 215; D.4 showed 860, of which 124 cost page content).
@@ -1577,13 +1579,13 @@ are unchanged.
 | Item | What changed | Where |
 | --- | --- | --- |
 | a resume | a stale or legacy checkpoint adds `checkpoint.withheld` (after `freshness`): `summary`, `nextAction`, then `guardrails`/`references`/`recentValidation` when stored non-empty; the instruction appends that these are hidden, not empty, names `.opencode/workplan/<id>.checkpoint.json` (`workplan_read` does not return the checkpoint, checked) and `workplan_checkpoint merge=true`; null/empty values and totals kept; human `resume` prints a `withheld:` line | `internal/engine/resume.go` (`withheldFields`, `instructionWithheld`), `internal/cli/human.go` |
-| b write guard | `summary`/`nextAction` that trim to `null`/`undefined` or start with `null `/`undefined ` are refused on both surfaces as `invalid_input` before preparation; the result adds `warnings` (`<list>: <before> → <after> (<n> previous entr(y/ies) not kept; merge=true keeps omitted fields)`) for guardrails, references, recentValidation, blockers when stored entries are not kept | `internal/engine/mutinput.go` (`withheldPlaceholder`), `internal/engine/checkpoint.go` (`checkpointDropWarnings`) |
-| c merge | `merge: true` keeps every omitted field (summary, nextAction, position, the four lists; stored position re-derived when it no longer resolves to an open step); `appendValidation` (string or array) appends deduplicated lines; missing/unreadable checkpoint merges as empty (omitted summary/nextAction then refused, `invalid_input`); legacy v1 carried over into v2; binding unchanged. CLI `--merge`, `--append-validation` | `internal/engine/checkpoint.go`, `internal/engine/mutinput.go` (`checkpointMergeSpec`, `kStringOrList`), `internal/cli/mutate.go`, `internal/cli/cli.go` usage, README quick start |
+| b write guard | `summary`/`nextAction` that trim to `null`/`undefined` or start with `null `/`undefined ` are refused on both surfaces as `invalid_input` before preparation; the result adds `warnings` (`<list>: <before> → <after> (<n> previous entr(y/ies) not kept; merge=true keeps omitted fields)`) for guardrails, references, recentValidation, blockers when stored entries are not kept | `internal/input/mutation.go` (`withheldPlaceholder`), `internal/engine/checkpoint.go` (`checkpointDropWarnings`) |
+| c merge | `merge: true` keeps every omitted field (summary, nextAction, position, the four lists; stored position re-derived when it no longer resolves to an open step); `appendValidation` (string or array) appends deduplicated lines; missing/unreadable checkpoint merges as empty (omitted summary/nextAction then refused, `invalid_input`); legacy v1 carried over into v2; binding unchanged. CLI `--merge`, `--append-validation` | `internal/engine/checkpoint.go`, `internal/input/mutation.go` (`checkpointMergeSpec`, `kStringOrList`), `internal/cli/mutate.go`, `internal/cli/cli.go` usage, README quick start |
 | d description | "Without merge=true it replaces the whole checkpoint …; to update it, pass merge=true … or read the current checkpoint first." | `adapter/opencode/src/registration.json` (key `d4_3`: 2 additions, 4 changes with previous values), `scripts/snapshot-registration.ts`, `schema/v1/tools/workplan_checkpoint.input.schema.json` (`merge`, `appendValidation`, `if`/`else` required, two `x-shiori-rules`) |
 
 ### Vector expectations
 
-The oracle corpus is unchanged. `testdata/d4_3/expectations.json` pins 7
+The oracle corpus is unchanged. The D.4.3 set (now in `testdata/expected/expectations.json`) pins 7
 vectors: the 6 resume vectors of `checkpoint-stale-v2` and
 `checkpoint-legacy-v1` (withheld list restated from the raw checkpoint
 file; removing it and restoring the D.1 instruction gives the D.4.3-off
@@ -1598,23 +1600,23 @@ mutation comparison runs with D.4.3 off.
 
 ### New tests
 
-- `d4_3_test.go`: `TestD43ResumeWithheld` (stale, legacy, fresh, missing,
+- `internal/engine`: `TestResumeWithheld` (stale, legacy, fresh, missing,
   invalid; key order; `workplan_read` does not carry the checkpoint; the
   on packet minus the change equals the off packet),
-  `TestD43ResumeBudget` (stale roadmap with every list set, 4096–16000 ×
+  `TestResumeWithheldBudget` (stale roadmap with every list set, 4096–16000 ×
   limits 1/8/20: every packet fits and carries the full list; 383 of 951
   at the D.4.3-off level, 42 with one page item fewer, the rest at a lower
-  text tier), `TestD43WithheldPlaceholderRefused` (6 refused and 7
+  text tier), `TestWithheldPlaceholderRefused` (6 refused and 7
   accepted spellings, both fields, both surfaces, no authorization, no
-  byte changed), `TestD43DropWarnings`, `TestD43Merge` (refresh,
+  byte changed), `TestCheckpointDropWarnings`, `TestCheckpointMerge` (refresh,
   deduplicated append, partial replace, explicit `[]`, position fallback
   and override, required without merge, type errors, missing and legacy
-  checkpoints), `TestD43IncidentSequence` (stale checkpoint → resume view
+  checkpoints), `TestCheckpointIncidentSequence` (stale checkpoint → resume view
   → naive `null …` rebuild refused with the checkpoint untouched → merge
   refresh keeps every field and appends one line → naive rebuild without
   the prefix is written with 3 warnings).
-- `d4_3_vectors_test.go`: the D.4.3 corpus layer for read and mutation
-  vectors (`SHIORI_D43_UPDATE=1` re-pins).
+- `internal/conformance/checkpoint_test.go`: the D.4.3 corpus layer for read and mutation
+  vectors (`SHIORI_EXPECTED_UPDATE=1` re-pins).
 - CLI `TestCheckpointMergeCLI`, protocol
   `TestCheckpointMergeAndWithheldGuards`, schema
   `TestCheckpointMergeSchemaAgreesWithParser` (14 inputs, schema and
@@ -1647,6 +1649,38 @@ mutation comparison runs with D.4.3 off.
 4. The withheld list and longer instruction are a pinned item: on the
    synthetic stale roadmap 42 of 951 swept packets carry one page item
    fewer than without them.
+
+## Cleanup: package layout, one expectations set, no stage switches
+
+A pure refactor (owner request, `plans/cleanup.md`): behaviour, CLI,
+protocol, schemas and adapter registration are unchanged.
+
+- Packages: `internal/input` (tool input parsing, both surfaces),
+  `internal/resume` (packet model, budget policy, inspect/resume cursors),
+  `internal/advisor` (compaction advice, note rollover selection) and
+  `internal/conformance` (the black-box parity suite over the corpus,
+  using only exported API). `internal/engine` keeps the operations,
+  dispatch and the mutation path.
+- The stage switches (`noGraph`, `noD3`, `noD31`, `noD4`, `noD43`) are
+  gone. The corpus suite compares the final engine with the oracle
+  directly: the eight per-stage pin files are merged into
+  `testdata/expected/expectations.json` (one entry per differing vector:
+  reason, contract section, comparators, pin), and each comparator peels
+  its documented difference off the output before the oracle comparison.
+  Every earlier pin reproduced unchanged; the corpus now also checks two
+  scenarios the per-stage runs never saw with every change on
+  (`mutations/compact-apply-valid` and `create-new-full` with the spec
+  present carry whole-second timestamps and the finding rendering) and
+  pins the compact apply output.
+- Unit tests are grouped by feature (`resume_budget`, `read_slice`,
+  `drift`, `status_gate`, `graph`, `reset`, `repair`, `checkpoint`,
+  `writes`, `recovery`, `compaction_advice`, `rollover`); test names drop
+  the stage prefix (for example `TestD3KillRecovery` is now
+  `TestKillRecovery`). Engine tests that compared with a switched-off
+  engine now render the resume packet model without the member, use
+  `--compaction-advice off`, or restate the expectation independently.
+- Comments keep the why and drop stage and section references;
+  user-visible strings (help text, flag usage, version) are unchanged.
 
 ## Resume after maintenance
 

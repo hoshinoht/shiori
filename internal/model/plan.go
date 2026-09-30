@@ -15,7 +15,7 @@ var FindingStatuses = []string{"open", "resolved"}
 
 // Plan is a compatibly decoded V2 plan document. Known fields are typed;
 // unknown members are kept verbatim (raw JSON, number spelling, nesting) in
-// source order (D4).
+// source order.
 type Plan struct {
 	SchemaVersion ojson.Value // raw literal, decoded value is 2
 	ID            string
@@ -42,8 +42,8 @@ type Plan struct {
 	Unknown        []ojson.Member
 
 	// Duplicates lists repeated member names in the stored bytes. The
-	// document stays readable (JavaScript last-wins semantics); stage C
-	// mutations must refuse such documents with these paths (D4).
+	// document stays readable (JavaScript last-wins semantics); mutations
+	// refuse such documents with these paths.
 	Duplicates []ojson.Duplicate
 }
 

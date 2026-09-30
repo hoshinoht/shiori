@@ -122,8 +122,8 @@ func titleSlug(title string) string {
 	return slug
 }
 
-// generateID returns a readable id for a new phase or step (D.3, contracts
-// §13 item 5): the slug of its title, with a short "-2", "-3", ... suffix
+// generateID returns a readable id for a new phase or step: the slug of
+// its title, with a short "-2", "-3", ... suffix
 // only when that id is already taken. A title without [a-z0-9] falls back
 // to the earlier "<prefix>-<word>-<word>-<6 digits>" form. Existing ids
 // never change.
@@ -320,12 +320,13 @@ func findingsFromInput(list []ojson.Value, offset int) ([]model.Finding, error) 
 	return out, nil
 }
 
-// backslashError is the D5 refusal for a new link containing '\'.
+// backslashError refuses a new link containing '\' (the manifest would
+// rewrite it to '/', aliasing another path).
 func backslashError(field, raw string) error {
 	return fmt.Errorf("%s: Linked path contains a backslash and has an ambiguous manifest identity: %s", field, raw)
 }
 
-// normalizeSpecList trims, normalizes, dedupes and applies the D5 refusal.
+// normalizeSpecList trims, normalizes, dedupes and refuses backslashes.
 func (e *Engine) normalizeSpecList(field string, list []string) ([]string, error) {
 	out := []string{}
 	seen := map[string]bool{}
@@ -345,8 +346,8 @@ func (e *Engine) normalizeSpecList(field string, list []string) ([]string, error
 			continue
 		}
 		seen[rel] = true
-		// D.3 (contracts §13 item 5): a new link must name an existing file,
-		// like the D.2 dependency checks, before anything is authorized.
+		// A new link must name an existing file, like the dependency
+		// checks, before anything is authorized.
 		if err := e.specExists(field+"."+strconv.Itoa(i), rel); err != nil {
 			return nil, err
 		}
@@ -356,7 +357,7 @@ func (e *Engine) normalizeSpecList(field string, list []string) ([]string, error
 }
 
 // SpecFileMissingError refuses a specFiles link to a file that does not
-// exist (D.3).
+// exist.
 type SpecFileMissingError struct{ Field, Rel string }
 
 func (e *SpecFileMissingError) Error() string {
@@ -375,8 +376,8 @@ func (e *Engine) specExists(field, rel string) error {
 	return nil
 }
 
-// MaxNoteBytes is the per-note size limit for new notes (D.3, contracts
-// §13 item 5). Stored notes are never changed.
+// MaxNoteBytes is the per-note size limit for new notes. Stored notes are
+// never changed.
 const MaxNoteBytes = 16 << 10
 
 // NoteTooLargeError refuses a new note above MaxNoteBytes.
@@ -400,7 +401,7 @@ func checkNotes(field string, list []string) error {
 	return nil
 }
 
-// normalizePlanFileInput trims and applies the plan-file policy and D5.
+// normalizePlanFileInput trims and applies the plan-file policy.
 func (e *Engine) normalizePlanFileInput(raw string) (string, error) {
 	t := model.TrimJS(raw)
 	if strings.Contains(t, `\`) {
@@ -419,7 +420,7 @@ func withNewline(s string) []byte {
 }
 
 // d7Check reports ids that cannot produce a Markdown marker, with their
-// field paths (D7: the reference fails without a path).
+// field paths (the reference fails without a path).
 func d7Check(p *model.Plan) error {
 	var issues []string
 	check := func(path, id string) {
@@ -449,14 +450,14 @@ func (e *D7Error) Error() string {
 	return strings.Join(e.Issues, "; ")
 }
 
-// gatedStatuses require a structurally executable plan (D.1).
+// gatedStatuses require a structurally executable plan.
 var gatedStatuses = map[string]bool{"in_progress": true, "review": true, "completed": true}
 
-// StatusGateError is the D.1 status gate refusal (contracts §11 item D):
-// create/update may not set the plan status to in_progress, review or
-// completed while the executable-structure rules (spec 01 §3,
-// x-shiori-structure-rules) fail on the resulting plan. draft, blocked and
-// cancelled stay allowed with incomplete structure.
+// StatusGateError is the status gate refusal: create/update may not set the
+// plan status to in_progress, review or completed while the
+// executable-structure rules (x-shiori-structure-rules) fail on the
+// resulting plan. draft, blocked and cancelled stay allowed with incomplete
+// structure.
 type StatusGateError struct {
 	Status string
 	Issues []model.Issue
@@ -488,10 +489,10 @@ func statusGate(status string, p *model.Plan) error {
 	return &StatusGateError{Status: status, Issues: issues}
 }
 
-// StepStatusGateError is the D.3.1 step-level status gate refusal
-// (contracts §14 item 1): an update may not set a step to in_progress,
-// review or completed while that step fails the per-step structure rules
-// (spec 01 §3: id, title, action, validation); create applies the same
+// StepStatusGateError is the step-level status gate refusal: an update
+// may not set a step to in_progress, review or completed while that step
+// fails the per-step structure rules (id, title, action, validation);
+// create applies the same
 // rule to every step it creates. draft, blocked and cancelled stay
 // allowed; completing the fields in the same call is accepted.
 type StepStatusGateError struct {

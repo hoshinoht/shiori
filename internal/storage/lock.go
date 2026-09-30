@@ -1,4 +1,4 @@
-// Package storage implements the transactional write path (spec 01 §6):
+// Package storage implements the transactional write path:
 // prepared intents, workspace/plan locks with owner metadata, exclusive
 // same-directory staging, a durable journal published before the first
 // replacement, atomic publication, directory sync, and explicit recovery.
@@ -22,7 +22,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
 
-// Lock timing (contracts §5.2).
+// Lock timing.
 const (
 	DefaultLockWait  = 5 * time.Second
 	DefaultLockGrace = 5 * time.Minute

@@ -5,8 +5,10 @@ import (
 	"strconv"
 
 	"github.com/hoshinoht/shiori/internal/index"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/resume"
 )
 
 // DefaultInspectLimit is the inspect page size default.
@@ -14,7 +16,7 @@ const DefaultInspectLimit = 100
 
 // Inspect implements workplan_inspect: stable phase/step ids and Markdown
 // markers, paged with a snapshot/options-bound checksummed cursor.
-func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
+func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	id, err := normalizeRequested(in.ID)
 	if err != nil {
 		return ojson.Value{}, err
@@ -60,14 +62,14 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 	}
 	offset := 0
 	if in.Cursor != nil {
-		c, err := parseInspectCursor(*in.Cursor)
+		c, err := resume.ParseInspectCursor(*in.Cursor)
 		if err != nil {
 			return ojson.Value{}, err
 		}
-		if c.stateHash != s.StateHash || c.limit != limit || !eqPtr(c.phaseID, in.PhaseID) || c.offset > len(items) {
-			return ojson.Value{}, errInspectCursorStale
+		if c.StateHash != s.StateHash || c.Limit != limit || !resume.EqualPtr(c.PhaseID, in.PhaseID) || c.Offset > len(items) {
+			return ojson.Value{}, resume.ErrInspectCursorStale
 		}
-		offset = c.offset
+		offset = c.Offset
 	}
 	end := offset + limit
 	if end > len(items) {
@@ -107,7 +109,7 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 			Set("id", ojson.StringValue(st.ID)).
 			Set("title", ojson.StringValue(st.Title)).
 			Set("status", ojson.StringValue(st.Status)).
-			Set("target", ptrValue(st.Target)).
+			Set("target", ojson.NullableString(st.Target)).
 			Set("index", ojson.IntValue(int64(it.step))).
 			Set("indexPath", ojson.StringValue(strconv.Itoa(it.phase+1)+"."+strconv.Itoa(it.step+1))).
 			Set("markdownMarker", ojson.StringValue(marker))
@@ -118,9 +120,9 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 	}
 	next := ojson.NullValue()
 	if end < len(items) {
-		next = ojson.StringValue(encodeCursor(inspectDomain, inspectCursor{
-			stateHash: s.StateHash, phaseID: in.PhaseID, limit: limit, offset: end,
-		}.fields()))
+		next = ojson.StringValue(resume.InspectCursor{
+			StateHash: s.StateHash, PhaseID: in.PhaseID, Limit: limit, Offset: end,
+		}.Encode())
 	}
 	out := ojson.NewObject(10).
 		Set("path", ojson.StringValue(s.JSON.Path)).
@@ -131,7 +133,7 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 		Set("phases", ojson.ArrayValue(phases)).
 		Set("steps", ojson.ArrayValue(steps)).
 		Set("dependencies", dv.value())
-	// D.2 (X6): the advisory critical path over the whole plan (not the
+	// The advisory critical path over the whole plan (not the
 	// page), only when it chains at least two open steps.
 	if cp, ok := criticalPathValue(g); ok {
 		out.Set("criticalPath", cp)
@@ -147,7 +149,7 @@ func (e *Engine) Inspect(in InspectInput) (ojson.Value, error) {
 		Set("stateHash", ojson.StringValue(s.StateHash)).Value(), nil
 }
 
-// inspectGraphMembers adds the D.2 per-step graph view (G5, X6): the
+// inspectGraphMembers adds the per-step graph view: the
 // step's prerequisites with their statuses and its direct dependents;
 // for an open step also its readiness, how many open steps it holds up
 // (transitively) and its slack against the critical path.

@@ -13,7 +13,7 @@ import (
 
 // Diagnostics go to stderr only, one line each, with redaction: issued
 // intent capabilities, HTTP credentials and secret-looking assignments
-// never appear (spec 02 §2).
+// never appear.
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(basic|bearer)\s+[A-Za-z0-9+/=._~-]+`),
 	regexp.MustCompile(`(?i)\b(password|passwd|secret|token|capability|api[_-]?key)(["']?\s*[:=]\s*["']?)[^\s"',}]+`),

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
@@ -119,22 +120,22 @@ func untar(archive, dst string) error {
 func perfOp(e *Engine, op string) (string, error) {
 	switch op {
 	case "read":
-		v, err := e.Read(ReadInput{ID: "perf-plan"})
+		v, err := e.Read(input.ReadInput{ID: "perf-plan"})
 		if err != nil {
 			return "", err
 		}
 		return string(ojson.Pretty(v)), nil
 	case "inspect":
-		v, err := e.Inspect(InspectInput{ID: "perf-plan"})
+		v, err := e.Inspect(input.InspectInput{ID: "perf-plan"})
 		if err != nil {
 			return "", err
 		}
 		return string(ojson.Pretty(v)), nil
 	case "resume":
-		_, text, err := e.Resume(ResumeInput{ID: "perf-plan"})
+		_, text, err := e.Resume(input.ResumeInput{ID: "perf-plan"})
 		return text, err
 	case "validate":
-		v, err := e.Validate(ValidateInput{ID: "perf-plan"})
+		v, err := e.Validate(input.ValidateInput{ID: "perf-plan"})
 		if err != nil {
 			return "", err
 		}

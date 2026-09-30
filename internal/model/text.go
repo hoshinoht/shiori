@@ -1,6 +1,6 @@
 // Package model holds the compatible decoders and structural rules for
-// workplan artifacts (spec 01 §3, schema/v1). Decoding reproduces the
-// reference validator's issue text and field paths (contracts §6.2 rule 2).
+// workplan artifacts (schema/v1). Decoding reproduces the reference
+// validator's issue text and field paths.
 package model
 
 import (

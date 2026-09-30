@@ -1,5 +1,5 @@
 // Command shiori is the workplan core CLI and the `shiori serve --stdio`
-// native adapter protocol (stage D).
+// native adapter protocol.
 package main
 
 import (

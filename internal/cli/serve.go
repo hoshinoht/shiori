@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/protocol"
 )
 
 // runServe runs `shiori serve --stdio`: one private JSON-lines protocol
-// connection on stdin/stdout for a native host adapter (contracts §5.4).
+// connection on stdin/stdout for a native host adapter.
 // There is no network listener and no daemon; the process exits on stdin
 // EOF, SIGTERM/SIGINT, a fatal frame error, or after the idle timeout.
 func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -41,9 +41,9 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "shiori serve: --max-frame-bytes must be between 1024 and 64 MiB")
 		return 2
 	}
-	var th *engine.CompactionThresholds
+	var th *advisor.Thresholds
 	if *advice != "" {
-		t, err := engine.ParseCompactionThresholds(*advice)
+		t, err := advisor.ParseThresholds(*advice)
 		if err != nil {
 			fmt.Fprintln(stderr, "shiori serve:", err)
 			return 2

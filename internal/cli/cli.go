@@ -12,7 +12,9 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
@@ -134,14 +136,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
 	// Build the core-surface tool input object.
-	var input ojson.Value
+	var toolIn ojson.Value
 	if *rawInput != "" {
 		p, err := ojson.Parse([]byte(*rawInput))
 		if err != nil {
 			fmt.Fprintf(stderr, "shiori: --input is not valid JSON: %v\n", err)
 			return 2
 		}
-		input = p.Value
+		toolIn = p.Value
 	} else {
 		b := ojson.NewObject(8)
 		if len(positional) > 1 {
@@ -201,13 +203,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 		}
-		input = b.Value()
+		toolIn = b.Value()
 	}
 
 	// The root is trusted operator context (flag, or workspaceRoot in the
 	// core-surface input), never model input on the native surface.
 	rootDir := *root
-	if wr, ok := input.Get("workspaceRoot"); ok && wr.Kind() == ojson.String && rootDir == "" {
+	if wr, ok := toolIn.Get("workspaceRoot"); ok && wr.Kind() == ojson.String && rootDir == "" {
 		rootDir = wr.Str()
 	}
 	if rootDir == "" {
@@ -222,7 +224,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
 	if set["compaction-advice"] {
-		th, err := engine.ParseCompactionThresholds(*advice)
+		th, err := advisor.ParseThresholds(*advice)
 		if err != nil {
 			fmt.Fprintln(stderr, "shiori "+cmd+":", err)
 			return 2
@@ -230,7 +232,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		e.Compaction = th
 	}
 
-	res, text, err := dispatch(e, cmd, input)
+	res, text, err := dispatch(e, cmd, toolIn)
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
@@ -254,7 +256,7 @@ func flagAllowed(cmd, name string) bool {
 	switch name {
 	case "root", "json", "input":
 		return true
-	case "compaction-advice": // D.4, trusted operator flag
+	case "compaction-advice": // trusted operator flag
 		return cmd == "resume" || cmd == "doctor"
 	}
 	allowed := map[string][]string{
@@ -273,45 +275,45 @@ func flagAllowed(cmd, name string) bool {
 
 // dispatch validates input on the core surface and runs the operation.
 // text is set when the operation defines its own serialization (resume).
-func dispatch(e *engine.Engine, cmd string, input ojson.Value) (ojson.Value, string, error) {
-	s := engine.SurfaceCore
+func dispatch(e *engine.Engine, cmd string, raw ojson.Value) (ojson.Value, string, error) {
+	s := input.SurfaceCore
 	switch cmd {
 	case "list":
-		in, err := engine.ParseListInput(input, s)
+		in, err := input.ParseListInput(raw, s)
 		if err != nil {
 			return ojson.Value{}, "", err
 		}
 		v, err := e.List(in)
 		return v, "", err
 	case "read":
-		in, err := engine.ParseReadInput(input, s)
+		in, err := input.ParseReadInput(raw, s)
 		if err != nil {
 			return ojson.Value{}, "", err
 		}
 		v, err := e.Read(in)
 		return v, "", err
 	case "inspect":
-		in, err := engine.ParseInspectInput(input, s)
+		in, err := input.ParseInspectInput(raw, s)
 		if err != nil {
 			return ojson.Value{}, "", err
 		}
 		v, err := e.Inspect(in)
 		return v, "", err
 	case "validate":
-		in, err := engine.ParseValidateInput(input, s)
+		in, err := input.ParseValidateInput(raw, s)
 		if err != nil {
 			return ojson.Value{}, "", err
 		}
 		v, err := e.Validate(in)
 		return v, "", err
 	case "resume":
-		in, err := engine.ParseResumeInput(input, s)
+		in, err := input.ParseResumeInput(raw, s)
 		if err != nil {
 			return ojson.Value{}, "", err
 		}
 		return e.Resume(in)
 	default:
-		in, err := engine.ParseDoctorInput(input, s)
+		in, err := input.ParseDoctorInput(raw, s)
 		if err != nil {
 			return ojson.Value{}, "", err
 		}
@@ -333,9 +335,9 @@ func fail(stdout, stderr io.Writer, jsonOut bool, err error) int {
 		Set("class", ojson.StringValue(ErrorClass(err))).
 		Set("message", ojson.StringValue(err.Error()))
 	var issues []model.Issue
-	var ie *engine.InputError
+	var ie *input.InputError
 	var de *model.DecodeError
-	var gate interface{ StructuredIssues() []model.Issue } // D.1 plan and D.3.1 step status gates
+	var gate interface{ StructuredIssues() []model.Issue } // plan and step status gates
 	switch {
 	case errors.As(err, &ie):
 		issues = ie.Issues

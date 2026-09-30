@@ -1,6 +1,6 @@
 // Package protocol implements `shiori serve --stdio`: the bounded,
 // versioned JSON-lines protocol between the Go core and a native host
-// adapter (spec 02 §2–§6, contracts §5.4, protocol-envelope-v1).
+// adapter (protocol-envelope-v1).
 //
 // stdout carries protocol frames only; diagnostics go to stderr with
 // redaction. Every mutating tool request is prepared first and touches
@@ -22,7 +22,7 @@ import (
 // ProtocolVersion is the only protocol version this core speaks.
 const ProtocolVersion = 1
 
-// Default limits (contracts §5.2).
+// Default limits.
 const (
 	DefaultMaxFrameBytes    = 16 << 20
 	DefaultMaxResponseBytes = 64 << 20
