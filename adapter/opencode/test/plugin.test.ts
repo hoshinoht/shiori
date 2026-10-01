@@ -152,7 +152,7 @@ describe("registration (identities, shapes, model-facing text)", () => {
       expect(doctor.runtimeFacts.host).toEqual({
         opencodeVersion: "2.1.0",
         verified: false,
-        verifiedVersions: ["2.0.19", "2.0.20"],
+        verifiedVersions: ["2.0.19", "2.0.20", "2.0.21"],
         writes: "disabled",
         detail: expect.stringContaining("Shiori adapter not verified for OpenCode 2.1.0; writes disabled — update Shiori"),
       });
@@ -188,7 +188,7 @@ describe("registration (identities, shapes, model-facing text)", () => {
     const t = await setup();
     try {
       const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, toolContext("tester"))).content);
-      expect(doctor.runtimeFacts.host).toMatchObject({ opencodeVersion: "2.0.20", verified: true, verifiedVersions: ["2.0.19", "2.0.20"], writes: "enabled" });
+      expect(doctor.runtimeFacts.host).toMatchObject({ opencodeVersion: "2.0.20", verified: true, verifiedVersions: ["2.0.19", "2.0.20", "2.0.21"], writes: "enabled" });
     } finally {
       await t.cleanup();
     }

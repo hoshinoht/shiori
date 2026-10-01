@@ -1054,14 +1054,14 @@ delete resources of the recovery intent. Vectors
 such a staging file): the only extra change is that file's removal.
 
 **7. Unverified OpenCode versions.** On a host version outside
-`SUPPORTED_HOST_VERSIONS` (2.0.19, 2.0.20) the adapter still registers all
+`SUPPORTED_HOST_VERSIONS` (2.0.19, 2.0.20, 2.0.21) the adapter still registers all
 thirteen tools. `workplan_read`, `list`, `inspect`, `validate`, `resume`,
 `doctor` and `compact_preview` work. `workplan_create`, `update`, `patch`,
 `reset`, `checkpoint` and `compact` (the schema's mutating tools, including
 the compact preview mode, which `compact_preview` covers) are refused
 before any core request with class `unsupported_capability`: `Shiori
 adapter not verified for OpenCode <v>; writes disabled — update Shiori
-(verified: 2.0.19, 2.0.20). ...`. The permission bridge is not started, so
+(verified: 2.0.19, 2.0.20, 2.0.21). ...`. The permission bridge is not started, so
 no write can be authorized either. `workplan_doctor` reports
 `runtimeFacts.host {opencodeVersion, verified, verifiedVersions, writes:
 "enabled"|"disabled", detail}`; the core renders `host` only when the

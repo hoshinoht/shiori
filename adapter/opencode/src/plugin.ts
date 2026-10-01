@@ -21,7 +21,7 @@ export const PLUGIN_ID = "workplan-tools";
  * keep working and every mutating tool is refused (D.3, contracts §13
  * item 7): writes stay fail-closed.
  */
-export const SUPPORTED_HOST_VERSIONS = ["2.0.19", "2.0.20"] as const;
+export const SUPPORTED_HOST_VERSIONS = ["2.0.19", "2.0.20", "2.0.21"] as const;
 
 export const TOOL_NAMES = registration.tools.map((tool) => tool.name);
 

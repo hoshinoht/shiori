@@ -626,7 +626,7 @@ against it.
    `directorySync` remains the project-filesystem fact.
 6. **Linux**: `writeSupported` is true on linux/amd64 per the approved matrix,
    but the stage C/D suites have only run on darwin/arm64 (contracts §5.6).
-7. **Host versions**: the adapter allow-lists OpenCode 2.0.19 and 2.0.20
+7. **Host versions**: the adapter allow-lists OpenCode 2.0.19, 2.0.20 and 2.0.21
    (contracts §5.6); a host upgrade disables the workplan tools until the
    list is extended after re-verification.
 8. **Adapter layout.** Contracts §5.3 names a single committed
