@@ -8,6 +8,9 @@
   "exports": {
     ".": "./index.ts"
   },
+  "scripts": {
+    "verify-host": "bun scripts/verify-host.ts"
+  },
   "peerDependencies": {
     "@opencode/plugin": "2.0.20"
   }

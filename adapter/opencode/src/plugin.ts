@@ -17,11 +17,51 @@ import registration from "./registration.json" with { type: "json" };
 /** Plugin identity kept from the reference plugin (one writer per root). */
 export const PLUGIN_ID = "workplan-tools";
 /**
- * Verified hosts (contracts §5.6). On any other version the read-only tools
- * keep working and every mutating tool is refused (D.3, contracts §13
- * item 7): writes stay fail-closed.
+ * Verified hosts (contracts §5.6): each passed `bun run verify-host`. Which
+ * other versions may write depends on the `hostPolicy` option (contracts
+ * §19); a host outside it keeps the read-only tools and every mutating tool
+ * is refused (D.3, contracts §13 item 7).
  */
 export const SUPPORTED_HOST_VERSIONS = ["2.0.19", "2.0.20", "2.0.21"] as const;
+
+/**
+ * `exact`: only the verified versions write. `patch` (default): a stable
+ * X.Y.Z in the same X.Y line as a verified version, at or above the lowest
+ * verified patch of that line, writes too; the permission bridge still
+ * proves every authorization and fails closed.
+ */
+export const HOST_POLICIES = ["patch", "exact"] as const;
+export type HostPolicy = (typeof HOST_POLICIES)[number];
+
+/** How far a host version is trusted: tested, an untested patch accepted by policy, or not at all. */
+export type HostTrust = "verified" | "patch" | "unverified";
+
+export function hostPolicy(value: unknown): HostPolicy {
+  if (value === undefined) return "patch";
+  if ((HOST_POLICIES as readonly unknown[]).includes(value)) return value as HostPolicy;
+  throw new Error(`Shiori adapter: invalid plugin option "hostPolicy": expected "patch" or "exact", got ${JSON.stringify(value)}.`);
+}
+
+function parseStable(version: string): [number, number, number] | undefined {
+  const m = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.exec(version);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+}
+
+export function hostTrust(version: unknown, policy: HostPolicy = "patch"): HostTrust {
+  if (typeof version !== "string") return "unverified";
+  if ((SUPPORTED_HOST_VERSIONS as readonly string[]).includes(version)) return "verified";
+  if (policy !== "patch") return "unverified";
+  const v = parseStable(version);
+  if (!v) return "unverified";
+  const floor = SUPPORTED_HOST_VERSIONS.map(parseStable)
+    .filter((s): s is [number, number, number] => s !== undefined && s[0] === v[0] && s[1] === v[1])
+    .reduce((min, s) => Math.min(min, s[2]), Infinity);
+  return v[2] >= floor ? "patch" : "unverified";
+}
+
+export function hostVerified(version: unknown): boolean {
+  return hostTrust(version, "exact") === "verified";
+}
 
 export const TOOL_NAMES = registration.tools.map((tool) => tool.name);
 
@@ -30,14 +70,20 @@ export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
   "workplan_create", "workplan_update", "workplan_patch", "workplan_reset", "workplan_checkpoint", "workplan_compact",
 ]);
 
-export function hostVerified(version: unknown): boolean {
-  return typeof version === "string" && (SUPPORTED_HOST_VERSIONS as readonly string[]).includes(version);
+/** The refusal of a mutating tool on an unverified host (actionable, class unsupported_capability). */
+export function unverifiedWriteMessage(version: unknown, policy: HostPolicy = "patch"): string {
+  const scope = policy === "patch" ? "; hostPolicy \"patch\" also accepts later patches of a verified X.Y line" : "; hostPolicy \"exact\"";
+  return `Shiori adapter not verified for OpenCode ${String(version)}; writes disabled — update Shiori (verified: ${SUPPORTED_HOST_VERSIONS.join(", ")}${scope}). ` +
+    "Read-only workplan tools (read, list, inspect, validate, resume, doctor, compact_preview) still work; nothing was changed.";
 }
 
-/** The refusal of a mutating tool on an unverified host (actionable, class unsupported_capability). */
-export function unverifiedWriteMessage(version: unknown): string {
-  return `Shiori adapter not verified for OpenCode ${String(version)}; writes disabled — update Shiori (verified: ${SUPPORTED_HOST_VERSIONS.join(", ")}). ` +
-    "Read-only workplan tools (read, list, inspect, validate, resume, doctor, compact_preview) still work; nothing was changed.";
+function hostDetail(version: unknown, trust: HostTrust, policy: HostPolicy): string {
+  if (trust === "verified") return "The Shiori adapter is verified for this OpenCode version; writes go through the host permission engine.";
+  if (trust === "patch") {
+    return `OpenCode ${String(version)} is an unverified patch of a verified line; hostPolicy "patch" enables writes, which still go through ` +
+      `the fail-closed permission bridge. Run \`bun run verify-host ${String(version)}\` in adapter/opencode to verify it.`;
+  }
+  return unverifiedWriteMessage(version, policy);
 }
 
 const authoringTools = new Set(["workplan_create", "workplan_update", "workplan_patch", "workplan_reset"]);
@@ -144,7 +190,7 @@ function permissionDecision(value: string): "allow" | "deny" | "ask" | "unknown"
   return value === "allow" || value === "deny" || value === "ask" ? value : "unknown";
 }
 
-async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, toolContext: ToolContext, bridge: NativePermissionBridge | undefined, hostVersion: unknown) {
+async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, toolContext: ToolContext, bridge: NativePermissionBridge | undefined, hostVersion: unknown, trust: HostTrust, policy: HostPolicy) {
   let effectiveTools: string[] | null = null;
   let plugins: any[] | null = null;
   const notes: string[] = [];
@@ -183,7 +229,6 @@ async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, tool
   }
   const bridgeFacts = bridge?.diagnostics();
   notes.push("Effective permission remains unknown: public plugin APIs do not expose complete organization/hard-policy precedence.");
-  const verified = hostVerified(hostVersion);
   if (effectiveTools === null) notes.push("Configured-only tool names are unknown; only a successful effective tool catalog is authoritative.");
   return {
     registrations: { effective: effectiveTools, configured: null },
@@ -202,7 +247,7 @@ async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, tool
         `Agent rules ${agentRead ? "read" : "unknown"}; session rules ${sessionRead ? "read" : "unknown"}.`,
         bridgeFacts
           ? `Bridge client ${bridgeFacts.clientVersion}, RPC ${bridgeFacts.rpcRegistration}, service ${bridgeFacts.serviceDiscovery}, host ${bridgeFacts.hostBinding}, event stream ${bridgeFacts.eventStream}, runtime ${bridgeFacts.runtimeVersion ?? "unknown"}, last failure ${bridgeFacts.lastFailure ?? "none"}.`
-          : "Permission bridge not started: the host version is not verified, so writes are disabled.",
+          : "Permission bridge not started: the host version is outside hostPolicy, so writes are disabled.",
         ...notes,
       ].join(" "),
     },
@@ -212,12 +257,10 @@ async function collectDoctorRuntimeFacts(ctx: Plugin.Context, root: string, tool
     },
     host: {
       opencodeVersion: typeof hostVersion === "string" ? hostVersion : null,
-      verified,
+      verified: trust === "verified",
       verifiedVersions: [...SUPPORTED_HOST_VERSIONS],
-      writes: verified ? "enabled" : "disabled",
-      detail: verified
-        ? "The Shiori adapter is verified for this OpenCode version; writes go through the host permission engine."
-        : unverifiedWriteMessage(hostVersion),
+      writes: trust === "unverified" ? "disabled" : "enabled",
+      detail: hostDetail(hostVersion, trust, policy),
     },
   };
 }
@@ -292,11 +335,13 @@ export function createPlugin(deps: AdapterDeps = {}) {
     id: PLUGIN_ID,
     async setup(ctx: Plugin.Context) {
       const hostVersion = ctx.app?.version;
-      // D.3 (contracts §13 item 7): an unverified host keeps the read-only
-      // tools and refuses every mutating tool before anything is sent to
-      // the core. The permission bridge (which depends on verified host
+      // D.3 (contracts §13 item 7, §19): a host outside hostPolicy keeps the
+      // read-only tools and refuses every mutating tool before anything is
+      // sent to the core. The permission bridge (which depends on host
       // internals) is not started, so no write can be authorized either.
-      const verified = hostVerified(hostVersion);
+      const policy = hostPolicy(ctx.options?.hostPolicy);
+      const trust = hostTrust(hostVersion, policy);
+      const writable = trust !== "unverified";
       const root = await realpath(ctx.location.project.directory);
       const env = deps.env ?? process.env;
       const bin = typeof ctx.options?.bin === "string" ? ctx.options.bin : env.SHIORI_BIN;
@@ -306,13 +351,13 @@ export function createPlugin(deps: AdapterDeps = {}) {
         ...(adviceArgs.length > 0 ? { args: ["serve", "--stdio", ...adviceArgs] } : {}),
       };
       const core = deps.core ? deps.core(coreOptions) : new CoreClient(coreOptions);
-      const bridge = verified
+      const bridge = writable
         ? await (deps.bridge ?? ((c) => registerNativePermissionBridge(c)))(ctx as unknown as NativePermissionBridgeContext)
         : undefined;
 
       const execute = async (toolName: string, rawInput: unknown, toolContext: ToolContext): Promise<{ content: string }> => {
-        if (!verified && MUTATING_TOOLS.has(toolName)) {
-          const e = new Error(unverifiedWriteMessage(hostVersion)) as Error & { errorClass?: string };
+        if (!writable && MUTATING_TOOLS.has(toolName)) {
+          const e = new Error(unverifiedWriteMessage(hostVersion, policy)) as Error & { errorClass?: string };
           e.errorClass = "unsupported_capability";
           throw e;
         }
@@ -325,7 +370,7 @@ export function createPlugin(deps: AdapterDeps = {}) {
           agent: toolContext.agent,
           messageID: toolContext.messageID,
           callID: toolContext.id,
-          ...(toolName === "workplan_doctor" ? { runtimeFacts: await collectDoctorRuntimeFacts(ctx, root, toolContext, bridge, hostVersion) } : {}),
+          ...(toolName === "workplan_doctor" ? { runtimeFacts: await collectDoctorRuntimeFacts(ctx, root, toolContext, bridge, hostVersion, trust, policy) } : {}),
         };
         const input = rawInput === undefined ? {} : rawInput;
         if (!isRecord(input)) {
@@ -346,7 +391,7 @@ export function createPlugin(deps: AdapterDeps = {}) {
         }
         const prepared = response.prepared;
         if (!prepared) throw new Error("The Shiori core returned neither a result nor a prepared intent; nothing was changed.");
-        if (!bridge) throw new Error(unverifiedWriteMessage(hostVersion)); // fail closed: no bridge, no write
+        if (!bridge) throw new Error(unverifiedWriteMessage(hostVersion, policy)); // fail closed: no bridge, no write
         progress(toolContext, toolName);
         let committed = false;
         // An abort at any point expires the prepared intent in the core, so

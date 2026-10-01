@@ -248,7 +248,8 @@ The CLI acts under OS/local operator authority, not OpenCode policy (spec 02 §7
 - The minimum host is OpenCode runtime 2.0.19 with plugin/client 2.0.20. This is
   the verified baseline. Other versions failed closed at registration until
   D.3; since D.3 (§13 item 7) they keep the read-only tools and refuse every
-  mutating tool.
+  mutating tool. Since §19, `hostPolicy` decides which unverified versions
+  may still write, and `bun run verify-host` extends the verified list.
 - Handshake `durability` reports observed capabilities, never intent.
 - On a system that is not a supported write target, the handshake reports
   `writeSupported: false`, and mutations fail with `unsupported_capability`.
@@ -1053,15 +1054,16 @@ delete resources of the recovery intent. Vectors
 `mutations/update-recovery-resume` and `-rollback` (whose fixture contains
 such a staging file): the only extra change is that file's removal.
 
-**7. Unverified OpenCode versions.** On a host version outside
-`SUPPORTED_HOST_VERSIONS` (2.0.19, 2.0.20, 2.0.21) the adapter still registers all
+**7. Unverified OpenCode versions.** (Narrowed by §19: this now applies to a
+host version outside `hostPolicy`.) On a host version outside
+`SUPPORTED_HOST_VERSIONS` the adapter still registers all
 thirteen tools. `workplan_read`, `list`, `inspect`, `validate`, `resume`,
 `doctor` and `compact_preview` work. `workplan_create`, `update`, `patch`,
 `reset`, `checkpoint` and `compact` (the schema's mutating tools, including
 the compact preview mode, which `compact_preview` covers) are refused
 before any core request with class `unsupported_capability`: `Shiori
 adapter not verified for OpenCode <v>; writes disabled — update Shiori
-(verified: 2.0.19, 2.0.20, 2.0.21). ...`. The permission bridge is not started, so
+(verified: <list>; hostPolicy ...). ...`. The permission bridge is not started, so
 no write can be authorized either. `workplan_doctor` reports
 `runtimeFacts.host {opencodeVersion, verified, verifiedVersions, writes:
 "enabled"|"disabled", detail}`; the core renders `host` only when the
@@ -1582,3 +1584,51 @@ every corpus packet keeps its level) and `mutations/checkpoint-ok`
 `warnings`, restated from the fixture's stored checkpoint and the vector
 input). The input rules are not behind the flag: no corpus input uses
 `merge`, `appendValidation` or a `null …` text.
+
+## 19. Host version policy (APPROVED 2026-10-01)
+
+OpenCode ships 2.0.x patches almost daily, and an exact allow-list turned
+writes off on each one. The permission bridge already proves every
+authorization at runtime (host binding through the RPC proof, event-stream
+readiness, exact ask correlation, no self-approval) and fails closed on any
+mismatch, so a changed host contract shows up as a refused write rather
+than an unsafe one. The allow-list therefore records which versions were
+tested, while a policy decides which versions may write.
+
+**1. `hostPolicy` plugin option.** `"patch"` (the default) or `"exact"`.
+Anything else fails plugin load with an actionable message, like
+`compactionAdvice`.
+
+**2. Trust classes** (`hostTrust` in `adapter/opencode/src/plugin.ts`):
+
+| Class | Rule | Writes | Bridge |
+| --- | --- | --- | --- |
+| `verified` | in `SUPPORTED_HOST_VERSIONS` | enabled | started |
+| `patch` | policy `patch`; a stable `X.Y.Z` (no pre-release or build suffix) in the same `X.Y` line as a verified version, with `Z` at or above that line's lowest verified patch | enabled | started |
+| `unverified` | anything else, including a new minor or major, a pre-release, an older patch below the floor, and every unlisted version under `exact` | refused as in §13 item 7 | not started |
+
+**3. Doctor.** `runtimeFacts.host` keeps its five fields, so the core,
+schema and corpus are unchanged: `verified` is true only for a listed
+version, and `writes` is `"enabled"` for `verified` and `patch`. A `patch`
+host's `detail` says it is an unverified patch and names the
+`bun run verify-host <version>` command. The refusal message gains the
+policy in its parenthesis.
+
+**4. `bun run verify-host [version] [--dry-run]`** (in `adapter/opencode`,
+`scripts/verify-host.ts`) verifies a release against the newest verified
+version and, if every gate passes, adds it to `SUPPORTED_HOST_VERSIONS`.
+Nothing is committed. Gates, in order:
+
+1. Contract: from the published `@opencode/client` packages, the
+   declarations of the five routes `host-client.ts` calls (method, path,
+   body, statuses), the generated types they and the permission events use
+   (closure over `ServerInfo`, `SessionGetOutput`, `PermissionCreateInput`,
+   `PermissionCreateOutput`, `PermissionAsked`, `PermissionReplied`,
+   `RpcCallInput`, `RpcCallOutput`) and the service-discovery modules are
+   unchanged, as is every declaration file of `@opencode/plugin`. Bundler
+   chunk hashes are ignored. Any difference stops the run for review by
+   hand.
+2. The adapter test suite.
+3. The live runtime smoke test against an installed binary of exactly that
+   version (`OPENCODE_BIN`, Homebrew, or the desktop app's bundled CLI),
+   on `testdata/fixtures/full-valid` unless `SHIORI_SMOKE_FIXTURE` is set.

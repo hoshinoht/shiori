@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync 
 import { join, relative } from "node:path";
 
 import { CoreClient } from "../src/core-client";
-import { compactionAdviceArgs, createPlugin, editResources, SUPPORTED_HOST_VERSIONS, TOOL_NAMES } from "../src/plugin";
+import { compactionAdviceArgs, createPlugin, editResources, hostPolicy, hostTrust, SUPPORTED_HOST_VERSIONS, TOOL_NAMES } from "../src/plugin";
 import registration from "../src/registration.json";
 import { createFakeHost, toolContext, type FakeHostOptions } from "./fake-host";
 import { fingerprint, pause, REPO_ROOT, seedPlan, shioriBin, tempRoot } from "./helpers";
@@ -14,13 +14,13 @@ afterAll(() => {
   for (const r of roots) rmSync(r, { recursive: true, force: true });
 });
 
-async function setup(options: FakeHostOptions & { bin?: string | null; seed?: boolean } = {}) {
+async function setup(options: FakeHostOptions & { bin?: string | null; seed?: boolean; pluginOptions?: Record<string, unknown> } = {}) {
   const root = tempRoot("shiori-plugin-");
   roots.push(root);
   const seeded = options.seed === false ? undefined : seedPlan(root);
   const host = createFakeHost(root, options);
   let core: CoreClient | undefined;
-  host.ctx.options = options.bin === null ? {} : { bin: options.bin ?? shioriBin() };
+  host.ctx.options = { ...(options.bin === null ? {} : { bin: options.bin ?? shioriBin() }), ...options.pluginOptions };
   const plugin = createPlugin({
     bridge: host.bridgeFactory(),
     env: {},
@@ -152,7 +152,7 @@ describe("registration (identities, shapes, model-facing text)", () => {
       expect(doctor.runtimeFacts.host).toEqual({
         opencodeVersion: "2.1.0",
         verified: false,
-        verifiedVersions: ["2.0.19", "2.0.20", "2.0.21"],
+        verifiedVersions: [...SUPPORTED_HOST_VERSIONS],
         writes: "disabled",
         detail: expect.stringContaining("Shiori adapter not verified for OpenCode 2.1.0; writes disabled — update Shiori"),
       });
@@ -188,10 +188,90 @@ describe("registration (identities, shapes, model-facing text)", () => {
     const t = await setup();
     try {
       const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, toolContext("tester"))).content);
-      expect(doctor.runtimeFacts.host).toMatchObject({ opencodeVersion: "2.0.20", verified: true, verifiedVersions: ["2.0.19", "2.0.20", "2.0.21"], writes: "enabled" });
+      expect(doctor.runtimeFacts.host).toMatchObject({ opencodeVersion: "2.0.20", verified: true, verifiedVersions: [...SUPPORTED_HOST_VERSIONS], writes: "enabled" });
     } finally {
       await t.cleanup();
     }
+  });
+});
+
+describe("hostPolicy (contracts §19)", () => {
+  const latest = SUPPORTED_HOST_VERSIONS[SUPPORTED_HOST_VERSIONS.length - 1];
+  const [major, minor, patch] = latest.split(".").map(Number);
+  const nextPatch = `${major}.${minor}.${patch + 1}`;
+
+  it("classifies versions: verified, a later patch of a verified line, everything else", () => {
+    for (const v of SUPPORTED_HOST_VERSIONS) {
+      expect(hostTrust(v)).toBe("verified");
+      expect(hostTrust(v, "exact")).toBe("verified");
+    }
+    expect(hostTrust(nextPatch)).toBe("patch");
+    expect(hostTrust(`${major}.${minor}.${patch + 400}`)).toBe("patch");
+    expect(hostTrust(nextPatch, "exact")).toBe("unverified");
+    for (const v of [`${major}.${minor + 1}.0`, `${major + 1}.0.0`, `${major}.${minor}.3`, `${nextPatch}-beta.1`, `${nextPatch}+build`, `v${nextPatch}`, `0${nextPatch}`, "", undefined, null, 2]) {
+      expect(hostTrust(v)).toBe("unverified");
+    }
+  });
+
+  it("defaults to patch and rejects anything but patch or exact", () => {
+    expect(hostPolicy(undefined)).toBe("patch");
+    expect(hostPolicy("exact")).toBe("exact");
+    for (const v of ["minor", "", null, true, ["patch"]]) expect(() => hostPolicy(v)).toThrow(/invalid plugin option "hostPolicy"/);
+  });
+
+  it("writes through the permission bridge on a later patch, and reports it as unverified in doctor", async () => {
+    const t = await setup({ hostVersion: nextPatch });
+    try {
+      const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, toolContext("tester"))).content);
+      expect(doctor.runtimeFacts.host).toEqual({
+        opencodeVersion: nextPatch,
+        verified: false,
+        verifiedVersions: [...SUPPORTED_HOST_VERSIONS],
+        writes: "enabled",
+        detail: expect.stringContaining(`bun run verify-host ${nextPatch}`),
+      });
+      const hash = (await t.read()).stateHash;
+      const out = JSON.parse((await t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, appendNotes: ["patch host"] }, toolContext("plan"))).content);
+      expect(out.stateHash).not.toBe(hash);
+      expect(t.host.requests).toHaveLength(1);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("still fails closed on a later patch when the host denies", async () => {
+    const t = await setup({ hostVersion: nextPatch, effect: "deny" });
+    try {
+      const before = fingerprint(t.root);
+      const hash = (await t.read()).stateHash;
+      await expect(t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "denied" }, toolContext("plan"))).rejects.toThrow();
+      expect(fingerprint(t.root)).toEqual(before);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("refuses writes on a later patch under hostPolicy exact, without starting the bridge", async () => {
+    const t = await setup({ hostVersion: nextPatch, pluginOptions: { hostPolicy: "exact" } });
+    try {
+      const before = fingerprint(t.root);
+      const hash = (await t.read()).stateHash;
+      const err = await t.host.tool("workplan_update").execute({ id: "native-demo", expectedHash: hash, title: "x" }, toolContext("plan")).then(() => undefined, (e) => e);
+      expect(err?.message).toStartWith(`Shiori adapter not verified for OpenCode ${nextPatch}; writes disabled — update Shiori`);
+      expect(err?.message).toContain('hostPolicy "exact"');
+      expect(err?.errorClass).toBe("unsupported_capability");
+      expect(t.host.requests).toHaveLength(0);
+      expect(fingerprint(t.root)).toEqual(before);
+      const doctor = JSON.parse((await t.host.tool("workplan_doctor").execute({}, toolContext("tester"))).content);
+      expect(doctor.runtimeFacts.host).toMatchObject({ verified: false, writes: "disabled" });
+      expect(doctor.runtimeFacts.permission.detail).toContain("Permission bridge not started");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("fails plugin load on an invalid hostPolicy", async () => {
+    await expect(setup({ pluginOptions: { hostPolicy: "minor" } })).rejects.toThrow(/invalid plugin option "hostPolicy"/);
   });
 });
 
