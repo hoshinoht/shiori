@@ -807,58 +807,5 @@ func randomHex(n int) string {
 
 // runRead validates native input and runs a read-only operation.
 func runRead(e *engine.Engine, tool string, raw ojson.Value, h *hostContext) (string, ojson.Value, error) {
-	s := input.SurfaceNative
-	var v ojson.Value
-	var err error
-	switch tool {
-	case "list":
-		in, perr := input.ParseListInput(raw, s)
-		if perr != nil {
-			return "", v, perr
-		}
-		v, err = e.List(in)
-	case "read":
-		in, perr := input.ParseReadInput(raw, s)
-		if perr != nil {
-			return "", v, perr
-		}
-		v, err = e.Read(in)
-	case "inspect":
-		in, perr := input.ParseInspectInput(raw, s)
-		if perr != nil {
-			return "", v, perr
-		}
-		v, err = e.Inspect(in)
-	case "validate":
-		in, perr := input.ParseValidateInput(raw, s)
-		if perr != nil {
-			return "", v, perr
-		}
-		v, err = e.Validate(in)
-	case "resume":
-		in, perr := input.ParseResumeInput(raw, s)
-		if perr != nil {
-			return "", v, perr
-		}
-		var text string
-		v, text, err = e.Resume(in)
-		if err != nil {
-			return "", v, err
-		}
-		if text == "" {
-			text = string(ojson.Pretty(v))
-		}
-		return text, v, nil
-	case "doctor":
-		in, perr := input.ParseDoctorInput(raw, s)
-		if perr != nil {
-			return "", v, perr
-		}
-		in.RuntimeFacts = h.runtimeFacts
-		v, err = e.Doctor(in)
-	}
-	if err != nil {
-		return "", v, err
-	}
-	return string(ojson.Pretty(v)), v, nil
+	return e.RunRead(tool, raw, h.runtimeFacts)
 }

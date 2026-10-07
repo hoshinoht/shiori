@@ -58,6 +58,10 @@ Mutating commands (print the prepared intent, then require confirmation):
                              records evidence for a step (spec 06 X2); with -- COMMAND it runs
                              the command in the root (or the lane's checkout) and records its
                              exit code and output digest
+  mcp [--root DIR]           The workplan tools as an MCP server on stdin/stdout (register it as
+                             "workplan" so tools appear as workplan_resume, ...); writes are
+                             approved through MCP elicitation or the client's tool approval
+                             (--write-approval auto|elicitation|client|deny)
   serve --stdio              Native adapter protocol on stdin/stdout (JSON lines;
                              prepare -> host authorization -> commit; idle exit)
   version                    Print the version
@@ -107,6 +111,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runServe(rest, os.Stdin, stdout, stderr)
 	case "evidence":
 		return runEvidence(rest, stdout, stderr)
+	case "mcp":
+		return runMCP(rest, os.Stdin, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {

@@ -121,6 +121,26 @@ shiori doctor
 
 Confirm by typing `yes` on a terminal, or pass `--yes` off a terminal (a flag only, never an environment variable; it never bypasses the hash, lock or journal checks). `--root` defaults to the current directory. `--json` prints exactly the result the matching `workplan_*` tool returns, and `--input '<json>'` accepts any tool input. Exit status is 0 on success, 1 on an operation error, a refusal or an invalid plan, and 2 on a usage error. `shiori --help` lists every command and flag.
 
+## MCP server
+
+`shiori mcp` serves the same tools (names, descriptions and input schemas as the OpenCode adapter) to any MCP client over stdio (protocol 2025-03-26 to 2025-11-25). Register it under the name `workplan` and keep the default empty tool prefix, so clients that prefix tools with the server name show `workplan_resume`, `workplan_update`, …
+
+```sh
+# Claude Code (tools appear as mcp__workplan__resume, ...)
+claude mcp add workplan -- /abs/path/shiori mcp --root /abs/path/to/project
+```
+
+```jsonc
+// OpenCode (tools appear as workplan_resume, ...); check your version's MCP config keys
+{ "mcp": { "workplan": { "type": "local", "command": ["/abs/path/shiori", "mcp", "--root", "/abs/path/to/project"] } } }
+```
+
+- **Root:** `--root` (trusted server configuration). Without it the client's MCP roots are used, and exactly one `file://` root is required. Tool input can never choose the root.
+- **Writes** are prepared without touching anything and committed only after approval. `--write-approval auto` (the default) asks the user through MCP elicitation, showing the plan and every file the write touches, when the client supports it. Otherwise it relies on the client's own tool-call approval. `elicitation` refuses writes without elicitation, `client` always relies on the client, and `deny` makes the server read-only. Every precondition is still rechecked under the locks.
+- Also: `--tool-prefix`, `--journal-version 1|2`, `--compaction-advice SPEC`. Requests and outcomes are logged on stderr.
+
+Compared with the OpenCode adapter, an MCP client approves per tool call (or per elicitation prompt), not through OpenCode's permission engine on exact file paths, and the host version policy and session facts do not apply.
+
 ## OpenCode adapter
 
 Vendor Shiori into your OpenCode configuration directory and build the binary there:

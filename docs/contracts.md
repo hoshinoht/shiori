@@ -12,7 +12,8 @@ stage B findings (reference behaviour the corpus pins down that stage A did not
 spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
 reference; section 19 the host version policy, section 20 the E1
-evidence ledger, section 21 journal v2 and section 22 worktree lanes.
+evidence ledger, section 21 journal v2, section 22 worktree lanes and
+section 23 the MCP server.
 
 ## 1. Sources of truth
 
@@ -1795,3 +1796,37 @@ lane's checkout tree and compared with it while the lane is active, and
 with the project tree afterwards, so lane results go stale until they are
 repeated on the combined state (unless the combined state is identical).
 `shiori evidence --lane L -- COMMAND` runs in the lane checkout.
+
+## 23. MCP server (APPROVED 2026-10-07)
+
+`shiori mcp` exposes the thirteen tools over the Model Context Protocol
+(stdio, JSON-RPC 2.0; revisions 2025-03-26, 2025-06-18 and 2025-11-25,
+newest offered when the client asks for an unknown one). It is a second
+adapter over the same engine, not a new tool surface.
+
+1. **Tools.** Names are the `workplan_*` identities without the prefix
+   (`--tool-prefix` re-adds one); descriptions and input schemas are the
+   adapter's `registration.json`, embedded verbatim
+   (`internal/mcp/registration.json`, kept byte-equal by a test). Read
+   tools and `compact_preview` carry `readOnlyHint`; create, update,
+   reset and compact `destructiveHint`. Results are the exact tool text
+   (`isError` with the core's message on failure); no
+   `structuredContent`, so resume stays within its budget.
+2. **Root.** `--root`, else the client's roots (exactly one `file://`
+   root; re-listed after `notifications/roots/list_changed`). Native
+   input rules apply, so `workspaceRoot` is refused.
+3. **Writes.** Prepared without side effects; approval by elicitation (a
+   form with one boolean, naming the plan, the operation and every path
+   written, deleted or archived) or, by operator choice or when the
+   client lacks elicitation under `auto`, by the client's tool-call
+   approval. No lock or file exists while the prompt is open; a decline
+   or cancellation (`notifications/cancelled`) changes nothing; locked
+   rechecks are unchanged. Writes stay limited to the approved platform
+   matrix (§5.6).
+4. **Doctor** runtime facts: the registered tool names, plugin id
+   `shiori-mcp`, and the client and approval mode as the permission
+   detail; host version facts are absent.
+
+Not yet: MCP 2026-07-28 (stateless requests, multi-round-trip
+elicitation, roots deprecated): `--root` already covers its
+configuration-based root.
