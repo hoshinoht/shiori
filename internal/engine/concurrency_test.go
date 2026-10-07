@@ -38,6 +38,7 @@ func TestMain(m *testing.M) {
 	if f := flag.Lookup("test.bench"); f == nil || f.Value.String() == "" {
 		verifyPostHashes = true
 	}
+	testCacheAll = os.Getenv("SHIORI_TEST_CACHE") == "1"
 	os.Exit(m.Run())
 }
 

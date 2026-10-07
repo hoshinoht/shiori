@@ -61,8 +61,15 @@ func New(root string) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{RequestedRoot: req, Root: canon, Limits: snapshot.DefaultLimits}, nil
+	e := &Engine{RequestedRoot: req, Root: canon, Limits: snapshot.DefaultLimits}
+	if testCacheAll {
+		e.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
+	}
+	return e, nil
 }
+
+// testCacheAll gives every engine a cache (tests: SHIORI_TEST_CACHE=1).
+var testCacheAll = false
 
 func (e *Engine) maxResponse() int {
 	if e.MaxResponseBytes > 0 {

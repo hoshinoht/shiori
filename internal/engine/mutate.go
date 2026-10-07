@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -442,6 +443,39 @@ func (e *Engine) rememberRendered(in *storage.Intent, jsonRel, mdRel string, p *
 	}
 }
 
+// seedPlan puts the plan a write just serialized into the cache under the
+// written bytes' digest, as decoding would yield it (decoding never sets
+// SpecFilesAdded or keeps duplicate members), so the next read does not
+// parse what was just written. Engine tests decode and compare.
+func (e *Engine) seedPlan(in *storage.Intent, jsonRel string, p *model.Plan) {
+	if e.Cache == nil || in == nil {
+		return
+	}
+	for _, t := range in.Targets {
+		if t.Rel != jsonRel || !t.AfterExists {
+			continue
+		}
+		c := asDecoded(p)
+		if verifyPostHashes {
+			parsed, err := ojson.ParseImmutable(t.After)
+			if err != nil {
+				panic(err)
+			}
+			d, err := model.DecodePlan(parsed)
+			if err != nil {
+				panic(err)
+			}
+			if len(d.Duplicates) == 0 {
+				d.Duplicates = nil
+			}
+			if !reflect.DeepEqual(c, d) {
+				panic(fmt.Sprintf("seeded plan differs from decoding the written bytes for %s: %s", p.ID, planDiff(c, d)))
+			}
+		}
+		e.Cache.SeedPlan(t.AfterHash(), len(t.After), c)
+	}
+}
+
 // verifyPostHashes makes postHashes cross-check against a full reload
 // (tests only).
 var verifyPostHashes = false
@@ -554,4 +588,45 @@ func (e *Engine) journalVersion() int {
 		return 1
 	}
 	return 2
+}
+
+// planDiff names the first top-level field where two plans differ.
+func planDiff(a, b *model.Plan) string {
+	va, vb := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
+	for i := 0; i < va.NumField(); i++ {
+		if !reflect.DeepEqual(va.Field(i).Interface(), vb.Field(i).Interface()) {
+			return fmt.Sprintf("%s: %#v vs %#v", va.Type().Field(i).Name, va.Field(i).Interface(), vb.Field(i).Interface())
+		}
+	}
+	return "no top-level field"
+}
+
+// asDecoded is a copy of p shaped as decoding its stored bytes yields it.
+func asDecoded(p *model.Plan) *model.Plan {
+	c := p.Clone()
+	c.HasSpecFiles = c.HasSpecFiles || c.SpecFilesAdded
+	c.SpecFilesAdded = false
+	c.Duplicates = nil
+	for _, l := range []*[]string{&c.Scope, &c.NonGoals, &c.Constraints, &c.RelevantFiles, &c.Notes} {
+		if *l == nil {
+			*l = []string{}
+		}
+	}
+	// The decoder makes string lists non-nil and leaves empty phase,
+	// step and finding lists nil.
+	if c.SpecFiles == nil {
+		c.SpecFiles = []string{}
+	}
+	if len(c.Findings) == 0 {
+		c.Findings = nil
+	}
+	if len(c.Phases) == 0 {
+		c.Phases = nil
+	}
+	for i := range c.Phases {
+		if len(c.Phases[i].Steps) == 0 {
+			c.Phases[i].Steps = nil
+		}
+	}
+	return c
 }

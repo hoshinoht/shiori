@@ -170,3 +170,8 @@ const maxGenerated = 4096
 func GeneratedKey(planSHA, mdSHA, planFile string, specFiles []string) string {
 	return planSHA + "\x00" + mdSHA + "\x00" + planFile + "\x00" + strings.Join(specFiles, "\x00")
 }
+
+// SeedPlan caches the decoded form of JSON bytes the caller just wrote
+// (digest sha), so the next load skips parsing them. p must equal what
+// decoding those bytes yields.
+func (c *Cache) SeedPlan(sha string, jsonSize int, p *model.Plan) { c.putPlan(sha, jsonSize, p) }

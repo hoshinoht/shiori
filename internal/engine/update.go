@@ -453,6 +453,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		if mdRendered {
 			e.rememberRendered(in, s.JSON.Rel, newPF, p)
 		}
+		e.seedPlan(in, s.JSON.Rel, p)
 		summary, planHash, stateHash, err := e.postSummary(s, in, p)
 		if err != nil {
 			return Output{}, err
