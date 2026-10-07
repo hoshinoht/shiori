@@ -31,6 +31,10 @@ jobs:
         run: SHIORI_TEST_CACHE=1 go test -count=1 ./internal/engine
       - name: race
         run: go test -race -count=1 ./...
+      # The adapter tests otherwise build the core inside their first test,
+      # which can exceed bun's 5 s test timeout on a cold build cache.
+      - name: build core for the adapter tests
+        run: CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/shiori" ./cmd/shiori
       - name: adapter
         working-directory: adapter/opencode
-        run: bun test
+        run: SHIORI_BIN="$RUNNER_TEMP/shiori" bun test
