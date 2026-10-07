@@ -24,6 +24,8 @@ sections below keep the full record.
 | D.4.2 | done | `cdcaa24` (pushed) |
 | D.4.3 | done | `8b98602` (pushed) |
 | cleanup | done | `797b983` (pushed) |
+| Linux suites (case-sensitive test pins) | done | `d91a6b6` |
+| E1 X2 evidence ledger | done | see git log |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
@@ -38,11 +40,7 @@ OpenCode. Nothing in
 
 **Queue, in order** (each needs its own owner approval):
 
-1. **E1 — X2 evidence ledger.** Start with a tool-surface proposal for
-   owner approval (spec 06 §1 forbids new or renamed `workplan_*` tools
-   without a decision: e.g. evidence through `workplan_update`/
-   `workplan_checkpoint` inputs vs a new tool), then the
-   `<id>.evidence.json` v1 sidecar, git tree binding and staleness.
+1. ~~E1 — X2 evidence ledger~~ done (see "Stage E1" below).
 2. **E2 — X3 worktree lanes** (needs X2). Proposal first (path-claim
    trie, lane state machine, baseline fingerprint, merge train; spec 04).
 3. **Measured performance stage** (all still to-review in spec 06): X8
@@ -1691,6 +1689,47 @@ protocol, schemas and adapter registration are unchanged.
   `--compaction-advice off`, or restate the expectation independently.
 - Comments keep the why and drop stage and section references;
   user-visible strings (help text, flag usage, version) are unchanged.
+
+## Stage E1 — evidence ledger (X2): DONE
+
+Contracts §20. Evidence goes in through `workplan_update.recordEvidence`
+(no new tool) and `shiori evidence`, into `<id>.evidence.json`, outside
+the state manifest.
+
+### Changes
+
+- `internal/evidence`: ledger format, decode/encode, retention, states and
+  the git tree snapshot (copied index, private empty object directory, no
+  alternates; `--literal-pathspecs`, no inherited `GIT_*`).
+- Engine: classification (`evidence`), evidence-only updates, completion
+  warnings, journal kind `evidence` for `update`, inspect/doctor/resume
+  members. Resume tries its advisory members in order evidence, compaction.
+- CLI `shiori evidence` (asserted, or `-- COMMAND` run with the tree pinned
+  before the run). Schema `evidence-v1`, `recordEvidence` in the update
+  schema, adapter registration key `e1`.
+
+### Evidence (linux/amd64, Go 1.27.1, git 2.43.0)
+
+- `go vet ./...`, `go test -count=1 ./...`, adapter `bun test` (58 pass,
+  1 skip) pass; no corpus vector changed.
+- New tests: `internal/evidence` (round trip, decode issues, retention,
+  states, subdirectory roots), `internal/engine/evidence_test.go` (hashes
+  unchanged, scope staleness, `.git` byte/mtime fingerprint unchanged, no
+  git, invalid ledger, warnings, refusals, crash recovery both ways),
+  protocol (native source `agent`), schema/parser agreement.
+- Owner plan `kanade-v5-roadmap` (286 KB, 73 steps) in a scratch git copy:
+  resume 43 ms, inspect 25 ms, doctor 37 ms with a ledger (about 20 ms
+  of git); resume still fits 12 000 with the member.
+
+### Owner decisions to review (E1)
+
+1. Completion is warned, not gated. A trusted `--evidence-gate` flag could
+   refuse completing a step without fresh evidence.
+2. Native evidence is `agent`-asserted. Host-captured evidence (the adapter
+   recording the exit code of the bash tool it observed) is the
+   trustworthy next step.
+3. Without `scope`, any change outside `.opencode/workplan` makes evidence
+   stale; X3 path claims would supply scopes automatically.
 
 ## Resume after maintenance
 

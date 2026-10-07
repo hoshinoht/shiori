@@ -13,6 +13,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/testutil"
@@ -220,6 +221,91 @@ func TestCheckpointMergeSchemaAgreesWithParser(t *testing.T) {
 		}
 		if _, err := input.ParseMutationInput("checkpoint", v.Value, input.SurfaceNative); (err == nil) != want {
 			t.Errorf("parser %s: ok=%v want %v (%v)", in, err == nil, want, err)
+		}
+	}
+}
+
+// TestRecordEvidenceSchemaAgreesWithParser: the native update schema and
+// the Go parser accept the same recordEvidence shapes (spec 06 X2).
+func TestRecordEvidenceSchemaAgreesWithParser(t *testing.T) {
+	c := compiler(t)
+	s, err := c.Compile(idBase + "tools/workplan_update.input.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := `"expectedHash":"` + strings.Repeat("a", 64) + `"`
+	rec := func(extra string) string {
+		return `{"id":"p",` + h + `,"recordEvidence":[{"phaseId":"a","stepId":"b","command":"go test ./...","exitCode":0` + extra + `}]}`
+	}
+	cases := map[string]bool{
+		rec(``):               true,
+		rec(`,"output":"ok"`): true,
+		rec(`,"outputDigest":"` + strings.Repeat("b", 64) + `"`):                                            true,
+		rec(`,"output":"ok","outputDigest":"` + strings.Repeat("b", 64) + `"`):                              false,
+		rec(`,"outputDigest":"xyz"`):                                                                        false,
+		rec(`,"summary":"13 packages ok","scope":["internal/engine","go.mod"]`):                             true,
+		rec(`,"summary":"` + strings.Repeat("s", 501) + `"`):                                                false,
+		rec(`,"scope":"internal"`):                                                                          false,
+		rec(`,"exitCode2":1`):                                                                               false,
+		rec(`,"recordedAt":"2026-01-01T00:00:00Z"`):                                                         false,
+		`{"id":"p",` + h + `,"recordEvidence":[{"phaseId":"a","stepId":"b","command":"x","exitCode":1.5}]}`: false,
+		`{"id":"p",` + h + `,"recordEvidence":[{"phaseId":"a","stepId":"b","command":" ","exitCode":0}]}`:   false,
+		`{"id":"p",` + h + `,"recordEvidence":[{"phaseId":"a","stepId":"b","exitCode":0}]}`:                 false,
+		`{"id":"p",` + h + `,"recordEvidence":[{"phaseId":"a","stepId":"b","command":"x","exitCode":-1}]}`:  true,
+		`{"id":"p",` + h + `,"recordEvidence":[]}`:                                                          true,
+		`{"id":"p",` + h + `,"recovery":"resume","recordEvidence":[]}`:                                      false,
+		`{"id":"p",` + h + `,"recordEvidence":[` + strings.Repeat(`{"phaseId":"a","stepId":"b","command":"x","exitCode":0},`, 20) + `{"phaseId":"a","stepId":"b","command":"x","exitCode":0}]}`: false,
+	}
+	for in, want := range cases {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Validate(inst) == nil; got != want {
+			t.Errorf("schema %s: ok=%v want %v", in, got, want)
+		}
+		v, err := ojson.Parse([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := input.ParseMutationInput("update", v.Value, input.SurfaceNative); (err == nil) != want {
+			t.Errorf("parser %s: ok=%v want %v (%v)", in, err == nil, want, err)
+		}
+	}
+}
+
+// TestEvidenceSchemaAgreesWithDecoder: the ledger the Go writer encodes
+// validates, and shape errors are rejected by both.
+func TestEvidenceSchemaAgreesWithDecoder(t *testing.T) {
+	c := compiler(t)
+	s, err := c.Compile(idBase + "evidence-v1.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := strings.Repeat("d", 64)
+	l := &evidence.Ledger{ID: "p", UpdatedAt: "2026-01-02T03:04:05Z", Records: []evidence.Record{
+		{PhaseID: "a", StepID: "b", Command: "go test", ExitCode: 1, OutputDigest: &d, TreeOID: nil,
+			Scope: []evidence.ScopeEntry{{Path: "src", Digest: &d}, {Path: "x"}}, Source: evidence.SourceCLI, RecordedAt: "2026-01-02T03:04:05Z"},
+	}}
+	good := string(evidence.Encode(l))
+	cases := map[string]bool{
+		good: true,
+		strings.Replace(good, `"source": "cli"`, `"source": "model"`, 1):     false,
+		strings.Replace(good, `"exitCode": 1`, `"exitCode": 1.5`, 1):         false,
+		strings.Replace(good, `"treeOid": null`, `"treeOid": "abc"`, 1):      false,
+		strings.Replace(good, `"schemaVersion": 1`, `"schemaVersion": 2`, 1): false,
+	}
+	for in, want := range cases {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Validate(inst) == nil; got != want {
+			t.Errorf("schema ok=%v want %v:\n%s", got, want, in)
+		}
+		v, _ := ojson.Parse([]byte(in))
+		if _, issues := evidence.Decode(v.Value); (len(issues) == 0) != want {
+			t.Errorf("decoder ok=%v want %v (%v)", len(issues) == 0, want, issues)
 		}
 	}
 }

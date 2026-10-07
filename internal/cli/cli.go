@@ -53,6 +53,10 @@ Mutating commands (print the prepared intent, then require confirmation):
   compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I
                              | --rollover [--keep-notes N] [--pin-note I]...]
                              --preview-token T --confirm ARCHIVE_SELECTED_HISTORY
+  evidence <id>              --phase P --step S --expected-hash H [--scope PATH]... [--summary S]
+                             (-- COMMAND [ARGS...] | --command C --exit-code N [--output-file F])
+                             records evidence for a step (spec 06 X2); with -- COMMAND it runs
+                             the command in the root and records its exit code and output digest
   serve --stdio              Native adapter protocol on stdin/stdout (JSON lines;
                              prepare -> host authorization -> commit; idle exit)
   version                    Print the version
@@ -98,6 +102,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "serve":
 		return runServe(rest, os.Stdin, stdout, stderr)
+	case "evidence":
+		return runEvidence(rest, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {

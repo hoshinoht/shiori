@@ -69,9 +69,16 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1 and D.4.3 changes", () => {
+  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1, D.4.3 and E1 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
+    // E1 (contracts §20): workplan_update recordEvidence.
+    expect(reg.e1.additions).toEqual([{ tool: "workplan_update", property: "recordEvidence" }]);
+    const rec = reg.tools.find((t: any) => t.name === "workplan_update").input.properties.recordEvidence;
+    expect(rec.items.required).toEqual(["phaseId", "stepId", "command", "exitCode"]);
+    expect(rec.items.additionalProperties).toBe(false);
+    for (const a of reg.e1.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    delete reg.e1;
     // D.4.3 (contracts §18): workplan_checkpoint merge mode. Its changes are
     // undone first, so the D.4.1 checks below see the D.4.1 text.
     expect(reg.d4_3.additions).toEqual([{ tool: "workplan_checkpoint", property: "merge" }, { tool: "workplan_checkpoint", property: "appendValidation" }]);

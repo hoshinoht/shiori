@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
@@ -348,23 +349,29 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
+	e.EvidenceSource = evidence.SourceCLI
+	return execMutation(e, cmd, toolIn, *yes, *jsonOut, stdout, stderr)
+}
+
+// execMutation parses, prepares, authorizes and commits one mutation.
+func execMutation(e *engine.Engine, cmd string, toolIn ojson.Value, yes, jsonOut bool, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	data, err := input.ParseMutationInput(cmd, toolIn, input.SurfaceCore)
 	if err != nil {
-		return fail(stdout, stderr, *jsonOut, err)
+		return fail(stdout, stderr, jsonOut, err)
 	}
 	prep, err := e.Prepare(cmd, data)
 	if err != nil {
-		return fail(stdout, stderr, *jsonOut, err)
+		return fail(stdout, stderr, jsonOut, err)
 	}
-	auth := &CLIAuthorizer{Yes: *yes, TTY: IsTerminal(), In: Stdin, Out: stderr}
+	auth := &CLIAuthorizer{Yes: yes, TTY: IsTerminal(), In: Stdin, Out: stderr}
 	out, err := e.Execute(ctx, prep, auth, engine.ExecOptions{})
 	if err != nil {
-		return fail(stdout, stderr, *jsonOut, err)
+		return fail(stdout, stderr, jsonOut, err)
 	}
 	if out.Text != "" {
-		if *jsonOut {
+		if jsonOut {
 			fmt.Fprintln(stdout, string(ojson.Pretty(ojson.NewObject(2).Set("output", ojson.StringValue(out.Text)).Set("metadata", out.Metadata).Value())))
 		} else {
 			fmt.Fprintln(stdout, out.Text)

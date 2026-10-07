@@ -136,6 +136,7 @@ type Packet struct {
 	CurrentDeps         []model.StepRef
 	Critical            *Critical
 	Compaction          *ojson.Value // compact compaction advice
+	Evidence            *ojson.Value // compact evidence advice
 	High                []Finding
 	HighCounts          [3]int
 	Warnings            []string
@@ -479,6 +480,9 @@ func (m *Packet) build(pr params) ojson.Value {
 	}
 	if m.Compaction != nil {
 		out.Set("compactionRecommended", *m.Compaction)
+	}
+	if m.Evidence != nil {
+		out.Set("evidence", *m.Evidence)
 	}
 	return out.
 		Set("safety", safety).

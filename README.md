@@ -58,6 +58,11 @@
 - **Rollover:** `compact --rollover` archives notes older than the latest N, keeping pinned notes, decisions, notes about open work and recent archive pointers. The archive keeps the complete originals.
 - **Tunable:** `--compaction-advice off|min-savings-kib=N,notes=N,terminal-percent=N,plan-kib=N,keep-notes=N` on `resume`, `doctor` and `serve`.
 
+### Evidence ledger
+- **Checkable completion:** `update --input '{"recordEvidence":[...]}'` (or the `recordEvidence` tool member) records the command run for a step, its exit code and an output digest in `<id>.evidence.json`, bound to the git tree of the working state. Recording evidence alone leaves the plan and its hashes unchanged.
+- **Staleness:** `inspect`, `resume` and `doctor` show each step as `fresh`, `stale` (the code changed since, optionally only within `scope` paths), `failing` or `unknown`. Completing a step without fresh evidence warns once a plan uses the ledger.
+- **Run and record:** `shiori evidence my-plan --phase P --step S --expected-hash H -- go test ./...` runs the command and records its real result. The git tree is computed on a private index and object store; the repository is never written.
+
 ### OpenCode adapter
 - **13 `workplan_*` tools** with the same names, argument shapes, result text and role matrix as the TypeScript plugin they replace, served by a lazily started `shiori serve --stdio` child.
 - **Host permission bridge:** the adapter proves the host instance, asks the host's permission engine for `edit` on the exact canonical resources of each prepared intent, and commits only after an allow or a genuine user reply. It never answers permissions or edits rules itself.
@@ -97,6 +102,10 @@ shiori checkpoint my-plan --expected-hash "$H" --summary "Plan created" \
 # checkpoint replaces the whole checkpoint; --merge keeps every field you omit
 H=$(shiori read my-plan --json --no-markdown | jq -r .stateHash)
 shiori checkpoint my-plan --expected-hash "$H" --merge --append-validation "go test ./... passed"
+
+# record evidence: runs the command, binds it to the current git tree (stateHash stays the same)
+H=$(shiori read my-plan --json --no-markdown | jq -r .stateHash)
+shiori evidence my-plan --phase build --step write-the-api --expected-hash "$H" --scope src -- go test ./...
 
 # 3. Read: never prompts, writes, locks or changes an mtime
 shiori list

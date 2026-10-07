@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -77,6 +78,16 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	}
 	dv := e.dependencies(s, ix)
 	g := e.graph(ix, dv)
+	ev, err := e.loadEvidence(id)
+	if err != nil {
+		return ojson.Value{}, err
+	}
+	var evViews map[model.StepRef]*evidence.StepView
+	var evCur evidence.Current
+	if ev.ledger != nil {
+		evCur = e.currentTree(ev.ledger, nil)
+		evViews = ev.ledger.Views(evCur)
+	}
 	phases := []ojson.Value{}
 	steps := []ojson.Value{}
 	for _, it := range items[offset:end] {
@@ -116,6 +127,13 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 		if g != nil {
 			inspectGraphMembers(sb, g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})
 		}
+		if evViews != nil {
+			if v := evViews[model.StepRef{PhaseID: ph.ID, StepID: st.ID}]; v != nil {
+				sb.Set("evidence", v.Value())
+			} else {
+				sb.Set("evidence", ojson.NewObject(1).Set("state", ojson.StringValue(evidence.StateNone)).Value())
+			}
+		}
 		steps = append(steps, sb.Value())
 	}
 	next := ojson.NullValue()
@@ -137,6 +155,17 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	// page), only when it chains at least two open steps.
 	if cp, ok := criticalPathValue(g); ok {
 		out.Set("criticalPath", cp)
+	}
+	if ev.exists {
+		eb := ojson.NewObject(4).
+			Set("path", ojson.StringValue(ev.rel)).
+			Set("valid", ojson.BoolValue(ev.ledger != nil))
+		if ev.ledger == nil {
+			eb.Set("issues", ojson.StringsValue(ev.issues))
+		} else {
+			eb.Set("tree", evCur.TreeValue())
+		}
+		out.Set("evidence", eb.Value())
 	}
 	return out.
 		Set("pagination", ojson.NewObject(5).

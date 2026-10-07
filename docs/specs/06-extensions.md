@@ -57,6 +57,11 @@ index. Evidence is stale when files owned by the step changed after `treeOid`.
 Plan hashes are not code fingerprints (01 §7); this adds the missing code-side
 binding. `metric-loop` results can be imported as evidence.
 
+**Status: implemented in stage E1** (2026-10-07,
+[contracts §20](../contracts.md#20-approved-design-changes-e1-approved-2026-10-07)).
+Evidence enters through `workplan_update.recordEvidence` (no new tool) and
+`shiori evidence`; scope paths stand in for step ownership until X3.
+
 ### X3 — Worktree lanes, concrete structures
 
 - **Path-claim trie:** owned paths and globs per lane in a prefix tree with
@@ -241,7 +246,7 @@ stage it attaches to. Record decisions here with a date.
 | ID | Decision | Date | Notes |
 | --- | --- | --- | --- |
 | X1 | to-review | | |
-| X2 | accepted | 2026-09-30 | stage E1, after D.4 |
+| X2 | accepted, implemented | 2026-10-07 | stage E1 (contracts §20) |
 | X3 | accepted | 2026-09-30 | stage E2, after E1 (needs X2) |
 | X4 | to-review | | |
 | X5 | to-review | | |

@@ -787,6 +787,65 @@
                 "dependsOn"
               ]
             }
+          },
+          "recordEvidence": {
+            "description": "Append evidence for steps: the command you ran, its exit code and its output (only a sha256 is kept). Shiori binds it to the current git working tree; inspect/resume/doctor show whether it is still fresh. With only id, expectedHash and recordEvidence the plan and its hashes stay unchanged",
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "phaseId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stepId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "command": {
+                  "description": "The command as run",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "exitCode": {
+                  "description": "Its exit code; 0 passes",
+                  "type": "integer",
+                  "minimum": -2147483648,
+                  "maximum": 2147483647
+                },
+                "output": {
+                  "description": "Its output (hashed, not stored); or pass outputDigest",
+                  "type": "string"
+                },
+                "outputDigest": {
+                  "description": "sha256 of the output",
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "summary": {
+                  "description": "One-line result",
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "scope": {
+                  "description": "Project-relative paths this evidence covers; it goes stale only when they change (default: the whole project outside .opencode/workplan)",
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "phaseId",
+                "stepId",
+                "command",
+                "exitCode"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -1491,6 +1550,15 @@
           "summary",
           "nextAction"
         ]
+      }
+    ]
+  },
+  "e1": {
+    "note": "Approved design change E1 (docs/contracts.md §20, 2026-10-07): the evidence ledger (spec 06 X2). Removing the listed additions, then applying the d4_3/d4_1/d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    "additions": [
+      {
+        "tool": "workplan_update",
+        "property": "recordEvidence"
       }
     ]
   }

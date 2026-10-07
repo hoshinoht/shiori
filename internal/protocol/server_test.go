@@ -1220,3 +1220,34 @@ func TestCheckpointMergeAndWithheldGuards(t *testing.T) {
 		t.Fatalf("warnings %v (%v)", out.Warnings, c)
 	}
 }
+
+func TestNativeEvidenceIsRecordedAsAgent(t *testing.T) {
+	root := fixtureRoot(t, "full-valid")
+	h := start(t, Options{})
+	h.handshake()
+	id := "full-plan"
+	hash := readHash(t, h, root, id)
+	plan, _ := os.ReadFile(filepath.Join(root, ".opencode/workplan", id+".json"))
+	var doc struct {
+		Phases []struct {
+			ID    string `json:"id"`
+			Steps []struct {
+				ID string `json:"id"`
+			} `json:"steps"`
+		} `json:"phases"`
+	}
+	json.Unmarshal(plan, &doc)
+	rec := map[string]any{"phaseId": doc.Phases[0].ID, "stepId": doc.Phases[0].Steps[0].ID, "command": "make test", "exitCode": 0, "output": "ok"}
+	p := h.call("p", "workplan_update", root, map[string]any{"id": id, "expectedHash": hash, "recordEvidence": []any{rec}}).obj("prepared")
+	if p == nil {
+		t.Fatal("not prepared")
+	}
+	c := h.call("c", "shiori.commit", root, commitInput(p))
+	if !c.ok() || c.obj("hashes").str("stateHash") != hash {
+		t.Fatalf("commit: %v", c)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".opencode/workplan", id+".evidence.json"))
+	if err != nil || !strings.Contains(string(data), `"source": "agent"`) {
+		t.Fatalf("ledger %s %v", data, err)
+	}
+}

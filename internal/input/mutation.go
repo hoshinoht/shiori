@@ -75,6 +75,13 @@ var (
 	addPhaseSpec    = &ospec{fields: []fspec{str("afterPhaseId"), {key: "phase", kind: kObject, required: true, obj: phaseSpec}}}
 	updateStepSpec  = &ospec{fields: []fspec{reqStr("phaseId"), reqStr("stepId"), str("title"), str("target"), str("action"), str("validation"), enum("status", statusEnum)}}
 	addStepSpec     = &ospec{fields: []fspec{reqStr("phaseId"), str("afterStepId"), {key: "step", kind: kObject, required: true, obj: stepSpec}}}
+	// One evidence record (spec 06 X2).
+	evidenceSpec = &ospec{fields: []fspec{
+		{key: "phaseId", kind: kNonblank, required: true}, {key: "stepId", kind: kNonblank, required: true},
+		{key: "command", kind: kNonblank, required: true},
+		required(intRange("exitCode", -2147483648, 2147483647)),
+		str("output"), hash("outputDigest"), str("summary"), strList("scope"),
+	}}
 	// The note rollover selector.
 	rolloverSpec = &ospec{fields: []fspec{intRange("keepLatest", 1, advisor.MaxRolloverKeep), intList("pinNoteIndexes")}}
 )
@@ -103,6 +110,7 @@ var toolSpecs = map[string]*ospec{
 		strList("addRelevantFiles"), strList("addSpecFiles"), strList("removeSpecFiles"),
 		objList("addReviewFindings", findingSpec), strList("appendNotes"),
 		objList("dependencies", depSpec),
+		objList("recordEvidence", evidenceSpec),
 	}},
 	"patch": {fields: []fspec{{key: "id", kind: kID, required: true}, reqStr("patchText"), boolean("validate"), hash("expectedHash")}},
 	"reset": {fields: []fspec{
@@ -480,6 +488,7 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 				break
 			}
 		}
+		refineEvidence(data, l)
 	case "patch", "reset", "checkpoint":
 		if native && !has("expectedHash") {
 			l.add([]string{"expectedHash"}, msgNativeHash)
@@ -545,4 +554,42 @@ func withheldPlaceholder(s string) bool {
 // contains no "; " so the issue list stays separable.
 func msgWithheldPlaceholder(field string) string {
 	return "Checkpoint " + field + " starts with null/undefined, which is how workplan_resume shows a withheld field of a stale or legacy checkpoint, not its value — read the stored checkpoint first (the file named in the resume instruction), or pass merge=true and omit " + field + " to keep the stored value"
+}
+
+// Evidence record limits (UTF-16 code units).
+const (
+	MaxEvidenceRecords = 20
+	MaxEvidenceCommand = 2000
+	MaxEvidenceSummary = 500
+	MaxEvidenceScope   = 50
+)
+
+const msgEvidenceOutput = "output and outputDigest are mutually exclusive; pass the output text or its sha256"
+
+// refineEvidence applies the recordEvidence size and exclusivity rules.
+func refineEvidence(data ojson.Value, l *issueList) {
+	rv, ok := data.Get("recordEvidence")
+	if !ok {
+		return
+	}
+	if n := len(rv.Elems()); n > MaxEvidenceRecords {
+		l.add([]string{"recordEvidence"}, "Too big: expected array to have <="+strconv.Itoa(MaxEvidenceRecords)+" items")
+	}
+	for i, e := range rv.Elems() {
+		at := []string{"recordEvidence", strconv.Itoa(i)}
+		if c, _ := e.Get("command"); ojson.UTF16Len(c.Str()) > MaxEvidenceCommand {
+			l.add(append(at, "command"), "Too big: expected string to have <="+strconv.Itoa(MaxEvidenceCommand)+" characters")
+		}
+		if sm, ok := e.Get("summary"); ok && ojson.UTF16Len(sm.Str()) > MaxEvidenceSummary {
+			l.add(append(at, "summary"), "Too big: expected string to have <="+strconv.Itoa(MaxEvidenceSummary)+" characters")
+		}
+		if sc, ok := e.Get("scope"); ok && len(sc.Elems()) > MaxEvidenceScope {
+			l.add(append(at, "scope"), "Too big: expected array to have <="+strconv.Itoa(MaxEvidenceScope)+" items")
+		}
+		_, out := e.Get("output")
+		_, dig := e.Get("outputDigest")
+		if out && dig {
+			l.add(append(at, "output"), msgEvidenceOutput)
+		}
+	}
 }

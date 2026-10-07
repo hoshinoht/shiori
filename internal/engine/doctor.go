@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -260,6 +261,8 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 			suffix = ".checkpoint.json"
 		case kindDependencies:
 			suffix = ".dependencies.json"
+		case kindEvidence:
+			suffix = evidence.Suffix
 		default:
 			continue
 		}
@@ -408,6 +411,10 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	// nothing is archived.
 	if a := e.compactionAdvice(s, cv.freshness, true); a != nil {
 		b.Set("compactionRecommended", a.DetailValue(p.ID))
+	}
+	// An invalid ledger never makes the plan invalid.
+	if ev, err := e.loadEvidence(p.ID); err == nil && ev.exists {
+		b.Set("evidence", e.doctorEvidence(p, ev))
 	}
 	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }

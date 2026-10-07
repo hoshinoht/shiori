@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/advisor"
+	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -31,6 +32,11 @@ type Engine struct {
 	// defaults). Set by the trusted caller (CLI or serve flag), never by
 	// model input.
 	Compaction *advisor.Thresholds
+
+	// EvidenceSource and EvidenceTree are set by the trusted caller: the
+	// record source ("agent" when empty) and a tree pinned before a run.
+	EvidenceSource string
+	EvidenceTree   *evidence.Tree
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.

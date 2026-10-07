@@ -129,8 +129,7 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 		t.Fatalf("listed in %s but failed: %v", testutil.ExpectedFile, runErr)
 	}
 	if v.caseAdapted && strings.Contains(v.ID, "/UPPER--") {
-		// A case-sensitive lookup never opens the plan, so no raw
-		// bytes are reported for it.
+		// The plan is never opened, so it has no raw hashes.
 		x.Compare = slices.DeleteFunc(slices.Clone(x.Compare), func(c string) bool { return c == "raw-hashes" })
 	}
 	judgeListed(t, v, root, e, in.Value, text, x)
@@ -148,10 +147,8 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 	return outDifference, v.ID + ": " + x.Reason + " (" + x.Contracts + ")"
 }
 
-// adaptCaseLookup rewrites a vector's APFS-only oracle for a
-// case-sensitive filesystem (testutil.AdaptCaseLookup). The recorded
-// hash is recomputed from the rewritten text; raw lengths and the pins
-// of Go output recorded on APFS no longer apply.
+// adaptCaseLookup rewrites an APFS-only oracle for a case-sensitive
+// filesystem and recomputes its hash.
 func adaptCaseLookup(v *vector) {
 	msg, a := testutil.AdaptCaseLookup(v.Fixture, v.Expect.Message)
 	out, b := testutil.AdaptCaseLookup(v.Fixture, string(v.Expect.Output))

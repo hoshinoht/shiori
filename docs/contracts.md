@@ -11,7 +11,8 @@ section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
 spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
-reference.
+reference; section 19 the host version policy and section 20 the E1
+evidence ledger.
 
 ## 1. Sources of truth
 
@@ -1632,3 +1633,71 @@ Nothing is committed. Gates, in order:
 3. The live runtime smoke test against an installed binary of exactly that
    version (`OPENCODE_BIN`, Homebrew, or the desktop app's bundled CLI),
    on `testdata/fixtures/full-valid` unless `SHIORI_SMOKE_FIXTURE` is set.
+
+## 20. Approved design changes E1 (APPROVED 2026-10-07)
+
+E1: the evidence ledger (spec 06 X2). Everything else stays as in
+sections 1–19: no V2 plan field, no new or renamed tool, the same hashes
+and generated Markdown. The only input change is the optional
+`recordEvidence` member of `workplan_update`. No corpus vector changes:
+every new output member appears only for a plan that has a ledger.
+
+**1. Sidecar.** `.opencode/workplan/<id>.evidence.json`, schema
+[`evidence-v1`](../schema/v1/evidence-v1.schema.json): `{schemaVersion: 1,
+id, updatedAt, records[]}`, each record `{phaseId, stepId, command,
+exitCode, outputDigest|null, summary?, treeOid|null, scope?: [{path,
+digest|null}], source, recordedAt}`. It is classified (`evidence`) and
+never listed as a plan; one without a primary plan is an
+`orphaned-sidecar` stray. It is **not** in the state manifest, so writing
+it changes neither `planHash` nor `stateHash`. Retention: the newest 5
+records per (step, command) and 2000 overall.
+
+**2. Tree binding.** `treeOid` is the git tree of the project root's
+working state: tracked files with uncommitted changes plus untracked,
+non-ignored files, without `.opencode/workplan`. Shiori computes it with
+git on a copy of the index and a private, empty object directory with no
+alternates, so the repository (index, objects, refs and their mtimes) is
+only read. A scope entry's `digest` is the sha256 of `git ls-files -s -z
+-- <path>` in that tree (null when the path has no entries). Outside a
+git work tree `treeOid` is null. Filter drivers (for example LFS clean)
+still run as on `git add`.
+
+**3. States.** Per (step, command), the latest record: `failing` (non-zero
+exit), else `stale` (scope digests, or without a scope the tree, differ
+from now), `unknown` (no tree now or then), `fresh`. A step's state is its
+worst command; `none` without records.
+
+**4. `recordEvidence`** (max 20 items): `phaseId`, `stepId`, `command`
+(nonblank, ≤ 2000), `exitCode` (32-bit integer), `output` (only its
+sha256 is stored) or `outputDigest`, `summary` (≤ 500), `scope` (≤ 50
+project-relative paths, never under `.opencode/workplan`). Steps must
+exist after the update. `source` comes from the surface: `agent` (native),
+`cli`, or `cli-run` (`shiori evidence ... -- COMMAND`, which runs the
+command in the root, binds the tree from before the run and records the
+real exit code and output digest). An update carrying only
+`recordEvidence` writes the ledger alone (plan JSON, `updatedAt`,
+Markdown and hashes unchanged). A ledger that does not decode is never
+overwritten: recording is refused. The ledger is an `update` journal
+target, so recovery resumes or rolls it back like any other.
+
+**5. Read surfaces** (only when the ledger exists): `workplan_inspect`
+adds `evidence {path, valid, tree|issues}` and a per-step `evidence
+{state, commands[]}`; `workplan_doctor` adds per plan `evidence {path,
+valid, records, tree, steps, completedUnverified {count, steps},
+orphanRecords?}` (an invalid ledger never makes the plan invalid);
+`workplan_resume` adds compact `evidence {steps, completedUnverified,
+current}` under the same no-page-cost rule as the compaction advice
+(evidence first).
+
+**6. Completion warnings.** When an update completes steps of a plan that
+has a ledger (or records evidence in the same call), each completed step
+whose evidence is not `fresh` gets a non-failing warning. Completion is
+not gated.
+
+**Rollback.** The reference plugin lists `<id>.evidence.json` as an
+invalid primary plan (`<id>.evidence`) and does not recognise a pending
+journal that targets it; resolve journals before switching back.
+
+Schema: `workplan_update.input.schema.json` adds `recordEvidence`. The
+adapter registration (`registration.json`, key `e1`) lists the addition;
+removing it before the d4_3…d1 reversal reproduces the reference snapshot.

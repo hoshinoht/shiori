@@ -70,27 +70,28 @@ func TargetPage(maxChars, limit int) int {
 // advisory (the detail stays in inspect/doctor), so it is dropped before
 // any text goes below the readability minimums.
 //
-// The compaction advice never costs page content: the packet is first
-// chosen without it, and the advice is added only when the packet with it
-// has the same degradation level (page items, compact form and every text
-// cap) as the packet without it (the chosen level rendered with the
-// advice still fits MaxChars); otherwise it is omitted (doctor keeps the
-// full advice).
+// Advisory members (evidence, then compaction advice) never cost page
+// content: each is added only if the chosen level still fits with it.
 func (m *Packet) Render() (ojson.Value, string, error) {
-	adv := m.Compaction
-	m.Compaction = nil
+	advisory := []**ojson.Value{&m.Evidence, &m.Compaction}
+	held := make([]*ojson.Value, len(advisory))
+	for i, a := range advisory {
+		held[i], *a = *a, nil
+	}
 	v, text, pr, ok := m.chooseReadable()
 	if !ok {
 		return m.chooseEmergency()
 	}
-	if adv != nil {
-		// The same level with the advice: identical to the chosen packet
-		// plus the member, kept only when it still fits.
-		m.Compaction = adv
-		if av, ab := m.encode(pr); ojson.UTF16LenBytes(ab) <= m.MaxChars {
-			return av, string(ab), nil
+	for i, a := range advisory {
+		if held[i] == nil {
+			continue
 		}
-		m.Compaction = nil
+		*a = held[i]
+		if av, ab := m.encode(pr); ojson.UTF16LenBytes(ab) <= m.MaxChars {
+			v, text = av, string(ab)
+			continue
+		}
+		*a = nil
 	}
 	return v, text, nil
 }

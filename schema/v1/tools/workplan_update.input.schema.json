@@ -493,6 +493,75 @@
           "dependsOn"
         ]
       }
+    },
+    "recordEvidence": {
+      "description": "Append evidence records (spec 06 X2) to <id>.evidence.json: the command run for a step, its exit code and an output digest. Shiori binds each record to the current git working tree; staleness is computed on read. An update with only recordEvidence writes the ledger alone and leaves planHash/stateHash unchanged.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "phaseId": {
+            "description": "Phase of the step the evidence is for.",
+            "$ref": "../common.schema.json#/$defs/nonblank"
+          },
+          "stepId": {
+            "description": "The step the evidence is for.",
+            "$ref": "../common.schema.json#/$defs/nonblank"
+          },
+          "command": {
+            "description": "The command that was run, as run (max 2000 UTF-16 code units).",
+            "allOf": [
+              {
+                "$ref": "../common.schema.json#/$defs/nonblank"
+              },
+              {
+                "maxLength": 2000
+              }
+            ]
+          },
+          "exitCode": {
+            "description": "Its exit code; 0 is passing.",
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "output": {
+            "description": "The command output; only its sha256 is stored. Exclusive with outputDigest.",
+            "type": "string"
+          },
+          "outputDigest": {
+            "description": "sha256 of the output, when the output itself is not passed.",
+            "$ref": "../common.schema.json#/$defs/hash"
+          },
+          "summary": {
+            "description": "One-line result summary (max 500).",
+            "type": "string",
+            "maxLength": 500
+          },
+          "scope": {
+            "description": "Project-relative paths the evidence covers; it goes stale only when one of them changes (default: the whole project tree outside .opencode/workplan).",
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "phaseId",
+          "stepId",
+          "command",
+          "exitCode"
+        ],
+        "additionalProperties": false,
+        "not": {
+          "required": [
+            "output",
+            "outputDigest"
+          ]
+        }
+      }
     }
   },
   "required": [
@@ -534,6 +603,17 @@
       "path": "recovery",
       "native": "recovery is mutually exclusive with ordinary update fields",
       "core": "recovery is mutually exclusive with ordinary update fields"
+    },
+    {
+      "when": "a recordEvidence item has both output and outputDigest",
+      "path": "recordEvidence.<i>.output",
+      "native": "output and outputDigest are mutually exclusive; pass the output text or its sha256",
+      "core": "output and outputDigest are mutually exclusive; pass the output text or its sha256"
+    },
+    {
+      "when": "a recordEvidence step or scope does not resolve (engine)",
+      "path": "recordEvidence",
+      "native": "Phase not found / Step not found in phase <phaseId>: <stepId>; scope paths must be inside the workspace root and outside .opencode/workplan"
     }
   ],
   "x-shiori-core-surface": "The standalone CLI/core surface additionally accepts optional 'workspaceRoot' (string); the native surface rejects it as an unrecognized key. The allOf conditions are native-surface rules; the core surface keeps expectedHash optional for legacy direct calls (a concurrent change must still be detected), and uses the 'core' messages in x-shiori-rules.",

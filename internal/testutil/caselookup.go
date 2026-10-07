@@ -8,10 +8,8 @@ import (
 	"sync"
 )
 
-// The corpus was generated on APFS, where `UPPER` normalizes to `upper`
-// and the lookup opens `UPPER.json` anyway. On a case-sensitive
-// filesystem the same call reports the plan as missing (contracts §10,
-// "Case-insensitive lookup is inherited from the filesystem").
+// The corpus was recorded on APFS, where `UPPER` opens `UPPER.json`; a
+// case-sensitive filesystem reports it missing (contracts §10).
 const (
 	caseLookupFixture = "list-mixed"
 	caseLookupMissing = "Workplan file not found: $ROOT/.opencode/workplan/upper.json"
@@ -23,8 +21,7 @@ var (
 	caseOracleMsg string
 )
 
-// CaseSensitive reports whether the fixture filesystem (where NewRoot
-// materialises roots) distinguishes names by case.
+// CaseSensitive reports whether NewRoot's filesystem is case-sensitive.
 func CaseSensitive() bool {
 	caseOnce.Do(func() {
 		base := "/private/tmp"
@@ -54,11 +51,8 @@ func CaseSensitive() bool {
 	return caseSensitive
 }
 
-// AdaptCaseLookup rewrites oracle text recorded on APFS for a fixture
-// into what a case-sensitive filesystem reports: the `UPPER` plan lookup
-// becomes "not found". Both the plain message and its JSON-escaped form
-// (inside recorded output documents) are rewritten. It reports whether
-// anything changed; on a case-insensitive filesystem it never does.
+// AdaptCaseLookup rewrites APFS oracle text (plain and JSON-escaped) to the
+// case-sensitive "not found", reporting whether anything changed.
 func AdaptCaseLookup(fixture, s string) (string, bool) {
 	if fixture != caseLookupFixture || !CaseSensitive() || caseOracleMsg == "" {
 		return s, false
@@ -73,9 +67,8 @@ func jsonInner(s string) string {
 	return string(b[1 : len(b)-1])
 }
 
-// CaseLookupMissing reports whether output from a fixture carries the
-// case-sensitive "not found" for the `UPPER` plan, so pins of Go output
-// recorded on APFS do not apply to it.
+// CaseLookupMissing reports output carrying the case-sensitive "not found",
+// to which APFS pins do not apply.
 func CaseLookupMissing(fixture, s string) bool {
 	if fixture != caseLookupFixture || !CaseSensitive() {
 		return false

@@ -51,6 +51,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if err := d7Check(old); err != nil {
 		return nil, err
 	}
+	if evidenceOnly(data) {
+		return e.prepareEvidenceOnly(s, data)
+	}
 	targeted := false
 	for _, k := range []string{"updatePhases", "addPhases", "updateSteps", "addSteps", "dependencies"} {
 		targeted = targeted || has(data, k)
@@ -345,6 +348,11 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			warnings = statusChangeWarnings(old, g)
 		}
 	}
+	ev, evAfter, evResult, evWarnings, err := e.updateEvidence(id, data, old, p)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, evWarnings...)
 	p.UpdatedAt = e.nowISO()
 	if v, ok := statusUpdate(data); ok {
 		if err := statusGate(v, p); err != nil {
@@ -419,6 +427,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if depsAfter != nil {
 		specs = append(specs, targetSpec{rel: s.Dependencies.Rel, kind: "dependencies", before: s.Dependencies.Bytes, beforeOK: s.Dependencies.Exists, after: depsAfter, afterOK: true})
 	}
+	if evAfter != nil {
+		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true})
+	}
 	tx := storage.NewUUID()
 	in := e.buildIntent("update", id, tx, specs, reads)
 	if err := e.checkTargetPaths(in); err != nil {
@@ -446,6 +457,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		// Non-failing order warnings, only when present.
 		if len(warnings) > 0 {
 			b.Set("warnings", ojson.StringsValue(warnings))
+		}
+		if evResult != nil {
+			b.Set("evidence", *evResult)
 		}
 		return Output{Value: b.Value()}, nil
 	}
