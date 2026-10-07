@@ -37,6 +37,11 @@ type Engine struct {
 	// record source ("agent" when empty) and a tree pinned before a run.
 	EvidenceSource string
 	EvidenceTree   *evidence.Tree
+
+	// JournalVersion selects the journal format of new writes: 2 (the
+	// default, images by reference) or 1 (inline, readable by the
+	// reference plugin). Trusted configuration.
+	JournalVersion int
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.

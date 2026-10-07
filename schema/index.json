@@ -44,8 +44,15 @@
       "path": ".opencode/workplan/<id>.evidence.json"
     },
     "transactionJournal": {
-      "schema": "v1/transaction-journal-v1.schema.json",
-      "storedVersion": 1,
+      "schema": [
+        "v1/transaction-journal-v1.schema.json",
+        "v1/transaction-journal-v2.schema.json"
+      ],
+      "storedVersions": [
+        1,
+        2
+      ],
+      "write": 2,
       "path": ".opencode/workplan/<id>.transaction.json"
     },
     "lockOwner": {

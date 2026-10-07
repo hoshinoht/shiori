@@ -48,6 +48,8 @@ type Options struct {
 	// Compaction sets the compaction advisor thresholds (nil: the
 	// defaults); from the trusted serve flag, never from a frame.
 	Compaction *advisor.Thresholds
+	// JournalVersion is the journal format of writes (0: the default).
+	JournalVersion int
 }
 
 // ErrIdle is returned by Serve after an idle exit.
@@ -427,6 +429,7 @@ func (s *server) engineFor(h *hostContext) (*engine.Engine, error) {
 		return nil, &classed{class: "invalid_input", msg: "hostContext.canonicalRoot is not canonical (it resolves through a symbolic link)"}
 	}
 	e.Compaction = s.opts.Compaction
+	e.JournalVersion = s.opts.JournalVersion
 	s.engine = e
 	s.boundRoot = e.Root
 	return e, nil

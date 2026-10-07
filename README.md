@@ -40,7 +40,7 @@
 - **Prepare → authorize → commit:** every mutation is first prepared as an exact intent (each target with before/after sha256, the journal, the locks) without creating any file, lock or directory. Only a confirmed or host-authorized commit of that unchanged intent writes.
 - **Stale-state protection:** existing-state writes carry `--expected-hash` (the `stateHash` from the latest read), and every precondition is rechecked under the lock.
 - **Locks:** a workspace lock, then a plan lock. Live, foreign-host and ambiguous owners are never reclaimed; a proven-dead owner only after a grace period.
-- **Journal and crash recovery:** files are staged and fsynced, a durable journal is published before the first replacement, and each artifact is replaced atomically. A crash leaves the journal in place; `update --recovery resume|rollback` finishes or undoes the transaction.
+- **Journal and crash recovery:** files are staged and fsynced, a durable journal is published before the first replacement, and each artifact is replaced atomically. A crash leaves the journal in place; `update --recovery resume|rollback` finishes or undoes the transaction. The v2 journal names the staged files and hard-linked before images instead of inlining them, so a write costs about the size of the changed files (`--journal-version 1` keeps the inline v1 format).
 - **Safe resets and repair:** `reset` defaults to a status-only draft reset. A full wipe needs a preview token and an explicit confirmation, and archives the originals first. An unreadable plan gets a raw-byte hash so `create --overwrite` can repair it, archiving the damaged bytes.
 
 ### Bounded continuation

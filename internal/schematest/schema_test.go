@@ -15,7 +15,9 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/storage"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
 
@@ -307,5 +309,33 @@ func TestEvidenceSchemaAgreesWithDecoder(t *testing.T) {
 		if _, issues := evidence.Decode(v.Value); (len(issues) == 0) != want {
 			t.Errorf("decoder ok=%v want %v (%v)", len(issues) == 0, want, issues)
 		}
+	}
+}
+
+// TestJournalV2SchemaMatchesEncoder: the v2 journal the writer encodes
+// validates against its schema and decodes.
+func TestJournalV2SchemaMatchesEncoder(t *testing.T) {
+	c := compiler(t)
+	s, err := c.Compile(idBase + "transaction-journal-v2.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := &storage.Intent{JournalVersion: 2, TransactionID: "0f1e2d3c-aaaa-bbbb-cccc-000000000000", WorkplanID: "p", Operation: "update", CreatedAt: "2026-01-02T03:04:05Z",
+		Targets: []storage.Target{
+			{Rel: ".opencode/workplan/p.json", Before: []byte("a"), BeforeExists: true, After: []byte("b"), AfterExists: true, Mode: 0o644, Stage: "s", Backup: "b"},
+			{Rel: ".opencode/workplan/p.dependencies.json", Before: []byte("c"), BeforeExists: true, Mode: 0o600, Backup: "b2"},
+		}}
+	data := storage.EncodeJournal(in)
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Validate(inst); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := ojson.Parse(data)
+	j, ok := model.DecodeJournal(v.Value)
+	if !ok || j.Version != 2 || j.Targets[1].AfterHash != nil || j.Targets[1].Backup != "b2" {
+		t.Fatalf("decode: %v %+v", ok, j)
 	}
 }

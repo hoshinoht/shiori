@@ -274,14 +274,15 @@ type targetSpec struct {
 // dropped (no needless replacement).
 func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []storage.ReadEntry) *storage.Intent {
 	in := &storage.Intent{
-		Operation:     op,
-		WorkplanID:    id,
-		Root:          e.Root,
-		TransactionID: tx,
-		CreatedAt:     e.nowISO(),
-		Reads:         reads,
-		JournalRel:    journalRel(id),
-		JournalStage:  storage.JournalStagePath(snapshot.WorkplanDir, id, tx),
+		Operation:      op,
+		WorkplanID:     id,
+		Root:           e.Root,
+		TransactionID:  tx,
+		CreatedAt:      e.nowISO(),
+		Reads:          reads,
+		JournalRel:     journalRel(id),
+		JournalStage:   storage.JournalStagePath(snapshot.WorkplanDir, id, tx),
+		JournalVersion: e.journalVersion(),
 	}
 	var rels []string
 	for _, t := range specs {
@@ -291,6 +292,9 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		tg := storage.Target{Rel: t.rel, Kind: t.kind, Before: t.before, BeforeExists: t.beforeOK, After: t.after, AfterExists: t.afterOK, Mode: e.fileMode(t.rel, t.kind)}
 		if t.afterOK {
 			tg.Stage = storage.StagePath(t.rel, tx, len(in.Targets))
+		}
+		if t.beforeOK && in.JournalVersion == 2 {
+			tg.Backup = storage.BackupPath(t.rel, tx, len(in.Targets))
 		}
 		in.Targets = append(in.Targets, tg)
 		rels = append(rels, t.rel)
@@ -423,4 +427,12 @@ func newTargets(in *storage.Intent) (all, markdown []string) {
 		}
 	}
 	return all, markdown
+}
+
+// journalVersion is the journal format new writes use (default 2).
+func (e *Engine) journalVersion() int {
+	if e.JournalVersion == 1 {
+		return 1
+	}
+	return 2
 }

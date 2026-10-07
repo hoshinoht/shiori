@@ -26,11 +26,16 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	idle := fs.Duration("idle-timeout", protocol.DefaultIdleTimeout, "exit after this long with no request and no prepared intent")
 	maxFrame := fs.Int("max-frame-bytes", protocol.DefaultMaxFrameBytes, "request frame limit in bytes")
 	advice := fs.String("compaction-advice", "", "compaction advisor thresholds: off, or key=value pairs (D.4)")
+	journal := fs.Int("journal-version", 2, "journal format of writes: 2 (by reference) or 1 (inline, reference-compatible)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if !*stdio || fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N] [--compaction-advice SPEC]")
+		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N] [--compaction-advice SPEC] [--journal-version 1|2]")
+		return 2
+	}
+	if *journal != 1 && *journal != 2 {
+		fmt.Fprintln(stderr, "shiori serve: --journal-version must be 1 or 2")
 		return 2
 	}
 	if *idle <= 0 || *idle > 24*time.Hour {
@@ -53,8 +58,9 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err := protocol.Serve(ctx, protocol.Options{
-		Compaction: th,
-		In:         stdin, Out: stdout, Err: stderr,
+		Compaction:     th,
+		JournalVersion: *journal,
+		In:             stdin, Out: stdout, Err: stderr,
 		CoreVersion:   Version,
 		IdleTimeout:   *idle,
 		MaxFrameBytes: *maxFrame,

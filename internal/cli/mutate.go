@@ -104,6 +104,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	yes := fs.Bool("yes", false, "confirm the printed intent without a prompt")
 	expected := fs.String("expected-hash", "", "stateHash from the latest read")
 	legacy := fs.Bool("legacy-unhashed", false, "allow an existing-state write without --expected-hash (still rechecked under the lock)")
+	journal := fs.Int("journal-version", 2, "journal format: 2 (by reference) or 1 (inline, reference-compatible)")
 	// Field flags (the --input object may carry any field instead).
 	title := fs.String("title", "", "")
 	goal := fs.String("goal", "", "")
@@ -163,7 +164,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	for name := range set {
 		switch name {
-		case "root", "json", "input", "yes", "expected-hash", "legacy-unhashed":
+		case "root", "json", "input", "yes", "expected-hash", "legacy-unhashed", "journal-version":
 			continue
 		}
 		ok := false
@@ -349,6 +350,10 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
+	if *journal != 1 && *journal != 2 {
+		return usageErr("--journal-version must be 1 or 2")
+	}
+	e.JournalVersion = *journal
 	e.EvidenceSource = evidence.SourceCLI
 	return execMutation(e, cmd, toolIn, *yes, *jsonOut, stdout, stderr)
 }

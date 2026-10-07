@@ -22,6 +22,7 @@ type Target struct {
 	AfterExists  bool // false = delete
 	Mode         fs.FileMode
 	Stage        string // same-directory staging path (empty for deletions)
+	Backup       string // journal v2: hard link to the before image (empty when absent)
 }
 
 // BeforeHash / AfterHash are the lowercase SHA-256 digests, "" when absent.
@@ -65,6 +66,9 @@ type Intent struct {
 	Recovery string
 	// JournalBytes is the exact pending journal a recovery is bound to.
 	JournalBytes []byte
+	// JournalVersion is 1 (inline base64 images) or 2 (images by
+	// reference to the staged files and before-image hard links).
+	JournalVersion int
 }
 
 // Resources is the exact-resource view of an intent (absolute paths), in
@@ -98,6 +102,9 @@ func (in *Intent) Resources() Resources {
 		}
 		if t.Stage != "" {
 			r.Staging = append(r.Staging, a(t.Stage))
+		}
+		if t.Backup != "" {
+			r.Staging = append(r.Staging, a(t.Backup))
 		}
 	}
 	r.Journal = a(in.JournalRel)
@@ -143,6 +150,9 @@ func (in *Intent) Value() ojson.Value {
 		Set("workplanId", ojson.StringValue(in.WorkplanID)).
 		Set("root", ojson.StringValue(in.Root)).
 		Set("transactionId", ojson.StringValue(in.TransactionID))
+	if in.JournalVersion == 2 {
+		b.Set("journalVersion", ojson.IntValue(2))
+	}
 	if in.Recovery != "" {
 		b.Set("recovery", ojson.StringValue(in.Recovery)).
 			Set("journalSha256", ojson.StringValue(digestOrEmpty(in.JournalBytes, true)))
@@ -190,6 +200,13 @@ func StagePath(rel, tx string, index int) string {
 	return dir + "." + base + "." + tx + "." + itoa(index) + ".stage"
 }
 
+// BackupPath is the journal v2 before-image link for a target:
+// ".<base>.<tx>.<index>.before".
+func BackupPath(rel, tx string, index int) string {
+	dir, base := path.Split(rel)
+	return dir + "." + base + "." + tx + "." + itoa(index) + ".before"
+}
+
 // JournalStagePath is ".<id>.transaction.<tx>.stage" in the workplan dir.
 func JournalStagePath(dir, id, tx string) string {
 	return dir + "/." + id + ".transaction." + tx + ".stage"
@@ -230,10 +247,13 @@ func ParentDirs(rels ...string) []string {
 	return out
 }
 
-// EncodeJournal renders transaction-journal-v1 exactly as the reference
-// writes it: pretty JSON, two-space indent, trailing newline, standard
-// padded base64 content.
+// EncodeJournal renders the intent's journal: v1 exactly as the reference
+// writes it (pretty JSON, padded base64 content), or v2 with the staged
+// after images and before-image links named instead of inlined.
 func EncodeJournal(in *Intent) []byte {
+	if in.JournalVersion == 2 {
+		return encodeJournalV2(in)
+	}
 	targets := make([]ojson.Value, len(in.Targets))
 	for i, t := range in.Targets {
 		targets[i] = ojson.NewObject(6).
@@ -259,4 +279,25 @@ func content(b []byte, ok bool) ojson.Value {
 		return ojson.NullValue()
 	}
 	return ojson.StringValue(base64.StdEncoding.EncodeToString(b))
+}
+
+func encodeJournalV2(in *Intent) []byte {
+	targets := make([]ojson.Value, len(in.Targets))
+	for i, t := range in.Targets {
+		targets[i] = ojson.NewObject(6).
+			Set("path", ojson.StringValue(t.Rel)).
+			Set("beforeHash", nullable(t.BeforeHash())).
+			Set("afterHash", nullable(t.AfterHash())).
+			Set("beforeBackup", nullable(t.Backup)).
+			Set("afterStage", nullable(t.Stage)).
+			Set("mode", ojson.IntValue(int64(t.Mode.Perm()))).Value()
+	}
+	v := ojson.NewObject(6).
+		Set("schemaVersion", ojson.IntValue(2)).
+		Set("transactionId", ojson.StringValue(in.TransactionID)).
+		Set("workplanId", ojson.StringValue(in.WorkplanID)).
+		Set("operation", ojson.StringValue(in.Operation)).
+		Set("createdAt", ojson.StringValue(in.CreatedAt)).
+		Set("targets", ojson.ArrayValue(targets)).Value()
+	return append(ojson.Pretty(v), '\n')
 }

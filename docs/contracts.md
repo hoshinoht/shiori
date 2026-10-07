@@ -11,8 +11,8 @@ section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
 spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
-reference; section 19 the host version policy and section 20 the E1
-evidence ledger.
+reference; section 19 the host version policy, section 20 the E1
+evidence ledger and section 21 journal v2.
 
 ## 1. Sources of truth
 
@@ -1701,3 +1701,40 @@ journal that targets it; resolve journals before switching back.
 Schema: `workplan_update.input.schema.json` adds `recordEvidence`. The
 adapter registration (`registration.json`, key `e1`) lists the addition;
 removing it before the d4_3…d1 reversal reproduces the reference snapshot.
+
+## 21. Approved design changes P4 (APPROVED 2026-10-07)
+
+P4: transaction journal v2 by reference (spec 06 P4). Writes use v2 by
+default; `--journal-version 1` on the mutation commands and on `serve`
+keeps writing v1. Both versions stay readable and recoverable. Hashes,
+plan formats and tool surfaces are unchanged.
+
+**1. Format** ([`transaction-journal-v2`](../schema/v1/transaction-journal-v2.schema.json)):
+v1's fields, but each target carries `beforeBackup` and `afterStage`
+instead of `beforeContent`/`afterContent`. Names are fixed:
+`.<base>.<tx>.<i>.stage` (as in v1) and `.<base>.<tx>.<i>.before`, next
+to the target. Any other name invalidates the journal.
+
+**2. Commit.** After staging and before the journal: each existing target
+is hard-linked to its `.before` name, the link is re-hashed against the
+prepared before image (a change is a stale-state refusal with nothing
+published), and the target directories are synced. The journal follows
+as in v1. On a failure after the journal, the staged files and links are
+kept (they are the images). After the journal is removed, the links are
+removed. The links are listed as staging paths of the intent, so the
+host authorizes them; compaction/reset previews list them the same way
+(the corpus compares them like the lock auxiliary paths).
+
+**3. Recovery.** Each image comes from the target itself when it already
+holds that hash, else from its link or staged file. An image found
+nowhere refuses only the direction that needs it ("the before image of
+... is missing or changed"); third-state detection is unchanged. Recovery
+removes the transaction's staged files and links.
+
+**4. Cost.** On the measured 286 KB owner plan, one note append wrote
+1 048 240 bytes with v1 (staged plan plus a 762 494-byte journal) and
+286 440 with v2 (a 694-byte journal): 3.66× fewer.
+
+**Rollback.** The reference plugin cannot read a pending v2 journal.
+Resolve pending journals (as the rollback procedure already requires), or
+run with `--journal-version 1`, before switching back.

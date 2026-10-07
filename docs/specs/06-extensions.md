@@ -221,6 +221,11 @@ v1 journals stay readable and recoverable. Needs its own crash/fault matrix
 (S04) and must not weaken third-state detection (S05). This is the only
 item here that adds a new artifact version.
 
+**Status: implemented** (2026-10-07,
+[contracts §21](../contracts.md#21-approved-design-changes-p4-approved-2026-10-07)):
+before images are hard links next to the targets; 3.66× fewer bytes
+written per mutation on the measured plan.
+
 ### P5 — Markdown section index for resume
 
 Hash-bound heading/marker ranges over the plan Markdown so `resume` can point
@@ -257,6 +262,6 @@ stage it attaches to. Record decisions here with a date.
 | X10 | to-review | | |
 | P2 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 1) |
 | P3 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 2) |
-| P4 | to-review | | |
+| P4 | accepted, implemented | 2026-10-07 | contracts §21; v2 is the default writer |
 | P5 | to-review | | |
 | P6 | accepted | 2026-09-30 | covered by D.1 (F) and D.3 |

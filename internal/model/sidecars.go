@@ -273,13 +273,17 @@ type JournalTarget struct {
 	Path       string
 	BeforeHash *string
 	AfterHash  *string
-	Before     []byte // nil when absent
+	Before     []byte // nil when absent (v2: until loaded)
 	After      []byte
 	Mode       int
+	// v2: where the images are kept until the transaction completes.
+	Backup, Stage string
 }
 
-// Journal is a decoded transaction-journal-v1.
+// Journal is a decoded transaction journal (v1 or v2). A v2 journal's
+// images are loaded separately (they live in files next to the targets).
 type Journal struct {
+	Version       int
 	TransactionID string
 	WorkplanID    string
 	Operation     string
@@ -296,9 +300,11 @@ func DecodeJournal(v ojson.Value) (*Journal, bool) {
 		return nil, false
 	}
 	f := fieldMap(ms)
-	j := &Journal{}
+	j := &Journal{Version: 1}
 	x, _ := f.get("schemaVersion")
-	if !c.literalNumber(fp{}, x, 1) {
+	if sv, _ := x.Float(); x.Kind() == ojson.Number && sv == 2 {
+		j.Version = 2
+	} else if !c.literalNumber(fp{}, x, 1) {
 		return nil, false
 	}
 	x, _ = f.get("transactionId")
@@ -327,11 +333,20 @@ func DecodeJournal(v ojson.Value) (*Journal, bool) {
 		}
 		t.Path = pv.Str()
 		var good bool
-		if t.BeforeHash, t.Before, good = hashContent(ef, "beforeHash", "beforeContent"); !good {
-			return nil, false
-		}
-		if t.AfterHash, t.After, good = hashContent(ef, "afterHash", "afterContent"); !good {
-			return nil, false
+		if j.Version == 2 {
+			if t.BeforeHash, t.Backup, good = hashRef(ef, "beforeHash", "beforeBackup"); !good {
+				return nil, false
+			}
+			if t.AfterHash, t.Stage, good = hashRef(ef, "afterHash", "afterStage"); !good {
+				return nil, false
+			}
+		} else {
+			if t.BeforeHash, t.Before, good = hashContent(ef, "beforeHash", "beforeContent"); !good {
+				return nil, false
+			}
+			if t.AfterHash, t.After, good = hashContent(ef, "afterHash", "afterContent"); !good {
+				return nil, false
+			}
 		}
 		mv, _ := ef.get("mode")
 		mf, ok := mv.Float()
@@ -366,6 +381,24 @@ func hashContent(f fields, hashKey, contentKey string) (*string, []byte, bool) {
 	}
 	h := hv.Str()
 	return &h, data, true
+}
+
+// hashRef decodes a v2 image: a hash and the file that holds it, both
+// null when the image is absent.
+func hashRef(f fields, hashKey, refKey string) (*string, string, bool) {
+	hv, ok1 := f.get(hashKey)
+	rv, ok2 := f.get(refKey)
+	if !ok1 || !ok2 {
+		return nil, "", false
+	}
+	if hv.Kind() == ojson.Null && rv.Kind() == ojson.Null {
+		return nil, "", true
+	}
+	if hv.Kind() != ojson.String || !hashPattern.MatchString(hv.Str()) || rv.Kind() != ojson.String || rv.Str() == "" {
+		return nil, "", false
+	}
+	h := hv.Str()
+	return &h, rv.Str(), true
 }
 
 // LockOwner is lock-owner-v1 metadata.

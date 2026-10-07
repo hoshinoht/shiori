@@ -71,6 +71,8 @@ Mutation flags:
                              writes, including recovery and compaction apply)
   --legacy-unhashed          Allow an existing-state write without --expected-hash
                              (still rechecked under the lock)
+  --journal-version 1|2      Journal format (default 2: images by reference; 1: inline,
+                             readable by the reference plugin). Also on serve.
   --yes                      Confirm the printed intent (required off a terminal;
                              never read from the environment)
 

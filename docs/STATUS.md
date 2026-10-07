@@ -26,6 +26,7 @@ sections below keep the full record.
 | cleanup | done | `797b983` (pushed) |
 | Linux suites (case-sensitive test pins) | done | `d91a6b6` |
 | E1 X2 evidence ledger | done | see git log |
+| P4 journal v2 by reference | done | see git log |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
@@ -43,7 +44,7 @@ OpenCode. Nothing in
 1. ~~E1 — X2 evidence ledger~~ done (see "Stage E1" below).
 2. **E2 — X3 worktree lanes** (needs X2). Proposal first (path-claim
    trie, lane state machine, baseline fingerprint, merge train; spec 04).
-3. **Measured performance stage** (all still to-review in spec 06): X8
+3. **Measured performance stage** (P4 done; still to-review in spec 06): X8
    warm snapshot cache in `serve`, X9 derived plan index (open choice:
    SQLite vs a small custom format, decide by measurement), X10 structural
    index and slice parsing. Measure first (spec 03), record targets.
@@ -1730,6 +1731,28 @@ the state manifest.
    trustworthy next step.
 3. Without `scope`, any change outside `.opencode/workplan` makes evidence
    stale; X3 path claims would supply scopes automatically.
+
+## Stage P4 — journal v2 by reference: DONE
+
+Contracts §21. v2 is the default writer; `--journal-version 1` (mutation
+commands, `serve`) keeps v1.
+
+- `storage`: `Target.Backup`, `Intent.JournalVersion`, v2 encoder, commit
+  links and re-hashes before images, syncs, keeps images on failure and
+  removes the links last. New fault point `backup`.
+- `model.DecodeJournal` reads v1 and v2; `engine.loadJournalImages`
+  resolves v2 images (target, link or staged file, fixed names only).
+  Journal validation now tests image presence by hash, not by bytes.
+- Tests: the fault matrix runs every scenario and point under v1 and v2
+  (resume and rollback); v2-specific tests for the format, a missing
+  image (refuses only that direction), foreign names, and a before image
+  changed between the locked check and the link. Schema
+  `transaction-journal-v2` checked against the encoder.
+- Evidence: 286 KB owner plan, one note append: 1 048 240 → 286 440 bytes
+  written (journal 762 494 → 694); the write took 30 ms.
+
+Owner decision to review: the adapter does not yet expose a
+`journalVersion` plugin option; `serve` defaults to v2.
 
 ## Resume after maintenance
 

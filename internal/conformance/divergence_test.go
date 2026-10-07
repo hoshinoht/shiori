@@ -191,8 +191,9 @@ func backslashValidate(v *vector, got string) error {
 // comparePreview checks a compact preview against the oracle after
 // substituting the token-derived values (token, archive name, staging
 // transaction id) and the removals digest. The lock-protocol auxiliary
-// paths in writeIntent.resources are Shiori's own protocol and are
-// compared as: every non-lock resource identical, both lock files listed.
+// paths in writeIntent.resources and the journal v2 backup links in
+// stagingPaths/resources are Shiori's own protocol: every other resource
+// is compared exactly.
 func comparePreview(v *vector, got string) error {
 	g, err := ojson.Parse([]byte(got))
 	if err != nil {
@@ -224,6 +225,15 @@ func comparePreview(v *vector, got string) error {
 						}
 						continue
 					}
+					if x.Key == "stagingPaths" {
+						var keep []ojson.Value
+						for _, r := range x.Value.Elems() {
+							if !strings.HasSuffix(r.Str(), ".before") {
+								keep = append(keep, r)
+							}
+						}
+						x.Value = ojson.ArrayValue(keep)
+					}
 					wi = append(wi, x)
 				}
 				m.Value = ojson.ObjectValue(wi)
@@ -237,7 +247,7 @@ func comparePreview(v *vector, got string) error {
 	if x, y := string(ojson.Pretty(a)), string(ojson.Pretty(b)); x != y {
 		return fmt.Errorf("preview differs:\n%s", firstDiff(x, y))
 	}
-	isLockAux := func(p string) bool { return strings.Contains(p, ".lock.") }
+	isLockAux := func(p string) bool { return strings.Contains(p, ".lock.") || strings.HasSuffix(p, ".before") }
 	have := map[string]bool{}
 	for _, r := range ares {
 		have[r] = true
