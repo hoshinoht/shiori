@@ -62,7 +62,7 @@ const msgMarkdownDrift = "planFile: Linked Markdown is not the generated renderi
 func (e *Engine) validationWarnings(s *snapshot.Snapshot, dv depView) []string {
 	var w []string
 	if s.Markdown.Exists && !model.Blank(string(s.Markdown.Bytes)) {
-		if gen, err := e.isGenerated(s.Plan, s.Markdown.Bytes); err == nil && !gen {
+		if gen, err := e.isGeneratedCached(s.Plan, s.JSON.SHA256, s.Markdown.SHA256, s.Markdown.Bytes); err == nil && !gen {
 			w = append(w, fmt.Sprintf(msgMarkdownDrift, s.Markdown.Rel))
 			if m := e.missingStepMarkers(s); m != "" {
 				w = append(w, m)

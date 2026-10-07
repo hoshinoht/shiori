@@ -261,7 +261,29 @@ func (e *Engine) generatedMarkdown(s *snapshot.Snapshot) (bool, error) {
 	if err := d7Check(s.Plan); err != nil {
 		return false, err
 	}
-	return e.isGenerated(s.Plan, s.Markdown.Bytes)
+	return e.isGeneratedCached(s.Plan, s.JSON.SHA256, s.Markdown.SHA256, s.Markdown.Bytes)
+}
+
+// isGeneratedCached consults the cache's classification (content-keyed)
+// before rendering.
+func (e *Engine) isGeneratedCached(p *model.Plan, planSHA, mdSHA string, md []byte) (bool, error) {
+	if e.Cache == nil || planSHA == "" || mdSHA == "" {
+		return e.isGenerated(p, md)
+	}
+	key := snapshot.GeneratedKey(planSHA, mdSHA, p.PlanFile, p.SpecFiles)
+	if gen, ok := e.Cache.Generated(key); ok {
+		if verifyPostHashes {
+			if real, err := e.isGenerated(p, md); err != nil || real != gen {
+				panic("cached Markdown classification is wrong for " + p.ID)
+			}
+		}
+		return gen, nil
+	}
+	gen, err := e.isGenerated(p, md)
+	if err == nil {
+		e.Cache.SetGenerated(key, gen)
+	}
+	return gen, err
 }
 
 // checkTargetPaths refuses targets that escape the root through symlinks

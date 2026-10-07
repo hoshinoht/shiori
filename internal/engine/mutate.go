@@ -421,6 +421,27 @@ func (e *Engine) postSummary(pre *snapshot.Snapshot, in *storage.Intent, post *m
 	return ps.Plan.Summary(), ps.PlanHash, ps.StateHash, nil
 }
 
+// rememberRendered records that the Markdown an update just wrote is the
+// rendering of the plan it wrote, so the next write skips re-rendering the
+// stored plan to classify it.
+func (e *Engine) rememberRendered(in *storage.Intent, jsonRel, mdRel string, p *model.Plan) {
+	if e.Cache == nil || in == nil {
+		return
+	}
+	var planSHA, mdSHA string
+	for _, t := range in.Targets {
+		switch t.Rel {
+		case jsonRel:
+			planSHA = t.AfterHash()
+		case mdRel:
+			mdSHA = t.AfterHash()
+		}
+	}
+	if planSHA != "" && mdSHA != "" {
+		e.Cache.SetGenerated(snapshot.GeneratedKey(planSHA, mdSHA, p.PlanFile, p.SpecFiles), true)
+	}
+}
+
 // verifyPostHashes makes postHashes cross-check against a full reload
 // (tests only).
 var verifyPostHashes = false

@@ -411,6 +411,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		}
 		mdWrite = true
 	}
+	mdRendered := mdWrite && gen && !has(data, "planMarkdown")
 
 	specs := []targetSpec{{rel: s.JSON.Rel, kind: "plan", before: s.JSON.Bytes, beforeOK: true, after: p.EncodeStored(), afterOK: true}}
 	reads := readsOf(s.StateManifest)
@@ -449,6 +450,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	prep := &Prepared{Tool: "workplan_update", Intent: in}
 	prep.recheck = func() error { return e.claimCheck(id, all, mds) }
 	prep.result = func(sync bool) (Output, error) {
+		if mdRendered {
+			e.rememberRendered(in, s.JSON.Rel, newPF, p)
+		}
 		summary, planHash, stateHash, err := e.postSummary(s, in, p)
 		if err != nil {
 			return Output{}, err

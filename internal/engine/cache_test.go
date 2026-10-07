@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,5 +170,38 @@ func TestCacheEvictsWithinBudget(t *testing.T) {
 	}
 	if e.Cache.PlanHits != 0 {
 		t.Fatal("a plan larger than the budget stayed cached")
+	}
+}
+
+// TestCacheRememberedRenderingIsExact: after cached writes the next write
+// skips the old-plan render, and (verifyPostHashes) every remembered
+// classification equals a fresh one.
+func TestCacheRememberedRenderingIsExact(t *testing.T) {
+	freezeClock(t)
+	for _, fx := range []string{"full-valid", "minimal-valid", "handwritten-md"} {
+		root := testutil.NewRoot(t, fx)
+		e, _ := New(root.Path)
+		e.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
+		ents, _ := os.ReadDir(filepath.Join(root.Path, ".opencode/workplan"))
+		for _, en := range ents {
+			name := en.Name()
+			if !strings.HasSuffix(name, ".json") || strings.Count(name, ".") != 1 {
+				continue
+			}
+			id := strings.TrimSuffix(name, ".json")
+			for i := 0; i < 3; i++ {
+				s, err := e.load(id)
+				if err != nil {
+					break
+				}
+				in := mustJSON(t, `{"id":"`+id+`","expectedHash":"`+s.StateHash+`","appendNotes":["n`+itoaT(i)+`"]}`)
+				if _, err := runMutation(context.Background(), e, "update", in, allowAll{}); err != nil {
+					t.Fatalf("%s/%s: %v", fx, id, err)
+				}
+				if _, err := e.Validate(input.ValidateInput{ID: id}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 	}
 }

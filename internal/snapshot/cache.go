@@ -3,6 +3,7 @@ package snapshot
 import (
 	"container/list"
 	"io/fs"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,8 @@ type Cache struct {
 	lru    *list.List // front = most recent; values *cacheItem
 	files  map[string]*list.Element
 	plans  map[string]*list.Element
+
+	generated map[string]bool // GeneratedKey -> Markdown is the rendering
 
 	// RacyWindow is how much older than its fill time a file's mtime must
 	// be for a stat hit to be trusted.
@@ -139,4 +142,31 @@ func (c *Cache) evict() {
 			c.remove(c.plans, it.key)
 		}
 	}
+}
+
+// Generated reports a cached "is this Markdown the plan's rendering"
+// answer; key is GeneratedKey's.
+func (c *Cache) Generated(key string) (gen, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	gen, ok = c.generated[key]
+	return gen, ok
+}
+
+// SetGenerated records the answer for key (bounded; cleared when full).
+func (c *Cache) SetGenerated(key string, gen bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.generated == nil || len(c.generated) >= maxGenerated {
+		c.generated = map[string]bool{}
+	}
+	c.generated[key] = gen
+}
+
+const maxGenerated = 4096
+
+// GeneratedKey identifies a classification: the plan and Markdown digests
+// and the normalized links the rendering includes.
+func GeneratedKey(planSHA, mdSHA, planFile string, specFiles []string) string {
+	return planSHA + "\x00" + mdSHA + "\x00" + planFile + "\x00" + strings.Join(specFiles, "\x00")
 }

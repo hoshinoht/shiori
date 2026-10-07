@@ -249,7 +249,7 @@ func BenchmarkOpsCached(b *testing.B) {
 func BenchmarkAgentLoop(b *testing.B) {
 	for _, size := range perfSizes {
 		for _, cached := range []bool{false, true} {
-			b.Run(fmt.Sprintf("%s/cache=%v", size, cached), func(b *testing.B) {
+			b.Run(fmt.Sprintf("size=%s/cache=%v", size, cached), func(b *testing.B) {
 				dir := filepath.Join(b.TempDir(), "root")
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					b.Fatal(err)
@@ -265,8 +265,11 @@ func BenchmarkAgentLoop(b *testing.B) {
 					e.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
 				}
 				b.ReportAllocs()
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
+				// One untimed round warms the cache (steady state).
+				for i := -1; i < b.N; i++ {
+					if i == 0 {
+						b.ResetTimer()
+					}
 					if _, err := perfOp(e, "resume"); err != nil {
 						b.Fatal(err)
 					}
