@@ -284,6 +284,13 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		JournalStage:   storage.JournalStagePath(snapshot.WorkplanDir, id, tx),
 		JournalVersion: e.journalVersion(),
 	}
+	// Before images are the bytes the reads hashed.
+	known := map[string]string{}
+	for _, r := range reads {
+		if !r.Missing {
+			known[r.Rel] = r.SHA256
+		}
+	}
 	var rels []string
 	for _, t := range specs {
 		if !t.forceWrite && t.beforeOK == t.afterOK && string(t.before) == string(t.after) {
@@ -296,7 +303,14 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		if t.beforeOK && in.JournalVersion == 2 {
 			tg.Backup = storage.BackupPath(t.rel, tx, len(in.Targets))
 		}
-		tg.Seal()
+		if sum, ok := known[t.rel]; ok && t.beforeOK {
+			tg.SealKnown(sum)
+			if verifyPostHashes && tg.BeforeHash() != hashOf(t.before) {
+				panic("buildIntent: known before digest differs for " + t.rel)
+			}
+		} else {
+			tg.Seal()
+		}
 		in.Targets = append(in.Targets, tg)
 		rels = append(rels, t.rel)
 	}

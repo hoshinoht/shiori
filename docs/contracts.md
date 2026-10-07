@@ -1716,9 +1716,10 @@ instead of `beforeContent`/`afterContent`. Names are fixed:
 to the target. Any other name invalidates the journal.
 
 **2. Commit.** After staging and before the journal: each existing target
-is hard-linked to its `.before` name, the link is re-hashed against the
-prepared before image (a change is a stale-state refusal with nothing
-published), and the target directories are synced. The journal follows
+is hard-linked to its `.before` name, the link must be the same file
+(device and inode, size, mtime) the locked recheck just hashed (a change
+is a stale-state refusal with nothing published), and the target
+directories are synced. The journal follows
 as in v1. On a failure after the journal, the staged files and links are
 kept (they are the images). After the journal is removed, the links are
 removed. The links are listed as staging paths of the intent, so the

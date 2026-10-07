@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -86,6 +87,27 @@ func (e *RecoveryRequiredError) Error() string {
 }
 
 func (e *RecoveryRequiredError) Unwrap() error { return e.Cause }
+
+// fileDigestStat is fileDigest plus the stat of the file it read.
+func fileDigestStat(p string) (string, bool, fs.FileInfo, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return "", false, nil, nil
+		}
+		return "", false, nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false, nil, err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", false, nil, err
+	}
+	return hex.EncodeToString(h.Sum(nil)), true, info, nil
+}
 
 func fileDigest(p string) (string, bool, error) {
 	data, err := os.ReadFile(p)
@@ -173,17 +195,18 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 
 	// Locked recheck of every precondition; each file is hashed once.
 	type digest struct {
-		sum string
-		ok  bool
+		sum  string
+		ok   bool
+		info fs.FileInfo
 	}
 	seen := map[string]digest{}
 	digestOf := func(rel string) (string, bool, error) {
 		if d, hit := seen[rel]; hit {
 			return d.sum, d.ok, nil
 		}
-		sum, ok, err := fileDigest(abs(root, rel))
+		sum, ok, info, err := fileDigestStat(abs(root, rel))
 		if err == nil {
-			seen[rel] = digest{sum, ok}
+			seen[rel] = digest{sum, ok, info}
 		}
 		return sum, ok, err
 	}
@@ -308,7 +331,9 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 			}
 			backups = append(backups, bp)
 			dirs[filepath.Dir(bp)] = true
-			if sum, ok, err := fileDigest(bp); err != nil || !ok || sum != t.BeforeHash() {
+			// The link must be the file the locked recheck hashed.
+			if st, err := os.Stat(bp); err != nil || seen[t.Rel].info == nil || !os.SameFile(st, seen[t.Rel].info) ||
+				st.Size() != seen[t.Rel].info.Size() || !st.ModTime().Equal(seen[t.Rel].info.ModTime()) {
 				return abort(&StaleError{Message: "Workplan state changed after preparation: " + abs(root, t.Rel) + ". Reread the plan and recompute the mutation."})
 			}
 		}

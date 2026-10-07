@@ -34,6 +34,13 @@ func (t *Target) Seal() {
 	t.sealed = true
 }
 
+// SealKnown is Seal with the before digest already known (the caller
+// hashed exactly these before bytes).
+func (t *Target) SealKnown(before string) {
+	t.beforeH, t.afterH = before, digestOrEmpty(t.After, t.AfterExists)
+	t.sealed = true
+}
+
 // BeforeHash / AfterHash are the lowercase SHA-256 digests, "" when absent.
 func (t Target) BeforeHash() string {
 	if t.sealed {

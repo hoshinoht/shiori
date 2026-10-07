@@ -240,6 +240,8 @@ item here that adds a new artifact version.
 [contracts §21](../contracts.md#21-approved-design-changes-p4-approved-2026-10-07)):
 before images are hard links next to the targets; 3.66× fewer bytes
 written per mutation on the measured plan.
+The link is checked by file identity against the locked recheck rather
+than re-hashed (2026-10-07, write hashing pass).
 
 ### P5 — Markdown section index for resume
 
