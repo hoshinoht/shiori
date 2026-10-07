@@ -2,9 +2,9 @@ package engine
 
 import (
 	"archive/tar"
-	"context"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
