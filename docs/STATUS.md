@@ -1777,6 +1777,31 @@ from one `ls-files` listing (byte-identical to the per-path command).
    recorded; resume shows the current step's lane checkout instead.
 3. Notes as a separate file: measured and deferred (spec 06 under X4).
 
+## Performance pass (X8 and write hashing)
+
+Benchmarks: `go test -bench 'Ops|OpsCached|Writes|AgentLoop' -benchmem
+./internal/engine` on the 100 KB / 1 MB / 10 MB perf fixtures
+(linux/amd64, n=5, all changes p=0.008).
+
+| Change | Effect |
+| --- | --- |
+| Seal target digests, hash each file once under the lock, post-commit hashes from known digests, before digests from the reads, backup link checked by identity | writes −31% to −39% time, −22% to −27% bytes |
+| `snapshot.Cache` in serve: decoded plans by content digest; stat-identity hits for reads (2 s racy window) | warm reads: inspect −68% to −94%, resume −34% to −78%, read −26% to −45% |
+| Cached generated-Markdown classification, recorded by each update | validate −91% to −96% warm; skips re-rendering the stored plan before a write |
+| Seed the cache with the plan a write serialized | resume+write loop a further −15% (1 MB, 10 MB) |
+| GOGC 200/400 | no significant change; left at default |
+
+Not done: a structural index with spliced writes (X10). In a warm 10 MB
+resume+write loop (~250 ms) what remains is GC (~23%), SHA-256 (~15%,
+three passes are the floor: prepare, after image, locked recheck), the
+new Markdown rendering (~13%), JSON serialization (~11%) and the resume
+packet (~9%). Splicing would remove at most the serialization.
+
+Safety nets: engine tests cross-check post-commit hashes against a full
+reload, recompute every cached Markdown classification, and decode and
+deep-compare every seeded plan; `SHIORI_TEST_CACHE=1` runs the whole
+engine suite with a cache on every engine.
+
 ## Resume after maintenance
 
 See [Resume point](#resume-point-paused-after-d43) at the top. The Go

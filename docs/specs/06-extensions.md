@@ -274,9 +274,9 @@ stage it attaches to. Record decisions here with a date.
 | X5 | to-review | | |
 | X6 | accepted, implemented | 2026-09-30 | implemented in stage D.2 (contracts §12 G6) |
 | X7 | to-review | | |
-| X8 | to-review | | |
+| X8 | accepted, implemented | 2026-10-07 | serve snapshot cache; see STATUS "Performance pass" |
 | X9 | to-review | | |
-| X10 | to-review | | |
+| X10 | deferred | 2026-10-07 | measured: serialization ~11% of a warm 10 MB write once parsing is cached; not worth splicing yet |
 | P2 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 1) |
 | P3 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 2) |
 | P4 | accepted, implemented | 2026-10-07 | contracts §21; v2 is the default writer |
