@@ -2,6 +2,7 @@ package engine
 
 import (
 	"archive/tar"
+	"context"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -160,6 +161,54 @@ func BenchmarkOps(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					if _, err := perfOp(e, op); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkWrites: go test -bench Writes -benchmem ./internal/engine
+// (prepare + authorize + commit on a private copy of each fixture).
+func BenchmarkWrites(b *testing.B) {
+	writes := map[string]func(i int) string{
+		"append-note": func(i int) string { return `{"id":"perf-plan","appendNotes":["bench note ` + strconv.Itoa(i) + `"]}` },
+		"step-status": func(i int) string {
+			st := []string{"in_progress", "blocked"}[i%2]
+			return `{"id":"perf-plan","updateSteps":[{"phaseId":"phase-1","stepId":"step-1","status":"` + st + `"}]}`
+		},
+	}
+	for _, size := range perfSizes {
+		for _, name := range []string{"append-note", "step-status"} {
+			b.Run(size+"/"+name, func(b *testing.B) {
+				dir := filepath.Join(b.TempDir(), "root")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					b.Fatal(err)
+				}
+				if err := testutil.CopyTree(perfRoot(b, size), dir); err != nil {
+					b.Fatal(err)
+				}
+				e, err := New(dir)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					p, err := ojson.Parse([]byte(writes[name](i)))
+					if err != nil {
+						b.Fatal(err)
+					}
+					data, err := input.ParseMutationInput("update", p.Value, input.SurfaceCore)
+					if err != nil {
+						b.Fatal(err)
+					}
+					prep, err := e.Prepare("update", data)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := e.Execute(context.Background(), prep, allowAll{}, ExecOptions{}); err != nil {
 						b.Fatal(err)
 					}
 				}
