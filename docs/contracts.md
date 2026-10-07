@@ -12,7 +12,7 @@ stage B findings (reference behaviour the corpus pins down that stage A did not
 spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
 reference; section 19 the host version policy, section 20 the E1
-evidence ledger and section 21 journal v2.
+evidence ledger, section 21 journal v2 and section 22 worktree lanes.
 
 ## 1. Sources of truth
 
@@ -1738,3 +1738,59 @@ removes the transaction's staged files and links.
 **Rollback.** The reference plugin cannot read a pending v2 journal.
 Resolve pending journals (as the rollback procedure already requires), or
 run with `--journal-version 1`, before switching back.
+
+## 22. Approved design changes X3 (APPROVED 2026-10-07)
+
+X3: worktree lanes (spec 06 X3, spec 04). The only input change is the
+optional `lanes` member of `workplan_update` (and `lane` on a
+`recordEvidence` item). No corpus vector changes.
+
+**1. Sidecar** `.opencode/workplan/<id>.lanes.json`, schema
+[`lanes-v1`](../schema/v1/lanes-v1.schema.json): per lane `laneId`,
+`state`, `steps`, `claims`, `baseline {treeOid, head, dirty}`, `checkout
+{path, branch}|null`, `history` and timestamps. Classified (`lanes`),
+outside the state manifest (lane changes never alter `planHash` or
+`stateHash`), an `update` journal target. A record only: Shiori never
+creates, merges or removes worktrees or runs git commands that write.
+
+**2. Operations**, applied in order, each refused as a whole update on
+error (`Invalid lanes input: lanes.<i>: ...`):
+
+- `propose {laneId, steps, claims?}`: a new id (never reused); each step
+  exists and belongs to no other active lane; claims are project-relative
+  paths outside `.opencode/workplan` (a path claims everything under it).
+  The baseline is the parent working tree (as for evidence), HEAD, and the
+  count of paths that differ from HEAD; a dirty baseline warns that a
+  worktree created from HEAD omits them (spec 04 §3).
+- `transition {laneId, state, checkout?}`: claimed → prepared →
+  running → review → (running | integrating) → merged, and any active
+  state → abandoned. `checkout` only on → prepared: an existing worktree
+  of the same repository (same common git dir), outside the project root,
+  on `branch` when given (recorded when omitted), used by no other active
+  lane. Without it the lane shares the parent checkout. → merged warns when
+  a lane step is still open or the checkout's HEAD is not in the project
+  HEAD; it never refuses (patch handoffs are allowed).
+- `claims {laneId, add?, remove?}` on an active lane.
+
+After every operation, the claims of active lanes must not overlap.
+
+**3. Doctor** (per plan, when the sidecar exists): `lanes {path, valid,
+lanes[], mergeOrder, mergeCycle?, unownedWorktrees?}`. Per lane: steps
+and steps done, claims, `checkout {path, branch, exists, outsideClaims
+{count, paths}}` (paths changed since the baseline commit that no claim
+covers), `blockedBy` (active lanes owning a prerequisite) and `issues`:
+missing checkout, cleanup required (a merged/abandoned lane's checkout
+still exists; never removed), branch moved, a workplan journal inside the
+checkout, changes outside claims, every step done but not integrated.
+`mergeOrder` is a topological order of active lanes by cross-lane step
+dependencies (creation order breaks ties); `unownedWorktrees` lists the
+repository's worktrees no lane records. **Inspect** adds `lanes {path,
+valid, active[]}` and a per-step `lane {laneId, state, checkout}`;
+**resume** adds the advisory `lanes {active, current?}` (tried first of
+the advisory members, same no-page-cost rule).
+
+**4. Evidence.** A record may name an active `lane`: it is bound to that
+lane's checkout tree and compared with it while the lane is active, and
+with the project tree afterwards, so lane results go stale until they are
+repeated on the combined state (unless the combined state is identical).
+`shiori evidence --lane L -- COMMAND` runs in the lane checkout.

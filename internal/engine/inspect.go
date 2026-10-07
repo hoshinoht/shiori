@@ -7,6 +7,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/resume"
@@ -82,10 +83,15 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	if err != nil {
 		return ojson.Value{}, err
 	}
+	lv, err := e.loadLanes(id)
+	if err != nil {
+		return ojson.Value{}, err
+	}
+	owners := stepLanes(lv.ledger)
 	var evViews map[model.StepRef]*evidence.StepView
 	var evCur evidence.Current
 	if ev.ledger != nil {
-		evCur = e.currentTree(ev.ledger, nil)
+		evCur = e.currentTree(ev.ledger, e.lanesOf(id), nil)
 		evViews = ev.ledger.Views(evCur)
 	}
 	phases := []ojson.Value{}
@@ -127,6 +133,9 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 		if g != nil {
 			inspectGraphMembers(sb, g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})
 		}
+		if ln := owners[model.StepRef{PhaseID: ph.ID, StepID: st.ID}]; ln != nil {
+			sb.Set("lane", laneRef(ln))
+		}
 		if evViews != nil {
 			if v := evViews[model.StepRef{PhaseID: ph.ID, StepID: st.ID}]; v != nil {
 				sb.Set("evidence", v.Value())
@@ -155,6 +164,23 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	// page), only when it chains at least two open steps.
 	if cp, ok := criticalPathValue(g); ok {
 		out.Set("criticalPath", cp)
+	}
+	if lv.exists {
+		lb := ojson.NewObject(3).
+			Set("path", ojson.StringValue(lv.rel)).
+			Set("valid", ojson.BoolValue(lv.ledger != nil))
+		if lv.ledger == nil {
+			lb.Set("issues", ojson.StringsValue(lv.issues))
+		} else {
+			active := []ojson.Value{}
+			for i := range lv.ledger.Lanes {
+				if lanes.Active(lv.ledger.Lanes[i].State) {
+					active = append(active, laneRef(&lv.ledger.Lanes[i]))
+				}
+			}
+			lb.Set("active", ojson.ArrayValue(active))
+		}
+		out.Set("lanes", lb.Value())
 	}
 	if ev.exists {
 		eb := ojson.NewObject(4).

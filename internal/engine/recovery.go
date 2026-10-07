@@ -44,7 +44,7 @@ func (e *ExternalEditError) Error() string {
 var operationKinds = map[string]map[string]bool{
 	"create":              {"plan": true, "markdown": true},
 	"create:overwrite":    {"plan": true, "markdown": true, "archive": true}, // repair archive
-	"update":              {"plan": true, "markdown": true, "dependencies": true, "evidence": true},
+	"update":              {"plan": true, "markdown": true, "dependencies": true, "evidence": true, "lanes": true},
 	"patch":               {"markdown": true},
 	"reset:draft":         {"plan": true, "markdown": true, "checkpoint": true},
 	"reset:wipe":          {"plan": true, "markdown": true, "checkpoint": true, "dependencies": true, "archive": true},
@@ -173,6 +173,11 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 			kinds[i] = "evidence"
 			if t.AfterHash == nil {
 				return bad("evidence target %s would be deleted", t.Path)
+			}
+		case t.Path == lanesRel(id):
+			kinds[i] = "lanes"
+			if t.AfterHash == nil {
+				return bad("lanes target %s would be deleted", t.Path)
 			}
 		case strings.HasPrefix(t.Path, dir+"archive/"+id+"/state-") && strings.HasSuffix(t.Path, ".json") && path.Dir(t.Path) == dir+"archive/"+id:
 			kinds[i] = "archive"

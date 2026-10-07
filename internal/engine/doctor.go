@@ -8,6 +8,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -263,6 +264,8 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 			suffix = ".dependencies.json"
 		case kindEvidence:
 			suffix = evidence.Suffix
+		case kindLanes:
+			suffix = lanes.Suffix
 		default:
 			continue
 		}
@@ -415,6 +418,13 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	// An invalid ledger never makes the plan invalid.
 	if ev, err := e.loadEvidence(p.ID); err == nil && ev.exists {
 		b.Set("evidence", e.doctorEvidence(p, ev))
+	}
+	if lv, err := e.loadLanes(p.ID); err == nil && lv.exists {
+		var g *index.Graph
+		if dv.deps != nil && len(dv.issues) == 0 {
+			g = e.graph(index.Build(p), dv)
+		}
+		b.Set("lanes", e.laneDoctor(p, lv, g))
 	}
 	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }

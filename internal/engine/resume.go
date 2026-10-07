@@ -260,8 +260,12 @@ func (e *Engine) resumePacket(s *snapshot.Snapshot, in input.ResumeInput) (*resu
 		v := a.CompactValue()
 		m.Compaction = &v
 	}
+	if l := e.lanesOf(p.ID); l != nil {
+		v := resumeLanes(l, cur)
+		m.Lanes = &v
+	}
 	if ev, err := e.loadEvidence(p.ID); err == nil && ev.ledger != nil {
-		v := resumeEvidence(p, ev.ledger.Views(e.currentTree(ev.ledger, nil)), cur)
+		v := resumeEvidence(p, ev.ledger.Views(e.currentTree(ev.ledger, e.lanesOf(p.ID), nil)), cur)
 		m.Evidence = &v
 	}
 

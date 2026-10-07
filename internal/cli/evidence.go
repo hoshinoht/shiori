@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/engine"
 	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/gitview"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 )
@@ -44,6 +45,7 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 	exitCode := fs.Int("exit-code", 0, "its exit code (without -- COMMAND)")
 	outputFile := fs.String("output-file", "", "file holding its output (only the sha256 is stored)")
 	summary := fs.String("summary", "", "one-line result summary")
+	lane := fs.String("lane", "", "lane the evidence is for (with -- COMMAND it runs in the lane checkout)")
 	var scope stringsFlag
 	fs.Var(&scope, "scope", "project-relative path the evidence covers (repeatable)")
 	var positional []string
@@ -104,6 +106,12 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		e.EvidenceSource = evidence.SourceCLIRun
+		dir := e.Root
+		if set["lane"] {
+			if dir, err = e.LaneCheckout(positional[0], *lane); err != nil {
+				return fail(stdout, stderr, *jsonOut, err)
+			}
+		}
 		var rels []string
 		for _, p := range scope {
 			rel, err := snapshot.NormalizeSpecFile(e.Root, strings.TrimSuffix(strings.TrimSpace(p), "/"))
@@ -113,12 +121,12 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 			rels = append(rels, rel)
 		}
 		// The tree the command runs against, before it can change it.
-		tree, err := evidence.Snapshot(context.Background(), e.Root, snapshot.WorkplanDir, rels)
-		if err != nil && !errors.Is(err, evidence.ErrNoGit) {
+		tree, err := gitview.Snapshot(context.Background(), dir, snapshot.WorkplanDir, rels)
+		if err != nil && !errors.Is(err, gitview.ErrNoGit) {
 			return fail(stdout, stderr, *jsonOut, err)
 		}
 		e.EvidenceTree = tree
-		code, digest, err := runRecorded(e.Root, argv, stderr)
+		code, digest, err := runRecorded(dir, argv, stderr)
 		if err != nil {
 			return fail(stdout, stderr, *jsonOut, err)
 		}
@@ -132,6 +140,9 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(scope) > 0 {
 		rec.Set("scope", ojson.StringsValue(scope))
+	}
+	if set["lane"] {
+		rec.Set("lane", ojson.StringValue(*lane))
 	}
 	toolIn := ojson.NewObject(3).
 		Set("id", ojson.StringValue(positional[0])).

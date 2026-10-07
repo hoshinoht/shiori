@@ -43,6 +43,11 @@
       "storedVersion": 1,
       "path": ".opencode/workplan/<id>.evidence.json"
     },
+    "lanes": {
+      "schema": "v1/lanes-v1.schema.json",
+      "storedVersion": 1,
+      "path": ".opencode/workplan/<id>.lanes.json"
+    },
     "transactionJournal": {
       "schema": [
         "v1/transaction-journal-v1.schema.json",

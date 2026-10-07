@@ -69,9 +69,15 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1, D.4.3 and E1 changes", () => {
+  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1, D.4.3, E1 and X3 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
+    // X3 (contracts §22): workplan_update lanes.
+    expect(reg.x3.additions).toEqual([{ tool: "workplan_update", property: "lanes" }]);
+    const lanesProp = reg.tools.find((t: any) => t.name === "workplan_update").input.properties.lanes;
+    expect(lanesProp.items.properties.op.enum).toEqual(["propose", "transition", "claims"]);
+    for (const a of reg.x3.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    delete reg.x3;
     // E1 (contracts §20): workplan_update recordEvidence.
     expect(reg.e1.additions).toEqual([{ tool: "workplan_update", property: "recordEvidence" }]);
     const rec = reg.tools.find((t: any) => t.name === "workplan_update").input.properties.recordEvidence;

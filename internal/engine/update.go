@@ -51,8 +51,8 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if err := d7Check(old); err != nil {
 		return nil, err
 	}
-	if evidenceOnly(data) {
-		return e.prepareEvidenceOnly(s, data)
+	if sidecarsOnly(data) {
+		return e.prepareSidecarsOnly(s, data)
 	}
 	targeted := false
 	for _, k := range []string{"updatePhases", "addPhases", "updateSteps", "addSteps", "dependencies"} {
@@ -348,11 +348,15 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			warnings = statusChangeWarnings(old, g)
 		}
 	}
-	ev, evAfter, evResult, evWarnings, err := e.updateEvidence(id, data, old, p)
+	ln, lnLedger, lnAfter, lnResult, lnWarnings, err := e.updateLanes(id, data, p)
 	if err != nil {
 		return nil, err
 	}
-	warnings = append(warnings, evWarnings...)
+	ev, evAfter, evResult, evWarnings, err := e.updateEvidence(id, data, old, p, lnLedger)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(append(warnings, lnWarnings...), evWarnings...)
 	p.UpdatedAt = e.nowISO()
 	if v, ok := statusUpdate(data); ok {
 		if err := statusGate(v, p); err != nil {
@@ -427,6 +431,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if depsAfter != nil {
 		specs = append(specs, targetSpec{rel: s.Dependencies.Rel, kind: "dependencies", before: s.Dependencies.Bytes, beforeOK: s.Dependencies.Exists, after: depsAfter, afterOK: true})
 	}
+	if lnAfter != nil {
+		specs = append(specs, targetSpec{rel: ln.rel, kind: "lanes", before: ln.art.Bytes, beforeOK: ln.exists, after: lnAfter, afterOK: true})
+	}
 	if evAfter != nil {
 		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true})
 	}
@@ -457,6 +464,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		// Non-failing order warnings, only when present.
 		if len(warnings) > 0 {
 			b.Set("warnings", ojson.StringsValue(warnings))
+		}
+		if lnResult != nil {
+			b.Set("lanes", *lnResult)
 		}
 		if evResult != nil {
 			b.Set("evidence", *evResult)

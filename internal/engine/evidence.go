@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/gitview"
 	"github.com/hoshinoht/shiori/internal/index"
+	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -59,15 +61,37 @@ func (e *Engine) loadEvidence(id string) (evView, error) {
 	return v, nil
 }
 
-// currentTree is the working tree with the ledger's and extra scope paths.
-func (e *Engine) currentTree(l *evidence.Ledger, extra []string) evidence.Current {
+// currentTree is the project working tree with the ledger's and extra
+// scope paths, plus the checkout tree of each active lane a record names.
+func (e *Engine) currentTree(l *evidence.Ledger, lns *lanes.Ledger, extra []string) evidence.Current {
 	scope := append([]string{}, extra...)
+	named := map[string]bool{}
 	if l != nil {
 		scope = append(scope, l.ScopePaths()...)
+		for _, r := range l.Records {
+			if r.Lane != nil {
+				named[*r.Lane] = true
+			}
+		}
 	}
 	scope = dedupe(scope)
-	t, err := evidence.Snapshot(context.Background(), e.Root, snapshot.WorkplanDir, scope)
-	return evidence.Current{Tree: t, Err: err}
+	t, err := gitview.Snapshot(context.Background(), e.Root, snapshot.WorkplanDir, scope)
+	cur := evidence.Current{Tree: t, Err: err, Lanes: map[string]*gitview.Tree{}}
+	for id, lt := range e.laneTrees(lns, scope) {
+		if named[id] {
+			cur.Lanes[id] = lt
+		}
+	}
+	return cur
+}
+
+// lanesOf is the plan's valid lanes ledger, or nil.
+func (e *Engine) lanesOf(id string) *lanes.Ledger {
+	v, err := e.loadLanes(id)
+	if err != nil {
+		return nil
+	}
+	return v.ledger
 }
 
 func dedupe(in []string) []string {
@@ -134,7 +158,7 @@ func (e *Engine) doctorEvidence(p *model.Plan, ev evView) ojson.Value {
 	if ev.ledger == nil {
 		return b.Set("issues", ojson.StringsValue(ev.issues)).Value()
 	}
-	cur := e.currentTree(ev.ledger, nil)
+	cur := e.currentTree(ev.ledger, e.lanesOf(p.ID), nil)
 	views := ev.ledger.Views(cur)
 	sum := summarizeEvidence(p, views)
 	refs := make([]ojson.Value, 0, len(sum.completedUnverified))
@@ -177,7 +201,7 @@ func resumeEvidence(p *model.Plan, views map[model.StepRef]*evidence.StepView, c
 
 // evidenceRecords builds the recordEvidence records. A pinned EvidenceTree
 // (the CLI's tree from before it ran the command) replaces the computed one.
-func (e *Engine) evidenceRecords(data ojson.Value, p *model.Plan, stored *evidence.Ledger, now string) ([]evidence.Record, evidence.Current, error) {
+func (e *Engine) evidenceRecords(data ojson.Value, p *model.Plan, stored *evidence.Ledger, lns *lanes.Ledger, now string) ([]evidence.Record, evidence.Current, error) {
 	ix := index.Build(p)
 	var out []evidence.Record
 	var scopes []string
@@ -221,26 +245,46 @@ func (e *Engine) evidenceRecords(data ojson.Value, p *model.Plan, stored *eviden
 			r.Scope = append(r.Scope, evidence.ScopeEntry{Path: rel})
 			scopes = append(scopes, rel)
 		}
+		if lid, ok := getStr(rv, "lane"); ok {
+			var ln *lanes.Lane
+			if lns != nil {
+				ln = lns.Find(lid)
+			}
+			if ln == nil || !lanes.Active(ln.State) {
+				return nil, evidence.Current{}, fmt.Errorf("Invalid evidence input: %s.lane: %s is not an active lane", at, lid)
+			}
+			r.Lane = &lid
+		}
 		r.Source = e.evidenceSource()
 		r.RecordedAt = now
 		out = append(out, r)
 	}
-	cur := e.currentTree(stored, scopes)
-	recTree := cur.Tree
-	if e.EvidenceTree != nil {
-		recTree = e.EvidenceTree
+	probe := &evidence.Ledger{Records: out}
+	if stored != nil {
+		probe.Records = append(append([]evidence.Record{}, stored.Records...), out...)
 	}
-	if recTree != nil {
-		for i := range out {
-			oid := recTree.OID
-			out[i].TreeOID = &oid
-			for k := range out[i].Scope {
-				o, ok := recTree.Scope[out[i].Scope[k].Path]
-				if !ok {
-					return nil, evidence.Current{}, fmt.Errorf("pinned evidence tree has no entry for scope %s", out[i].Scope[k].Path)
-				}
-				out[i].Scope[k].Digest = o
+	cur := e.currentTree(probe, lns, scopes)
+	for i := range out {
+		recTree := cur.Tree
+		if out[i].Lane != nil {
+			if lt := cur.Lanes[*out[i].Lane]; lt != nil {
+				recTree = lt
 			}
+		}
+		if e.EvidenceTree != nil {
+			recTree = e.EvidenceTree
+		}
+		if recTree == nil {
+			continue
+		}
+		oid := recTree.OID
+		out[i].TreeOID = &oid
+		for k := range out[i].Scope {
+			o, ok := recTree.Scope[out[i].Scope[k].Path]
+			if !ok {
+				return nil, evidence.Current{}, fmt.Errorf("pinned evidence tree has no entry for scope %s", out[i].Scope[k].Path)
+			}
+			out[i].Scope[k].Digest = o
 		}
 	}
 	return out, cur, nil
@@ -254,15 +298,16 @@ func (e *Engine) evidenceSource() string {
 	return evidence.SourceAgent
 }
 
-// evidenceOnly reports an update that only records evidence; it writes
-// the ledger alone and leaves the plan and its hashes untouched.
-func evidenceOnly(data ojson.Value) bool {
-	if !has(data, "recordEvidence") {
+// sidecarsOnly reports an update that only records evidence and/or
+// changes lanes; it writes those sidecars alone and leaves the plan and
+// its hashes untouched.
+func sidecarsOnly(data ojson.Value) bool {
+	if !has(data, "recordEvidence") && !has(data, "lanes") {
 		return false
 	}
 	for _, m := range data.Members() {
 		switch m.Key {
-		case "id", "expectedHash", "workspaceRoot", "recordEvidence":
+		case "id", "expectedHash", "workspaceRoot", "recordEvidence", "lanes":
 		case "replaceMarkdown":
 			if m.Value.Bool() {
 				return false
@@ -282,7 +327,7 @@ func msgEvidenceInvalid(ev evView) error {
 // updateEvidence returns the new ledger bytes (nil: unchanged), the result
 // member and warnings for steps completed without fresh evidence. Plans
 // that never recorded evidence get no warnings.
-func (e *Engine) updateEvidence(id string, data ojson.Value, old, p *model.Plan) (evView, []byte, *ojson.Value, []string, error) {
+func (e *Engine) updateEvidence(id string, data ojson.Value, old, p *model.Plan, lns *lanes.Ledger) (evView, []byte, *ojson.Value, []string, error) {
 	ev, err := e.loadEvidence(id)
 	if err != nil {
 		return ev, nil, nil, nil, err
@@ -315,11 +360,11 @@ func (e *Engine) updateEvidence(id string, data ojson.Value, old, p *model.Plan)
 	var recs []evidence.Record
 	var cur evidence.Current
 	if recording {
-		if recs, cur, err = e.evidenceRecords(data, p, ev.ledger, now); err != nil {
+		if recs, cur, err = e.evidenceRecords(data, p, ev.ledger, lns, now); err != nil {
 			return ev, nil, nil, nil, err
 		}
 	} else {
-		cur = e.currentTree(ev.ledger, nil)
+		cur = e.currentTree(ev.ledger, lns, nil)
 	}
 	l := &evidence.Ledger{ID: id}
 	if ev.ledger != nil {
@@ -367,14 +412,24 @@ func (e *Engine) updateEvidence(id string, data ojson.Value, old, p *model.Plan)
 	return ev, after, result, warnings, nil
 }
 
-// prepareEvidenceOnly prepares an update that only records evidence.
-func (e *Engine) prepareEvidenceOnly(s *snapshot.Snapshot, data ojson.Value) (*Prepared, error) {
+// prepareSidecarsOnly prepares an update that only touches sidecars.
+func (e *Engine) prepareSidecarsOnly(s *snapshot.Snapshot, data ojson.Value) (*Prepared, error) {
 	id := s.ID
-	ev, after, evResult, _, err := e.updateEvidence(id, data, s.Plan, s.Plan)
+	ln, lnLedger, lnAfter, lnResult, warnings, err := e.updateLanes(id, data, s.Plan)
 	if err != nil {
 		return nil, err
 	}
-	specs := []targetSpec{{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: after, afterOK: true, forceWrite: true}}
+	ev, evAfter, evResult, _, err := e.updateEvidence(id, data, s.Plan, s.Plan, lnLedger)
+	if err != nil {
+		return nil, err
+	}
+	var specs []targetSpec
+	if lnAfter != nil {
+		specs = append(specs, targetSpec{rel: ln.rel, kind: "lanes", before: ln.art.Bytes, beforeOK: ln.exists, after: lnAfter, afterOK: true, forceWrite: true})
+	}
+	if evAfter != nil {
+		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true, forceWrite: true})
+	}
 	tx := storage.NewUUID()
 	in := e.buildIntent("update", id, tx, specs, readsOf(s.StateManifest))
 	if err := e.checkTargetPaths(in); err != nil {
@@ -382,15 +437,23 @@ func (e *Engine) prepareEvidenceOnly(s *snapshot.Snapshot, data ojson.Value) (*P
 	}
 	prep := &Prepared{Tool: "workplan_update", Intent: in}
 	prep.result = func(sync bool) (Output, error) {
-		b := ojson.NewObject(8).
+		b := ojson.NewObject(10).
 			Set("updated", ojson.BoolValue(true)).
 			Set("path", ojson.StringValue(e.absRel(s.JSON.Rel))).
 			Set("planPath", ojson.StringValue(e.absRel(s.Plan.PlanFile))).
 			Set("workplan", s.Plan.Summary()).
 			Set("planHash", ojson.StringValue(s.PlanHash)).
 			Set("stateHash", ojson.StringValue(s.StateHash)).
-			Set("directorySync", dirSyncValue(sync)).
-			Set("evidence", *evResult)
+			Set("directorySync", dirSyncValue(sync))
+		if len(warnings) > 0 {
+			b.Set("warnings", ojson.StringsValue(warnings))
+		}
+		if lnResult != nil {
+			b.Set("lanes", *lnResult)
+		}
+		if evResult != nil {
+			b.Set("evidence", *evResult)
+		}
 		return Output{Value: b.Value()}, nil
 	}
 	return finalize(prep), nil

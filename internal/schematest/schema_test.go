@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
@@ -337,5 +338,63 @@ func TestJournalV2SchemaMatchesEncoder(t *testing.T) {
 	j, ok := model.DecodeJournal(v.Value)
 	if !ok || j.Version != 2 || j.Targets[1].AfterHash != nil || j.Targets[1].Backup != "b2" {
 		t.Fatalf("decode: %v %+v", ok, j)
+	}
+}
+
+// TestLanesSchemaAgreesWithParser: lanes operations accepted by the
+// native schema and the Go parser agree, and the stored sidecar the writer
+// encodes validates.
+func TestLanesSchemaAgreesWithParser(t *testing.T) {
+	c := compiler(t)
+	s, err := c.Compile(idBase + "tools/workplan_update.input.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := `"expectedHash":"` + strings.Repeat("a", 64) + `"`
+	op := func(o string) string { return `{"id":"p",` + h + `,"lanes":[` + o + `]}` }
+	cases := map[string]bool{
+		op(`{"op":"propose","laneId":"a","steps":[{"phaseId":"p","stepId":"s"}],"claims":["src"]}`):                  true,
+		op(`{"op":"propose","laneId":"a","steps":[]}`):                                                               false,
+		op(`{"op":"propose","laneId":"a","claims":["src"]}`):                                                         false,
+		op(`{"op":"propose","laneId":"a","steps":[{"phaseId":"p","stepId":"s"}],"state":"running"}`):                 false,
+		op(`{"op":"transition","laneId":"a","state":"prepared","checkout":{"path":"../wt","branch":"b"}}`):           true,
+		op(`{"op":"transition","laneId":"a","state":"done"}`):                                                        false,
+		op(`{"op":"transition","laneId":"a"}`):                                                                       false,
+		op(`{"op":"transition","laneId":"a","state":"prepared","checkout":{"branch":"b"}}`):                          false,
+		op(`{"op":"claims","laneId":"a","add":["x"],"remove":["y"]}`):                                                true,
+		op(`{"op":"claims","laneId":"a"}`):                                                                           false,
+		op(`{"op":"merge","laneId":"a"}`):                                                                            false,
+		op(`{"op":"claims","laneId":" ","add":["x"]}`):                                                               false,
+		`{"id":"p",` + h + `,"recordEvidence":[{"phaseId":"a","stepId":"b","command":"x","exitCode":0,"lane":"l"}]}`: true,
+	}
+	for in, want := range cases {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Validate(inst) == nil; got != want {
+			t.Errorf("schema %s: ok=%v want %v", in, got, want)
+		}
+		v, _ := ojson.Parse([]byte(in))
+		if _, err := input.ParseMutationInput("update", v.Value, input.SurfaceNative); (err == nil) != want {
+			t.Errorf("parser %s: ok=%v want %v (%v)", in, err == nil, want, err)
+		}
+	}
+	ls, err := c.Compile(idBase + "lanes-v1.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oid := strings.Repeat("b", 40)
+	br := "lane/a"
+	l := &lanes.Ledger{ID: "p", UpdatedAt: "2026-01-02T03:04:05Z", Lanes: []lanes.Lane{{ID: "a", State: lanes.Prepared,
+		Steps: []model.StepRef{{PhaseID: "p", StepID: "s"}}, Claims: []string{"src"}, Baseline: lanes.Baseline{TreeOID: &oid, Head: &oid},
+		Checkout: &lanes.Checkout{Path: "/w/a", Branch: &br}, History: []lanes.Event{{State: lanes.Claimed, At: "2026-01-02T03:04:05Z", Source: "agent"}},
+		CreatedAt: "2026-01-02T03:04:05Z", UpdatedAt: "2026-01-02T03:04:05Z"}}}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(string(lanes.Encode(l))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ls.Validate(inst); err != nil {
+		t.Fatal(err)
 	}
 }

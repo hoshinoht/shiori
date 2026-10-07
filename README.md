@@ -63,6 +63,11 @@
 - **Staleness:** `inspect`, `resume` and `doctor` show each step as `fresh`, `stale` (the code changed since, optionally only within `scope` paths), `failing` or `unknown`. Completing a step without fresh evidence warns once a plan uses the ledger.
 - **Run and record:** `shiori evidence my-plan --phase P --step S --expected-hash H -- go test ./...` runs the command and records its real result. The git tree is computed on a private index and object store; the repository is never written.
 
+### Worktree lanes
+- **Claims, not collisions:** `update --input '{"lanes":[{"op":"propose",...}]}'` gives a lane its steps and path claims; overlapping claims and double-owned steps are refused. Lanes move claimed → prepared (with their worktree) → running → review → integrating → merged.
+- **Checked, never acted on:** `doctor` verifies each checkout, lists files changed outside a lane's claims, flags cleanup-required and unowned worktrees, and suggests a merge order from the dependency graph. Shiori never runs `git worktree`, merges or deletes.
+- **Lane evidence:** evidence recorded in a lane (`shiori evidence --lane L -- ...`) is checked against the lane checkout, and goes stale after merging until it is repeated on the combined state.
+
 ### OpenCode adapter
 - **13 `workplan_*` tools** with the same names, argument shapes, result text and role matrix as the TypeScript plugin they replace, served by a lazily started `shiori serve --stdio` child.
 - **Host permission bridge:** the adapter proves the host instance, asks the host's permission engine for `edit` on the exact canonical resources of each prepared intent, and commits only after an allow or a genuine user reply. It never answers permissions or edits rules itself.

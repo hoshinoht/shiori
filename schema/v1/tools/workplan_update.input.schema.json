@@ -546,6 +546,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "lane": {
+            "description": "Active lane whose checkout the command ran in; while the lane is active the record is compared with that checkout, afterwards with the project tree.",
+            "$ref": "../common.schema.json#/$defs/nonblank"
           }
         },
         "required": [
@@ -561,6 +565,168 @@
             "outputDigest"
           ]
         }
+      }
+    },
+    "lanes": {
+      "description": "Worktree lane operations (spec 06 X3), applied in order to <id>.lanes.json: propose a lane for steps with path claims (overlapping claims of active lanes are refused), move it through claimed → prepared → running → review → integrating → merged (or abandoned), or change its claims. Shiori records and checks lanes; it never creates, merges or removes worktrees. An update with only lanes (and recordEvidence) leaves planHash/stateHash unchanged.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "propose",
+              "transition",
+              "claims"
+            ]
+          },
+          "laneId": {
+            "description": "Lowercase [a-z0-9-] lane id, at most 64; never reused.",
+            "$ref": "../common.schema.json#/$defs/nonblank"
+          },
+          "steps": {
+            "description": "propose: the steps the lane owns (each in at most one active lane).",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "../common.schema.json#/$defs/stepRef"
+            }
+          },
+          "claims": {
+            "description": "propose: project-relative paths the lane owns (a path claims everything under it).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "description": "transition: the next state.",
+            "type": "string",
+            "enum": [
+              "claimed",
+              "prepared",
+              "running",
+              "review",
+              "integrating",
+              "merged",
+              "abandoned"
+            ]
+          },
+          "checkout": {
+            "description": "transition to prepared: the lane's existing worktree of this repository, outside the project root (omit for a lane sharing the parent checkout).",
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "../common.schema.json#/$defs/nonblank"
+              },
+              "branch": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "add": {
+            "description": "claims: paths to claim.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remove": {
+            "description": "claims: paths to release.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "op",
+          "laneId"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "propose"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "steps"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "op",
+                  "laneId",
+                  "steps",
+                  "claims"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "transition"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "state"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "op",
+                  "laneId",
+                  "state",
+                  "checkout"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "claims"
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "add"
+                  ]
+                },
+                {
+                  "required": [
+                    "remove"
+                  ]
+                }
+              ],
+              "propertyNames": {
+                "enum": [
+                  "op",
+                  "laneId",
+                  "add",
+                  "remove"
+                ]
+              }
+            }
+          }
+        ]
       }
     }
   },
@@ -614,6 +780,11 @@
       "when": "a recordEvidence step or scope does not resolve (engine)",
       "path": "recordEvidence",
       "native": "Phase not found / Step not found in phase <phaseId>: <stepId>; scope paths must be inside the workspace root and outside .opencode/workplan"
+    },
+    {
+      "when": "a lanes operation (engine)",
+      "path": "lanes.<i>",
+      "native": "Invalid lanes input: lanes.<i>: <reason> (unknown or reused lane, step owned by another active lane, overlapping claim, illegal transition, checkout missing, nested in the root, of another repository or on another branch)"
     }
   ],
   "x-shiori-core-surface": "The standalone CLI/core surface additionally accepts optional 'workspaceRoot' (string); the native surface rejects it as an unrecognized key. The allOf conditions are native-surface rules; the core surface keeps expectedHash optional for legacy direct calls (a concurrent change must still be detected), and uses the 'core' messages in x-shiori-rules.",

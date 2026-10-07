@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"github.com/hoshinoht/shiori/internal/gitview"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 )
@@ -21,8 +22,9 @@ func Worse(a, b string) bool { return rank[a] < rank[b] }
 
 // Current is the tree records are compared against, or why there is none.
 type Current struct {
-	Tree *Tree
-	Err  error
+	Tree  *gitview.Tree
+	Err   error
+	Lanes map[string]*gitview.Tree // active lane checkouts
 }
 
 // RecordState classifies one record against the current tree.
@@ -30,17 +32,24 @@ func (c Current) RecordState(r Record) string {
 	if !r.Passed() {
 		return StateFailing
 	}
-	if r.TreeOID == nil || c.Tree == nil {
+	// While its lane is active a record is compared with the lane's
+	// checkout; afterwards with the project tree, so lane results go
+	// stale until they are repeated on the combined state.
+	tree := c.Tree
+	if r.Lane != nil && c.Lanes[*r.Lane] != nil {
+		tree = c.Lanes[*r.Lane]
+	}
+	if r.TreeOID == nil || tree == nil {
 		return StateUnknown
 	}
 	if len(r.Scope) == 0 {
-		if *r.TreeOID == c.Tree.OID {
+		if *r.TreeOID == tree.OID {
 			return StateFresh
 		}
 		return StateStale
 	}
 	for _, s := range r.Scope {
-		cur, ok := c.Tree.Scope[s.Path]
+		cur, ok := tree.Scope[s.Path]
 		if !ok {
 			return StateUnknown
 		}
@@ -123,6 +132,9 @@ func (v *StepView) Value() ojson.Value {
 			Set("source", ojson.StringValue(l.Record.Source)).
 			Set("recordedAt", ojson.StringValue(l.Record.RecordedAt)).
 			Set("treeOid", ojson.NullableString(l.Record.TreeOID))
+		if l.Record.Lane != nil {
+			b.Set("lane", ojson.StringValue(*l.Record.Lane))
+		}
 		if l.Count > 1 {
 			b.Set("records", ojson.IntValue(int64(l.Count)))
 		}

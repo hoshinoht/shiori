@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/advisor"
-	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/gitview"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -36,7 +36,7 @@ type Engine struct {
 	// EvidenceSource and EvidenceTree are set by the trusted caller: the
 	// record source ("agent" when empty) and a tree pinned before a run.
 	EvidenceSource string
-	EvidenceTree   *evidence.Tree
+	EvidenceTree   *gitview.Tree
 
 	// JournalVersion selects the journal format of new writes: 2 (the
 	// default, images by reference) or 1 (inline, readable by the

@@ -53,10 +53,11 @@ Mutating commands (print the prepared intent, then require confirmation):
   compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I
                              | --rollover [--keep-notes N] [--pin-note I]...]
                              --preview-token T --confirm ARCHIVE_SELECTED_HISTORY
-  evidence <id>              --phase P --step S --expected-hash H [--scope PATH]... [--summary S]
+  evidence <id>              --phase P --step S --expected-hash H [--scope PATH]... [--summary S] [--lane L]
                              (-- COMMAND [ARGS...] | --command C --exit-code N [--output-file F])
                              records evidence for a step (spec 06 X2); with -- COMMAND it runs
-                             the command in the root and records its exit code and output digest
+                             the command in the root (or the lane's checkout) and records its
+                             exit code and output digest
   serve --stdio              Native adapter protocol on stdin/stdout (JSON lines;
                              prepare -> host authorization -> commit; idle exit)
   version                    Print the version

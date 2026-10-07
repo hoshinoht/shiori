@@ -27,6 +27,7 @@ sections below keep the full record.
 | Linux suites (case-sensitive test pins) | done | `d91a6b6` |
 | E1 X2 evidence ledger | done | see git log |
 | P4 journal v2 by reference | done | see git log |
+| E2 X3 worktree lanes | done | see git log |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
@@ -42,8 +43,7 @@ OpenCode. Nothing in
 **Queue, in order** (each needs its own owner approval):
 
 1. ~~E1 — X2 evidence ledger~~ done (see "Stage E1" below).
-2. **E2 — X3 worktree lanes** (needs X2). Proposal first (path-claim
-   trie, lane state machine, baseline fingerprint, merge train; spec 04).
+2. ~~E2 — X3 worktree lanes~~ done (see "Stage E2" below).
 3. **Measured performance stage** (P4 done; still to-review in spec 06): X8
    warm snapshot cache in `serve`, X9 derived plan index (open choice:
    SQLite vs a small custom format, decide by measurement), X10 structural
@@ -1753,6 +1753,29 @@ commands, `serve`) keeps v1.
 
 Owner decision to review: the adapter does not yet expose a
 `journalVersion` plugin option; `serve` defaults to v2.
+
+## Stage E2 — worktree lanes (X3): DONE
+
+Contracts §22. Lanes go in through `workplan_update.lanes`
+(propose/transition/claims) into `<id>.lanes.json`, outside the state
+manifest. Git access moved into `internal/gitview` (read-only; working
+trees on a private index and object directory); scope digests now come
+from one `ls-files` listing (byte-identical to the per-path command).
+
+- Tests: `internal/lanes` (trie overlaps, transitions, merge order, round
+  trip), `internal/engine/lanes_test.go` with real `git worktree`s
+  (refusals, checkout checks, outside-claims, blockedBy/mergeOrder, lane
+  evidence fresh → stale after merging into a moved main → fresh after a
+  re-run, cleanup-required, unowned worktrees, dirty baseline, invalid
+  sidecar, crash rollback), schema/parser agreement, adapter key `x3`.
+
+### Owner decisions to review (E2)
+
+1. Claims are path prefixes; glob claims (`src/**/*.test.ts`) are not
+   supported yet.
+2. Session binding (X7: which OpenCode session works in which lane) is not
+   recorded; resume shows the current step's lane checkout instead.
+3. Notes as a separate file: measured and deferred (spec 06 under X4).
 
 ## Resume after maintenance
 

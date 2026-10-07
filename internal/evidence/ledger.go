@@ -54,6 +54,7 @@ type Record struct {
 	Summary         *string
 	TreeOID         *string // nil when the root is not in a git work tree
 	Scope           []ScopeEntry
+	Lane            *string // the lane whose checkout it ran in (nil: the project root)
 	Source          string
 	RecordedAt      string
 }
@@ -134,6 +135,14 @@ func Decode(v ojson.Value) (*Ledger, []string) {
 				entry := ScopeEntry{Path: str(se, "path", true, ssub)}
 				entry.Digest = nullableMatch(se, "digest", hashRE, "/^[a-f0-9]{64}$/", ssub)
 				r.Scope = append(r.Scope, entry)
+			}
+		}
+		if lv, ok := e.Get("lane"); ok {
+			if lv.Kind() != ojson.String || lv.Str() == "" {
+				sub("lane", "Invalid input: expected nonempty string")
+			} else {
+				ln := lv.Str()
+				r.Lane = &ln
 			}
 		}
 		r.Source = str(e, "source", true, sub)
@@ -224,6 +233,9 @@ func (r Record) Value() ojson.Value {
 				Set("digest", ojson.NullableString(s.Digest)).Value()
 		}
 		b.Set("scope", ojson.ArrayValue(sc))
+	}
+	if r.Lane != nil {
+		b.Set("lane", ojson.StringValue(*r.Lane))
 	}
 	return b.
 		Set("source", ojson.StringValue(r.Source)).

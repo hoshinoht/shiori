@@ -76,6 +76,12 @@ Evidence enters through `workplan_update.recordEvidence` (no new tool) and
   integration (W02). Merges stay user- or orchestrator-authorized, never
   automatic.
 
+**Status: implemented in stage E2** (2026-10-07,
+[contracts §22](../contracts.md#22-approved-design-changes-x3-approved-2026-10-07))
+through `workplan_update.lanes`. Claims are path prefixes (no globs yet);
+the merge order uses the dependency DAG only (claims never overlap, so
+there is no predicted overlap to break ties); lane evidence covers W02.
+
 ### X4 — Hash-chained event log
 
 Append-only `<id>.history.jsonl`; each entry carries operation, actor source,
@@ -86,6 +92,15 @@ instead of rewriting the whole plan. This changes where notes live and needs
 its own compatibility decision before adoption. Compaction archives
 closed log segments instead of rewriting them. Undo is a separately reviewed
 follow-up, not part of X4.
+
+**Measured 2026-10-07 (owner roadmap, 286 KB):** notes are 68% of the
+plan JSON (361 notes, median 485 bytes) and are rendered into the
+generated Markdown. Moving them out is a format change for every notes
+consumer (generated Markdown, rollover, advisor, decision register,
+archives, the reference plugin on rollback). Since P4 a note append
+writes ~1× the plan, resume already omits notes, and rollover archives
+old ones, so the remaining gain is plan size for full reads; deferred
+until the reference plugin is retired or notes need concurrent writers.
 
 ### X5 — Cross-plan workspace graph
 
@@ -252,7 +267,7 @@ stage it attaches to. Record decisions here with a date.
 | --- | --- | --- | --- |
 | X1 | to-review | | |
 | X2 | accepted, implemented | 2026-10-07 | stage E1 (contracts §20) |
-| X3 | accepted | 2026-09-30 | stage E2, after E1 (needs X2) |
+| X3 | accepted, implemented | 2026-10-07 | stage E2 (contracts §22); merge train as an ordering, never automatic |
 | X4 | to-review | | |
 | X5 | to-review | | |
 | X6 | accepted, implemented | 2026-09-30 | implemented in stage D.2 (contracts §12 G6) |

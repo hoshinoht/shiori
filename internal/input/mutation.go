@@ -80,7 +80,16 @@ var (
 		{key: "phaseId", kind: kNonblank, required: true}, {key: "stepId", kind: kNonblank, required: true},
 		{key: "command", kind: kNonblank, required: true},
 		required(intRange("exitCode", -2147483648, 2147483647)),
-		str("output"), hash("outputDigest"), str("summary"), strList("scope"),
+		str("output"), hash("outputDigest"), str("summary"), strList("scope"), str("lane"),
+	}}
+	// One lanes operation (spec 06 X3).
+	laneOpSpec = &ospec{fields: []fspec{
+		required(enum("op", []string{"propose", "transition", "claims"})),
+		{key: "laneId", kind: kNonblank, required: true},
+		objList("steps", refSpec), strList("claims"),
+		enum("state", []string{"claimed", "prepared", "running", "review", "integrating", "merged", "abandoned"}),
+		{key: "checkout", kind: kObject, obj: &ospec{fields: []fspec{{key: "path", kind: kNonblank, required: true}, str("branch")}}},
+		strList("add"), strList("remove"),
 	}}
 	// The note rollover selector.
 	rolloverSpec = &ospec{fields: []fspec{intRange("keepLatest", 1, advisor.MaxRolloverKeep), intList("pinNoteIndexes")}}
@@ -111,6 +120,7 @@ var toolSpecs = map[string]*ospec{
 		objList("addReviewFindings", findingSpec), strList("appendNotes"),
 		objList("dependencies", depSpec),
 		objList("recordEvidence", evidenceSpec),
+		objList("lanes", laneOpSpec),
 	}},
 	"patch": {fields: []fspec{{key: "id", kind: kID, required: true}, reqStr("patchText"), boolean("validate"), hash("expectedHash")}},
 	"reset": {fields: []fspec{
@@ -489,6 +499,7 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 			}
 		}
 		refineEvidence(data, l)
+		refineLanes(data, l)
 	case "patch", "reset", "checkpoint":
 		if native && !has("expectedHash") {
 			l.add([]string{"expectedHash"}, msgNativeHash)
@@ -590,6 +601,61 @@ func refineEvidence(data ojson.Value, l *issueList) {
 		_, dig := e.Get("outputDigest")
 		if out && dig {
 			l.add(append(at, "output"), msgEvidenceOutput)
+		}
+	}
+}
+
+// MaxLaneOps bounds the lanes operations of one update.
+const MaxLaneOps = 20
+
+// laneOpFields are the members each lanes operation takes besides op and
+// laneId (required first).
+var laneOpFields = map[string][]string{
+	"propose":    {"steps", "claims"},
+	"transition": {"state", "checkout"},
+	"claims":     {"add", "remove"},
+}
+
+// refineLanes checks each operation names only its own members.
+func refineLanes(data ojson.Value, l *issueList) {
+	rv, ok := data.Get("lanes")
+	if !ok {
+		return
+	}
+	if len(rv.Elems()) > MaxLaneOps {
+		l.add([]string{"lanes"}, "Too big: expected array to have <="+strconv.Itoa(MaxLaneOps)+" items")
+	}
+	for i, e := range rv.Elems() {
+		at := []string{"lanes", strconv.Itoa(i)}
+		op, _ := e.Get("op")
+		allowed := laneOpFields[op.Str()]
+		for _, m := range e.Members() {
+			if m.Key == "op" || m.Key == "laneId" {
+				continue
+			}
+			ok := false
+			for _, a := range allowed {
+				ok = ok || a == m.Key
+			}
+			if !ok {
+				l.add(append(at, m.Key), "Not allowed for op "+op.Str())
+			}
+		}
+		switch op.Str() {
+		case "propose":
+			if st, _ := e.Get("steps"); len(st.Elems()) == 0 {
+				l.add(append(at, "steps"), "A proposed lane needs at least one step")
+			}
+		case "transition":
+			if _, ok := e.Get("state"); !ok {
+				l.add(append(at, "state"), "Invalid input: expected string, received undefined")
+			}
+		case "claims":
+			_, a := e.Get("add")
+			_, r := e.Get("remove")
+			if !a && !r {
+				l.add(at, "A claims operation needs add or remove")
+			}
 		}
 	}
 }

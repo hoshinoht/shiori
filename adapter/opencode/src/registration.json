@@ -836,6 +836,11 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "lane": {
+                  "description": "Active lane whose checkout the command ran in",
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -843,6 +848,107 @@
                 "stepId",
                 "command",
                 "exitCode"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "lanes": {
+            "description": "Worktree lanes, applied in order: propose a lane for steps with path claims (overlapping claims are refused), move it claimed → prepared (record its worktree checkout) → running → review → integrating → merged (or abandoned), or change its claims. Shiori records and checks lanes; it never creates, merges or removes worktrees. With only id, expectedHash, lanes and recordEvidence the plan and its hashes stay unchanged",
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "propose",
+                    "transition",
+                    "claims"
+                  ]
+                },
+                "laneId": {
+                  "description": "Lowercase [a-z0-9-] id, never reused",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "steps": {
+                  "description": "propose: steps the lane owns",
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "phaseId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "stepId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "phaseId",
+                      "stepId"
+                    ]
+                  }
+                },
+                "claims": {
+                  "description": "propose: project-relative paths the lane owns (everything under each)",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "state": {
+                  "description": "transition: next state",
+                  "type": "string",
+                  "enum": [
+                    "claimed",
+                    "prepared",
+                    "running",
+                    "review",
+                    "integrating",
+                    "merged",
+                    "abandoned"
+                  ]
+                },
+                "checkout": {
+                  "description": "transition to prepared: the lane's worktree of this repository, outside the project root",
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "branch": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                "add": {
+                  "description": "claims: paths to claim",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "remove": {
+                  "description": "claims: paths to release",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "op",
+                "laneId"
               ],
               "additionalProperties": false
             }
@@ -1559,6 +1665,15 @@
       {
         "tool": "workplan_update",
         "property": "recordEvidence"
+      }
+    ]
+  },
+  "x3": {
+    "note": "Approved design change X3 (docs/contracts.md §22, 2026-10-07): worktree lanes. Removing the listed additions, then applying the e1/d4_3/d4_1/d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    "additions": [
+      {
+        "tool": "workplan_update",
+        "property": "lanes"
       }
     ]
   }
