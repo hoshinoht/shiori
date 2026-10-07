@@ -91,6 +91,11 @@ var (
 		{key: "checkout", kind: kObject, obj: &ospec{fields: []fspec{{key: "path", kind: kNonblank, required: true}, str("branch")}}},
 		strList("add"), strList("remove"),
 	}}
+	planLinkSpec = &ospec{fields: []fspec{
+		{key: "planId", kind: kNonblank, required: true},
+		required(enum("relation", []string{"blocks", "blockedBy", "related"})),
+		str("note"),
+	}}
 	// The note rollover selector.
 	rolloverSpec = &ospec{fields: []fspec{intRange("keepLatest", 1, advisor.MaxRolloverKeep), intList("pinNoteIndexes")}}
 )
@@ -121,6 +126,7 @@ var toolSpecs = map[string]*ospec{
 		objList("dependencies", depSpec),
 		objList("recordEvidence", evidenceSpec),
 		objList("lanes", laneOpSpec),
+		objList("planLinks", planLinkSpec),
 	}},
 	"patch": {fields: []fspec{{key: "id", kind: kID, required: true}, reqStr("patchText"), boolean("validate"), hash("expectedHash")}},
 	"reset": {fields: []fspec{
@@ -500,6 +506,9 @@ func refine(tool string, data, raw ojson.Value, s Surface, l *issueList) {
 		}
 		refineEvidence(data, l)
 		refineLanes(data, l)
+		if lv, ok := data.Get("planLinks"); ok && len(lv.Elems()) > MaxPlanLinks {
+			l.add([]string{"planLinks"}, "Too big: expected array to have <="+strconv.Itoa(MaxPlanLinks)+" items")
+		}
 	case "patch", "reset", "checkpoint":
 		if native && !has("expectedHash") {
 			l.add([]string{"expectedHash"}, msgNativeHash)
@@ -607,6 +616,9 @@ func refineEvidence(data ojson.Value, l *issueList) {
 
 // MaxLaneOps bounds the lanes operations of one update.
 const MaxLaneOps = 20
+
+// MaxPlanLinks bounds workplan_update.planLinks.
+const MaxPlanLinks = 100
 
 // laneOpFields are the members each lanes operation takes besides op and
 // laneId (required first).

@@ -117,6 +117,12 @@ Optional links between plans in the same coordination root (for example a
 roadmap blocking a migration plan). Read-only portfolio projection first;
 cross-plan writes need their own locking design.
 
+**Status: implemented** (2026-10-07,
+[contracts §26](../contracts.md#26-plan-links-templates-and-quality-checks-approved-2026-10-07)):
+per-plan `<id>.links.json` written by `workplan_update.planLinks`; the
+portfolio (doctor, resume `waitingOnPlans`, `shiori portfolio`) is
+read-only. No cross-plan writes.
+
 ### X6 — Critical path and slack
 
 **Status: accepted and implemented in stage D.2** (2026-09-30;
@@ -280,7 +286,7 @@ stage it attaches to. Record decisions here with a date.
 | X2 | accepted, implemented | 2026-10-07 | stage E1 (contracts §20) |
 | X3 | accepted, implemented | 2026-10-07 | stage E2 (contracts §22); merge train as an ordering, never automatic |
 | X4 | accepted, implemented | 2026-10-07 | change log and rebased updates (contracts §24); notes stay in the plan, undo not done |
-| X5 | to-review | | |
+| X5 | accepted, implemented | 2026-10-07 | plan links sidecar and a read-only portfolio (contracts §26) |
 | X6 | accepted, implemented | 2026-09-30 | implemented in stage D.2 (contracts §12 G6) |
 | X7 | to-review | | |
 | X8 | accepted, implemented | 2026-10-07 | serve snapshot cache; see STATUS "Performance pass" |

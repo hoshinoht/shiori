@@ -338,6 +338,7 @@ func (e *Engine) laneDoctor(p *model.Plan, v lnView, g *index.Graph) ojson.Value
 	ix := index.Build(p)
 	ctx := context.Background()
 	prereqs := map[string][]string{}
+	changedBy := map[string][]string{} // path -> active lanes changing it
 	var items []ojson.Value
 	for i := range l.Lanes {
 		ln := &l.Lanes[i]
@@ -393,7 +394,11 @@ func (e *Engine) laneDoctor(p *model.Plan, v lnView, g *index.Graph) ojson.Value
 					if j, _ := filepath.Glob(filepath.Join(ln.Checkout.Path, filepath.FromSlash(snapshot.WorkplanDir), "*.transaction.json")); len(j) > 0 {
 						issues = append(issues, "a workplan transaction is pending inside the lane checkout; workplan writes belong to the parent root")
 					}
-					if out := e.outOfClaims(ln); out != nil {
+					out, changed := e.outOfClaims(ln)
+					for _, p := range changed {
+						changedBy[p] = append(changedBy[p], ln.ID)
+					}
+					if out != nil {
 						cb.Set("outsideClaims", *out)
 						if n, _ := out.Get("count"); n.NumberLiteral() != "0" {
 							issues = append(issues, "the checkout changes paths outside the lane's claims")
@@ -412,6 +417,17 @@ func (e *Engine) laneDoctor(p *model.Plan, v lnView, g *index.Graph) ojson.Value
 	order, cycle := l.MergeOrder(prereqs)
 	b.Set("lanes", ojson.ArrayValue(items)).
 		Set("mergeOrder", ojson.StringsValue(orEmpty(order)))
+	// Files two active lanes both change merge with conflicts, whatever
+	// their claims say.
+	var overlaps []ojson.Value
+	for _, p := range sortedKeys(changedBy) {
+		if ids := changedBy[p]; len(ids) > 1 && len(overlaps) < evidenceListCap {
+			overlaps = append(overlaps, ojson.NewObject(2).Set("path", ojson.StringValue(p)).Set("lanes", ojson.StringsValue(ids)).Value())
+		}
+	}
+	if len(overlaps) > 0 {
+		b.Set("changeOverlaps", ojson.ArrayValue(overlaps))
+	}
 	if len(cycle) > 0 {
 		b.Set("mergeCycle", ojson.StringsValue(cycle))
 	}
@@ -441,21 +457,22 @@ func (e *Engine) laneDoctor(p *model.Plan, v lnView, g *index.Graph) ojson.Value
 
 // outOfClaims lists the paths a lane checkout changed since its baseline
 // commit that none of its claims cover.
-func (e *Engine) outOfClaims(ln *lanes.Lane) *ojson.Value {
+func (e *Engine) outOfClaims(ln *lanes.Lane) (*ojson.Value, []string) {
 	if ln.Baseline.Head == nil {
-		return nil
+		return nil, nil
 	}
 	ctx := context.Background()
 	cur, err := gitview.Snapshot(ctx, ln.Checkout.Path, snapshot.WorkplanDir, nil)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	base, err := gitview.HeadTree(ctx, ln.Checkout.Path, *ln.Baseline.Head, snapshot.WorkplanDir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
+	changed := base.Changed(cur)
 	var out []string
-	for _, p := range base.Changed(cur) {
+	for _, p := range changed {
 		if !lanes.Covers(ln.Claims, p) {
 			out = append(out, p)
 		}
@@ -465,7 +482,7 @@ func (e *Engine) outOfClaims(ln *lanes.Lane) *ojson.Value {
 		shown = shown[:evidenceListCap]
 	}
 	v := ojson.NewObject(2).Set("count", ojson.IntValue(int64(len(out)))).Set("paths", ojson.StringsValue(orEmpty(shown))).Value()
-	return &v
+	return &v, changed
 }
 
 // stepLanes maps each step owned by an active lane to the lane.

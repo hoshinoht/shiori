@@ -56,7 +56,7 @@ func (e *Engine) logged(prep *Prepared, pre *snapshot.Snapshot, post *model.Plan
 	en.Changes = append(en.Changes, extra...)
 	for _, t := range in.Targets {
 		switch t.Kind {
-		case "dependencies", "checkpoint", "evidence", "lanes":
+		case "dependencies", "checkpoint", "evidence", "lanes", "links":
 			op := "changed"
 			if !t.BeforeExists {
 				op = "added"

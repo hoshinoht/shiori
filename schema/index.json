@@ -53,6 +53,11 @@
       "storedVersion": 1,
       "path": ".opencode/workplan/<id>.history.jsonl (one JSON object per line)"
     },
+    "links": {
+      "schema": "v1/links-v1.schema.json",
+      "storedVersion": 1,
+      "path": ".opencode/workplan/<id>.links.json"
+    },
     "transactionJournal": {
       "schema": [
         "v1/transaction-journal-v1.schema.json",

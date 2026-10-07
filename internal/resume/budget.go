@@ -74,7 +74,7 @@ func TargetPage(maxChars, limit int) int {
 // compaction advice) never cost page
 // content: each is added only if the chosen level still fits with it.
 func (m *Packet) Render() (ojson.Value, string, error) {
-	advisory := []**ojson.Value{&m.Since, &m.Lanes, &m.Evidence, &m.Compaction}
+	advisory := []**ojson.Value{&m.WaitingOn, &m.Since, &m.Lanes, &m.Evidence, &m.Compaction}
 	held := make([]*ojson.Value, len(advisory))
 	for i, a := range advisory {
 		held[i], *a = *a, nil

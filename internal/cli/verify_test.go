@@ -97,3 +97,23 @@ func TestVerifyRerunsStaleEvidence(t *testing.T) {
 		t.Fatalf("after a failing re-run: %s", errOut)
 	}
 }
+
+func TestCreateFromTemplate(t *testing.T) {
+	root := t.TempDir()
+	withPrompt(t, false, "")
+	if code, _, errOut := run("create", "fix-it", "--goal", "Fix it", "--template", "bugfix", "--yes", "--root", root); code != 0 {
+		t.Fatal(errOut)
+	}
+	_, out, _ := run("read", "fix-it", "--json", "--no-markdown", "--root", root)
+	for _, want := range []string{`"kind": "bugfix"`, `"id": "failing-test"`, "`TEST_COMMAND` fails with the reported symptom"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("plan lacks %s:\n%s", want, out)
+		}
+	}
+	if code, _, errOut := run("create", "x", "--goal", "g", "--template", "nope", "--root", root); code != 2 || !strings.Contains(errOut, "bugfix, feature, migration") {
+		t.Fatalf("unknown template: %d %s", code, errOut)
+	}
+	if code, _, errOut := run("create", "y", "--goal", "g", "--template", "feature", "--input", `{"phases":[]}`, "--root", root); code != 2 || !strings.Contains(errOut, "exclusive") {
+		t.Fatalf("template with phases: %d %s", code, errOut)
+	}
+}

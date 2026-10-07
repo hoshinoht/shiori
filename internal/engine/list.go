@@ -24,6 +24,7 @@ const (
 	kindEvidence     = "evidence"
 	kindLanes        = "lanes"
 	kindHistory      = "history"
+	kindLinks        = "links"
 	kindLock         = "lock"
 	kindTemporary    = "temporary"
 	kindArchive      = "archive"
@@ -61,6 +62,8 @@ func classifyName(name string, isDir bool) (dirEntry, bool) {
 		return dirEntry{name, kindLanes}, true
 	case strings.HasSuffix(name, history.Suffix):
 		return dirEntry{name, kindHistory}, true
+	case strings.HasSuffix(name, LinksSuffix):
+		return dirEntry{name, kindLinks}, true
 	case strings.HasSuffix(name, ".json"):
 		return dirEntry{name, ""}, true
 	}

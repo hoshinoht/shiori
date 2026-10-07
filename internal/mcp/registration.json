@@ -956,6 +956,36 @@
               ],
               "additionalProperties": false
             }
+          },
+          "planLinks": {
+            "description": "Links from this plan to other plans in the same root, replacing the stored list: blocks (the other plan waits for this one), blockedBy (this plan waits for the other) or related. Plans that do not exist yet are kept with a warning. Shown in doctor's portfolio and, while an unfinished plan blocks this one, in resume. With only id, expectedHash and sidecar members the plan and its hashes stay unchanged",
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "planId": {
+                  "description": "The other plan's id",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "relation": {
+                  "type": "string",
+                  "enum": [
+                    "blocks",
+                    "blockedBy",
+                    "related"
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "planId",
+                "relation"
+              ]
+            }
           }
         },
         "required": [
@@ -1687,6 +1717,15 @@
       {
         "tool": "workplan_update",
         "property": "rebase"
+      }
+    ]
+  },
+  "x5": {
+    "note": "Approved design change X5 (docs/contracts.md §26, 2026-10-07): cross-plan links. Removing the listed additions, then applying the x4/x3/e1/d4_3/d4_1/d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    "additions": [
+      {
+        "tool": "workplan_update",
+        "property": "planLinks"
       }
     ]
   }

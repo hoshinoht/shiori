@@ -223,6 +223,12 @@ func (e *Engine) Doctor(in input.DoctorInput) (ojson.Value, error) {
 			Set("omittedStrayArtifacts", ojson.IntValue(int64(len(strays)-len(listed)))).
 			Set("warnings", ojson.StringsValue(warnings))
 	}
+	// The cross-plan view, only when some plan records links.
+	if filterID == nil {
+		if pf, ok, err := e.Portfolio(); err == nil && ok {
+			out.Set("portfolio", pf)
+		}
+	}
 	return out.Set("readOnly", ojson.BoolValue(true)).Value(), nil
 }
 
@@ -269,6 +275,8 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 			suffix = lanes.Suffix
 		case kindHistory:
 			suffix = history.Suffix
+		case kindLinks:
+			suffix = LinksSuffix
 		default:
 			continue
 		}
@@ -421,6 +429,11 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	// An invalid ledger never makes the plan invalid.
 	if ev, err := e.loadEvidence(p.ID); err == nil && ev.exists {
 		b.Set("evidence", e.doctorEvidence(p, ev))
+		// Plan quality matters once a plan records evidence (as with the
+		// completion warnings, other plans get none).
+		if q, ok := planQuality(p); ok {
+			b.Set("quality", q)
+		}
 	}
 	if lv, err := e.loadLanes(p.ID); err == nil && lv.exists {
 		var g *index.Graph

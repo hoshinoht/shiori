@@ -302,12 +302,12 @@ func (e *Engine) evidenceSource() string {
 // changes lanes; it writes those sidecars alone and leaves the plan and
 // its hashes untouched.
 func sidecarsOnly(data ojson.Value) bool {
-	if !has(data, "recordEvidence") && !has(data, "lanes") {
+	if !has(data, "recordEvidence") && !has(data, "lanes") && !has(data, "planLinks") {
 		return false
 	}
 	for _, m := range data.Members() {
 		switch m.Key {
-		case "id", "expectedHash", "rebase", "workspaceRoot", "recordEvidence", "lanes":
+		case "id", "expectedHash", "rebase", "workspaceRoot", "recordEvidence", "lanes", "planLinks":
 		case "replaceMarkdown":
 			if m.Value.Bool() {
 				return false
@@ -423,7 +423,15 @@ func (e *Engine) prepareSidecarsOnly(s *snapshot.Snapshot, data ojson.Value, rb 
 	if err != nil {
 		return nil, err
 	}
+	lk, lkAfter, lkWarnings, err := e.updateLinks(id, data)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, lkWarnings...)
 	var specs []targetSpec
+	if lkAfter != nil {
+		specs = append(specs, targetSpec{rel: lk.rel, kind: "links", before: lk.art.Bytes, beforeOK: lk.exists, after: lkAfter, afterOK: true})
+	}
 	if lnAfter != nil {
 		specs = append(specs, targetSpec{rel: ln.rel, kind: "lanes", before: ln.art.Bytes, beforeOK: ln.exists, after: lnAfter, afterOK: true, forceWrite: true})
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
 )
@@ -252,5 +253,49 @@ func TestLanesInvalidSidecarAndRecovery(t *testing.T) {
 	}
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatal("rollback kept the lanes sidecar")
+	}
+}
+
+// TestLanesChangeOverlaps: a file both active lanes change is reported,
+// even outside both claims.
+func TestLanesChangeOverlaps(t *testing.T) {
+	e, root := laneRoot(t)
+	mustLanes(t, e, proposeBoth)
+	for _, id := range []string{"core", "web"} {
+		wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+id)
+		t.Cleanup(func() { os.RemoveAll(wt) })
+		gitT(t, root, "worktree", "add", "-q", wt, "-b", "lane/"+id)
+		mustLanes(t, e, `{"op":"transition","laneId":"`+id+`","state":"prepared","checkout":{"path":"`+wt+`"}}`)
+		os.WriteFile(filepath.Join(wt, "README"), []byte(id+"\n"), 0o644)
+	}
+	ov, ok := doctorLanes(t, e).Get("changeOverlaps")
+	if !ok || string(ojson.Compact(ov)) != `[{"path":"README","lanes":["core","web"]}]` {
+		t.Fatalf("overlaps %s", ojson.Compact(ov))
+	}
+}
+
+func TestPlanQuality(t *testing.T) {
+	v := func(s string) *string { return &s }
+	p := &model.Plan{Phases: []model.Phase{{ID: "p", Steps: []model.Step{
+		{ID: "a", Status: "draft"},
+		{ID: "b", Status: "in_progress", Validation: v("Looks right to a reviewer")},
+		{ID: "c", Status: "draft", Validation: v("go test ./...")},
+		{ID: "d", Status: "draft", Validation: v("Run `make check` and read the output")},
+		{ID: "e", Status: "completed"},
+	}}}}
+	q, ok := planQuality(p)
+	if !ok {
+		t.Fatal("nothing reported")
+	}
+	got := string(ojson.Compact(q))
+	for _, want := range []string{`"stepsWithoutValidation":{"count":1,"steps":[{"phaseId":"p","stepId":"a"}]}`, `"stepsWithoutCommand":{"count":1,"steps":[{"phaseId":"p","stepId":"b"}]}`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("%s lacks %s", got, want)
+		}
+	}
+	done := &model.Plan{Phases: []model.Phase{{ID: "p", Steps: []model.Step{{ID: "a", Status: "completed"}}}},
+		Findings: []model.Finding{{Severity: "blocker", Title: "x"}}}
+	if q, ok := planQuality(done); !ok || !strings.Contains(string(ojson.Compact(q)), `"highFindingsWithoutOpenWork":1`) {
+		t.Fatal("open blocker with nothing open not reported")
 	}
 }

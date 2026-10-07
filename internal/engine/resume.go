@@ -261,6 +261,10 @@ func (e *Engine) resumePacket(s *snapshot.Snapshot, in input.ResumeInput) (*resu
 		m.Compaction = &v
 	}
 	m.Since = e.sinceCheckpoint(s)
+	if w := e.waitingOnPlans(p.ID); len(w) > 0 {
+		v := ojson.StringsValue(w)
+		m.WaitingOn = &v
+	}
 	if l := e.lanesOf(p.ID); l != nil {
 		v := resumeLanes(l, cur)
 		m.Lanes = &v

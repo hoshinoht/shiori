@@ -357,7 +357,11 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	warnings = append(append(warnings, lnWarnings...), evWarnings...)
+	lk, lkAfter, lkWarnings, err := e.updateLinks(id, data)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(append(append(warnings, lnWarnings...), evWarnings...), lkWarnings...)
 	p.UpdatedAt = e.nowISO()
 	if v, ok := statusUpdate(data); ok {
 		if err := statusGate(v, p); err != nil {
@@ -438,6 +442,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	}
 	if evAfter != nil {
 		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true})
+	}
+	if lkAfter != nil {
+		specs = append(specs, targetSpec{rel: lk.rel, kind: "links", before: lk.art.Bytes, beforeOK: lk.exists, after: lkAfter, afterOK: true})
 	}
 	var extra []history.Change
 	if has(data, "planMarkdown") || moved {

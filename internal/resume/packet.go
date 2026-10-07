@@ -139,6 +139,7 @@ type Packet struct {
 	Evidence            *ojson.Value // compact evidence advice
 	Lanes               *ojson.Value // active lanes and the current step's lane
 	Since               *ojson.Value // writes since the last checkpoint (change log)
+	WaitingOn           *ojson.Value // unfinished plans that block this one (plan links)
 	High                []Finding
 	HighCounts          [3]int
 	Warnings            []string
@@ -491,6 +492,9 @@ func (m *Packet) build(pr params) ojson.Value {
 	}
 	if m.Since != nil {
 		out.Set("sinceCheckpoint", *m.Since)
+	}
+	if m.WaitingOn != nil {
+		out.Set("waitingOnPlans", *m.WaitingOn)
 	}
 	return out.
 		Set("safety", safety).

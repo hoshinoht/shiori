@@ -30,7 +30,7 @@
 | **Core** | One Go binary (`shiori`) with no runtime dependencies; `CGO_ENABLED=0` gives a static binary on Linux |
 | **Interfaces** | `shiori` CLI (human or `--json` output) · `shiori serve --stdio` JSON-lines protocol · OpenCode plugin in `adapter/opencode/` |
 | **Tools** | 13 `workplan_*` tools: `create`, `update`, `patch`, `reset`, `checkpoint`, `compact`, `compact_preview`, `read`, `inspect`, `list`, `validate`, `resume`, `doctor` |
-| **Storage** | `.opencode/workplan/`: `<id>.json` + `<id>.md`, `<id>.checkpoint.json`, `<id>.dependencies.json`, `<id>.transaction.json` (journal), `<id>.evidence.json`, `<id>.lanes.json`, `<id>.history.jsonl` (change log), `archive/<id>/` |
+| **Storage** | `.opencode/workplan/`: `<id>.json` + `<id>.md`, `<id>.checkpoint.json`, `<id>.dependencies.json`, `<id>.transaction.json` (journal), `<id>.evidence.json`, `<id>.lanes.json`, `<id>.history.jsonl` (change log), `<id>.links.json`, `archive/<id>/` |
 | **Writes** | Prepare → authorize → commit, stale-hash check, workspace and plan locks, durable journal |
 | **Validated on** | darwin/arm64 with Go 1.27.1, bun 1.4.0 and OpenCode 2.0.19/2.0.20. Linux builds and passes `go vet` but is not yet validated end to end |
 
@@ -74,6 +74,11 @@
 - **Every write recorded:** each committed write appends one hash-chained line to `<id>.history.jsonl`: the operation, who made it (agent, CLI or MCP), the hashes before and after, and the steps, phases, findings and notes it changed. `shiori history my-plan` prints it. The log is advisory: outside the plan hashes, and edits made outside Shiori show up as gaps.
 - **Fewer stale-hash refusals:** with `rebase: true` (or `--rebase` on `serve`, `mcp` and `update`), a write whose `expectedHash` is stale still applies when every newer write changed other parts of the plan; it is refused only when they overlap.
 - **Handoffs:** `resume` shows what changed since the last checkpoint (step moves, findings, notes); `doctor` reports steps in progress for over three days with no new evidence.
+
+### Planning aids
+- **Templates:** `shiori create my-fix --goal G --template bugfix` (also `feature`, `migration`) starts a plan with standard phases and steps that already name what to run.
+- **Plan quality:** `shiori report` (and `doctor`, once a plan records evidence) lists open steps with no validation or with a validation that names nothing to run, and open blocker findings with no step left to resolve them.
+- **Several plans:** `planLinks` records that a plan blocks, waits for or relates to another. `shiori portfolio` and `doctor` show each plan's progress and what it waits on, and `resume` says when an unfinished plan blocks the current one.
 
 ### OpenCode adapter
 - **13 `workplan_*` tools** with the same names, argument shapes, result text and role matrix as the TypeScript plugin they replace, served by a lazily started `shiori serve --stdio` child.

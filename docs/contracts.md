@@ -13,8 +13,9 @@ spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
 reference; section 19 the host version policy, section 20 the E1
 evidence ledger, section 21 journal v2, section 22 worktree lanes,
-section 23 the MCP server, section 24 the change log and section 25
-the verify and report commands.
+section 23 the MCP server, section 24 the change log, section 25
+the verify and report commands and section 26 plan links, templates and
+quality checks.
 
 ## 1. Sources of truth
 
@@ -1931,3 +1932,33 @@ CLI only; no tool, schema or sidecar format changes.
    the dependency sidecar), the critical path, evidence with commit
    links, open blocker/critical/major findings, lanes and the last ten
    logged writes, as Markdown or `--json`.
+
+## 26. Plan links, templates and quality checks (APPROVED 2026-10-07)
+
+1. **Plan links (spec 06 X5).** `workplan_update.planLinks` (at most
+   100 `{planId, relation, note?}`, relation `blocks`, `blockedBy` or
+   `related`) replaces `<id>.links.json`
+   ([links-v1](../schema/v1/links-v1.schema.json)), a parent-owned
+   sidecar outside the state manifest; with only sidecar members the plan
+   and its hashes stay unchanged. Self-links and duplicate
+   (plan, relation) pairs are refused; links to plans that do not exist
+   yet are kept with a warning. Adapter key `x5`.
+2. **Portfolio.** Read-only and advisory, built from every links
+   sidecar: each plan's status and progress, `blocks` edges (`blockedBy`
+   reversed), `related` pairs, which plans wait on unfinished
+   (not completed or cancelled) blockers, one cycle if any, and links to
+   missing plans. Shown as doctor's top-level `portfolio` (unfiltered
+   doctor, only when some plan has links), as resume's advisory
+   `waitingOnPlans`, and by `shiori portfolio`. Cross-plan writes do not
+   exist.
+3. **Templates.** `shiori create --template feature|bugfix|migration`
+   fills `phases` with standard steps whose validations name a
+   placeholder command (`TEST_COMMAND`, `CHECK_COMMAND`); `kind` defaults
+   to the template name. CLI only; exclusive with `phases` in `--input`.
+4. **Quality checks.** Advisory `quality` per plan: open steps without a
+   validation, open steps whose validation names no command (no code
+   span and no leading command word), and open blocker/critical/major
+   findings while no step is open. Doctor shows it only for plans that
+   record evidence (as with the completion warnings); `shiori report`
+   always does. Doctor's `lanes` adds `changeOverlaps`: paths that two
+   active lanes' checkouts both change, whatever their claims.

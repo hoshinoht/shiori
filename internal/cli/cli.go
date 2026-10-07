@@ -38,10 +38,12 @@ Read commands (never prompt, never write):
   history <id>               The plan's change log [--since HASH --limit N] (spec 06 X4)
   report <id>                Status report in Markdown (--json): progress, open work, evidence and
                              the commits it verified [--commits N], findings, lanes, recent activity
+  portfolio                  Plans and the plans they wait on, from planLinks (spec 06 X5)
 
 Mutating commands (print the prepared intent, then require confirmation):
   create <id>                --goal G [--title --kind --status --plan-file --markdown-file F
-                             --append-note N --overwrite --replace-markdown]
+                             --append-note N --overwrite --replace-markdown
+                             --template feature|bugfix|migration]
   update <id>                [--title --goal --status --plan-file --markdown-file F
                              --append-note N --replace-markdown --rebase] | --recovery resume|rollback
   patch <id>                 --patch-file F [--validate]
@@ -124,6 +126,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runVerify(rest, stdout, stderr)
 	case "report":
 		return runReport(rest, stdout, stderr)
+	case "portfolio":
+		return runPortfolio(rest, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {

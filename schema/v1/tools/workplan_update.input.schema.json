@@ -732,6 +732,35 @@
           }
         ]
       }
+    },
+    "planLinks": {
+      "description": "X5 (contracts §26): links to other plans, replacing the stored list; written to <id>.links.json.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relation": {
+            "enum": [
+              "blocks",
+              "blockedBy",
+              "related"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "planId",
+          "relation"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

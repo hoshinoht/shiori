@@ -178,6 +178,23 @@ func (e *Engine) Report(ctx context.Context, rawID string, commits int) (ojson.V
 		out.Set("evidence", ojson.ArrayValue(verified))
 	}
 
+	if q, ok := planQuality(p); ok {
+		w("## Plan quality\n\n")
+		if v, ok := q.Get("stepsWithoutValidation"); ok {
+			n, _ := v.Get("count")
+			w("- %s open steps have no validation.\n", n.NumberLiteral())
+		}
+		if v, ok := q.Get("stepsWithoutCommand"); ok {
+			n, _ := v.Get("count")
+			w("- %s open steps have a validation that names no command to run.\n", n.NumberLiteral())
+		}
+		if v, ok := q.Get("highFindingsWithoutOpenWork"); ok {
+			w("- %s open blocker/critical/major findings, but no step is open to resolve them.\n", v.NumberLiteral())
+		}
+		w("\n")
+		out.Set("quality", q)
+	}
+
 	// Open blocker, critical and major findings.
 	buckets := index.BuildBuckets(p)
 	if high := buckets.High(); len(high) > 0 {

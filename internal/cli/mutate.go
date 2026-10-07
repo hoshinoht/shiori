@@ -118,6 +118,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	mdFile := fs.String("markdown-file", "", "file with explicit linked Markdown")
 	overwrite := fs.Bool("overwrite", false, "")
 	replaceMD := fs.Bool("replace-markdown", false, "")
+	template := fs.String("template", "", "create: start from a plan template (feature, bugfix, migration)")
 	rebase := fs.Bool("rebase", false, "update: apply over newer non-conflicting writes when --expected-hash is stale (X4)")
 	var notes, blockers, guardrails, refs, validations, appendValidations, phases, noteIdx, findingIdx, pinNotes stringsFlag
 	fs.Var(&notes, "append-note", "")
@@ -160,7 +161,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	allowed := map[string][]string{
-		"create":     {"title", "goal", "kind", "status", "plan-file", "markdown-file", "overwrite", "replace-markdown", "append-note"},
+		"create":     {"title", "goal", "kind", "status", "plan-file", "markdown-file", "overwrite", "replace-markdown", "append-note", "template"},
 		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery", "rebase"},
 		"patch":      {"patch-file", "validate"},
 		"reset":      {"mode", "preserve-notes", "replace-markdown", "preview-token", "confirm"},
@@ -255,6 +256,21 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	boolFlag("overwrite", "overwrite", *overwrite)
 	boolFlag("replace-markdown", "replaceMarkdown", *replaceMD)
 	boolFlag("rebase", "rebase", *rebase)
+	if set["template"] {
+		phases, ok := templatePhases(*template)
+		if !ok {
+			return usageErr("unknown template %q (templates: %s)", *template, templateNames())
+		}
+		for _, m := range members {
+			if m.Key == "phases" {
+				return usageErr("--template and phases in --input are exclusive")
+			}
+		}
+		put("phases", phases)
+		if !set["kind"] {
+			put("kind", ojson.StringValue(*template))
+		}
+	}
 	noteKey := "appendNotes"
 	if cmd == "create" {
 		noteKey = "notes"

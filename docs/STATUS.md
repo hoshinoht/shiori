@@ -1846,6 +1846,26 @@ in memory from `ls-tree`, so nothing is written to the repository).
   listed, refused off a terminal without `--yes`, re-run and recorded;
   asserted records skipped), `TestShellSplitInvertsJoin`, `TestReport`.
 
+## Plan links, templates and quality checks: DONE
+
+Contracts §26 (spec 06 X5). `workplan_update.planLinks` writes
+`<id>.links.json`; the read-only portfolio appears in doctor, resume
+(`waitingOnPlans`) and `shiori portfolio`. `create --template`; advisory
+plan-quality checks (report always, doctor for plans with evidence);
+doctor reports files two active lanes both change.
+
+- Tests: `TestPlanLinksAndPortfolio` (links-only write keeps the state
+  hash, refusals, missing-plan warning, edges, related pairs, resume
+  and doctor members, cycle, release once the blocker completes),
+  `TestPlanQuality`, `TestLanesChangeOverlaps`, `TestCreateFromTemplate`,
+  adapter key `x5`.
+
+### Owner decisions to review
+
+1. Doctor shows `quality` only for plans that record evidence, so the
+   pinned doctor corpus stays unchanged; `report` always shows it.
+2. Templates are CLI-only (no `workplan_create` member).
+
 ## Resume after maintenance
 
 See [Resume point](#resume-point-paused-after-d43) at the top. The Go
