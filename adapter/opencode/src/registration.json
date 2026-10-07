@@ -1040,7 +1040,7 @@
             "type": "boolean"
           },
           "includeNotes": {
-            "description": "Only with phaseId/stepId: also return reviewFindings and notes (default false). A filtered read returns the plan header, hashes and the selected phase/step; linked Markdown only with includeMarkdown=true",
+            "description": "With phaseId/stepId: also return reviewFindings and notes (default false). A filtered read returns the plan header, hashes and the selected phase/step; linked Markdown only with includeMarkdown=true. Without a filter, false leaves the notes out of the whole document (often most of a long plan)",
             "type": "boolean"
           }
         },

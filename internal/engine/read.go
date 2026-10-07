@@ -48,15 +48,27 @@ func (e *Engine) Read(in input.ReadInput) (ojson.Value, error) {
 	}
 	var out ojson.Value
 	if !filtered {
-		out = ojson.NewObject(7).
+		doc := p.ToValue()
+		// includeNotes=false leaves notes out of a full read (they are
+		// most of a long plan); absent keeps the reference output.
+		dropNotes := in.IncludeNotes != nil && !*in.IncludeNotes
+		if dropNotes {
+			doc = withoutMember(doc, "notes")
+		}
+		ob := ojson.NewObject(8).
 			Set("path", ojson.StringValue(s.JSON.Path)).
-			Set("workplan", p.ToValue()).
+			Set("workplan", doc).
 			Set("selection", selection).
 			Set("plan", plan.Value()).
 			Set("dependencies", e.dependencies(s, nil).value()).
 			Set("planHash", ojson.StringValue(s.PlanHash)).
-			Set("stateHash", ojson.StringValue(s.StateHash)).
-			Value()
+			Set("stateHash", ojson.StringValue(s.StateHash))
+		if dropNotes {
+			ob.Set("notesOmitted", ojson.NewObject(2).
+				Set("count", ojson.IntValue(int64(len(p.Notes)))).
+				Set("read", ojson.StringValue("workplan_read id="+p.ID)).Value())
+		}
+		out = ob.Value()
 	} else {
 		notes := in.IncludeNotes != nil && *in.IncludeNotes
 		out = ojson.NewObject(8).
@@ -175,4 +187,15 @@ func selectPhases(p *model.Plan, phaseID, stepID *string) (ojson.Value, error) {
 		Set("phaseId", ojson.NullableString(phaseID)).
 		Set("stepId", ojson.NullableString(stepID)).
 		Set("phases", ojson.ArrayValue(phases)).Value(), nil
+}
+
+// withoutMember is an object without one member (order kept).
+func withoutMember(v ojson.Value, key string) ojson.Value {
+	var ms []ojson.Member
+	for _, m := range v.Members() {
+		if m.Key != key {
+			ms = append(ms, m)
+		}
+	}
+	return ojson.ObjectValue(ms)
 }

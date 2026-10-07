@@ -22,7 +22,7 @@
       "type": "boolean"
     },
     "includeNotes": {
-      "description": "D.1 (approved 2026-09-30): with phaseId/stepId, also return reviewFindings and notes in the slice (default false). Ignored by an unfiltered read, which always returns the whole document.",
+      "description": "D.1 (approved 2026-09-30): with phaseId/stepId, also return reviewFindings and notes in the slice (default false). On an unfiltered read, false leaves the notes out (notesOmitted gives their count); absent or true returns the whole document.",
       "type": "boolean"
     }
   },
