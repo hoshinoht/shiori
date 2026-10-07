@@ -143,8 +143,8 @@ claude mcp add workplan -- /abs/path/shiori mcp --root /abs/path/to/project
 ```
 
 ```jsonc
-// OpenCode (tools appear as workplan_resume, ...); check your version's MCP config keys
-{ "mcp": { "workplan": { "type": "local", "command": ["/abs/path/shiori", "mcp", "--root", "/abs/path/to/project"] } } }
+// OpenCode 2.0.24 (tools appear as workplan_resume, ...)
+{ "mcp": { "servers": { "workplan": { "type": "local", "command": ["/abs/path/shiori", "mcp", "--root", "/abs/path/to/project", "--write-approval", "client"], "codemode": false } } } }
 ```
 
 - **Root:** `--root` (trusted server configuration). Without it the client's MCP roots are used, and exactly one `file://` root is required. Tool input can never choose the root.
