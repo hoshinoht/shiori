@@ -64,6 +64,9 @@ type Options struct {
 	JournalVersion int
 	// Rebase is the default of workplan_update's rebase member.
 	Rebase bool
+	// PollInterval is how often subscribed resources are checked
+	// (0: DefaultPollInterval).
+	PollInterval time.Duration
 }
 
 type tool struct {
@@ -115,7 +118,9 @@ const (
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
-	codeInternal       = -32603
+	// codeResourceNotFound is MCP's resource-not-found error.
+	codeResourceNotFound = -32002
+	codeInternal         = -32603
 )
 
 type server struct {
@@ -137,6 +142,15 @@ type server struct {
 	pending     map[string]chan message
 	inflight    map[string]context.CancelFunc
 	wg          sync.WaitGroup
+
+	// Resource subscriptions (resources.go).
+	ctx         context.Context
+	subs        map[string]string // uri -> plan id
+	tokens      map[string]string // uri -> last change token
+	listed      bool
+	listedPlans string
+	watching    bool
+	checkMu     sync.Mutex
 }
 
 // Serve runs one stdio session until the input closes or ctx ends.
@@ -154,12 +168,14 @@ func Serve(ctx context.Context, opts Options) error {
 		return err
 	}
 	s := &server{opts: opts, tools: tools, byMCP: map[string]tool{}, out: bufio.NewWriter(opts.Out),
-		pending: map[string]chan message{}, inflight: map[string]context.CancelFunc{}}
+		pending: map[string]chan message{}, inflight: map[string]context.CancelFunc{},
+		subs: map[string]string{}, tokens: map[string]string{}}
 	for _, t := range tools {
 		s.byMCP[opts.ToolPrefix+strings.TrimPrefix(t.name, "workplan_")] = t
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.ctx = ctx
 	sc := bufio.NewScanner(opts.In)
 	sc.Buffer(make([]byte, 64<<10), protocol.DefaultMaxFrameBytes)
 	for sc.Scan() {
@@ -230,7 +246,7 @@ func (s *server) handle(ctx context.Context, m message) {
 		}
 	case m.ID == nil:
 		s.notification(m)
-	case m.Method == "tools/call":
+	case m.Method == "tools/call" || strings.HasPrefix(m.Method, "resources/") && m.Method != "resources/templates/list":
 		// May wait on the client (roots, elicitation): run concurrently.
 		cctx, cancel := context.WithCancel(ctx)
 		s.mu.Lock()
@@ -245,7 +261,24 @@ func (s *server) handle(ctx context.Context, m message) {
 				s.mu.Unlock()
 				cancel()
 			}()
-			res, e := s.callTool(cctx, m.Params)
+			var res any
+			var e *rpcError
+			switch m.Method {
+			case "tools/call":
+				res, e = s.callTool(cctx, m.Params)
+			case "resources/list":
+				res, e = s.listResources(cctx)
+			case "resources/read":
+				res, e = s.readResource(cctx, m.Params)
+			case "resources/subscribe", "resources/unsubscribe":
+				if _, err := s.engineFor(cctx); err != nil {
+					res, e = nil, &rpcError{codeInternal, err.Error()}
+				} else {
+					res, e = s.subscribe(m.Params, m.Method == "resources/subscribe")
+				}
+			default:
+				res, e = nil, &rpcError{codeMethodNotFound, "Method not found: " + m.Method}
+			}
 			if cctx.Err() != nil {
 				return // cancelled by the client or the session ended: no response
 			}
@@ -309,12 +342,17 @@ func (s *server) request(m message) (any, *rpcError) {
 		s.logf("initialized %s (protocol %s, roots=%v, elicitation=%v, writes=%s)", s.client, version, s.roots, s.elicitation, s.approvalMode())
 		return map[string]any{
 			"protocolVersion": version,
-			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "shiori", "version": s.opts.Version},
-			"instructions":    instructions,
+			"capabilities": map[string]any{
+				"tools":     map[string]any{"listChanged": false},
+				"resources": map[string]any{"subscribe": true, "listChanged": true},
+			},
+			"serverInfo":   map[string]any{"name": "shiori", "version": s.opts.Version},
+			"instructions": instructions,
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
+	case "resources/templates/list":
+		return listTemplates(), nil
 	case "tools/list":
 		list := make([]any, 0, len(s.tools))
 		for _, t := range s.tools {
@@ -480,6 +518,9 @@ func (s *server) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcEr
 		class = engine.ErrorClass(err)
 	}
 	s.logf("%s -> %s (%s)", p.Name, class, time.Since(start).Round(time.Microsecond))
+	if !readTools[strings.TrimPrefix(t.name, "workplan_")] && err == nil {
+		s.checkChanges() // announce our own writes without waiting for the poll
+	}
 	if err != nil {
 		return toolResult(err.Error(), true), nil
 	}

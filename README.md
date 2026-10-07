@@ -144,7 +144,8 @@ claude mcp add workplan -- /abs/path/shiori mcp --root /abs/path/to/project
 
 - **Root:** `--root` (trusted server configuration). Without it the client's MCP roots are used, and exactly one `file://` root is required. Tool input can never choose the root.
 - **Writes** are prepared without touching anything and committed only after approval. `--write-approval auto` (the default) asks the user through MCP elicitation, showing the plan and every file the write touches, when the client supports it. Otherwise it relies on the client's own tool-call approval. `elicitation` refuses writes without elicitation, `client` always relies on the client, and `deny` makes the server read-only. Every precondition is still rechecked under the locks.
-- Also: `--tool-prefix`, `--journal-version 1|2`, `--compaction-advice SPEC`. Requests and outcomes are logged on stderr.
+- **Resources:** each plan's resume packet, status report and change log are readable as `workplan://<id>/resume`, `/report` and `/history`. Subscribed resources are announced (`notifications/resources/updated`) after writes through the server and, within two seconds, after changes made elsewhere; a new or removed plan sends `notifications/resources/list_changed`.
+- Also: `--tool-prefix`, `--journal-version 1|2`, `--compaction-advice SPEC`, `--rebase`. Requests and outcomes are logged on stderr.
 
 Compared with the OpenCode adapter, an MCP client approves per tool call (or per elicitation prompt), not through OpenCode's permission engine on exact file paths, and the host version policy and session facts do not apply.
 

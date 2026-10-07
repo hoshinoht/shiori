@@ -200,7 +200,8 @@ func rerun(e *engine.Engine, id string, r engine.Rerun, stderr io.Writer) (ojson
 }
 
 // shellSplit inverts shellJoin: words separated by spaces, each plain or
-// single-quoted with '\” for a quote. Anything else is refused.
+// single-quoted (an embedded quote is closed, escaped and reopened).
+// Anything else is refused.
 func shellSplit(s string) ([]string, error) {
 	var out []string
 	var cur strings.Builder

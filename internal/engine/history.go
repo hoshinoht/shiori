@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -381,4 +382,36 @@ func (e *Engine) History(rawID, since string, limit int) (ojson.Value, error) {
 		}
 	}
 	return b.Value(), nil
+}
+
+// PlanIDs lists the canonical plan ids in the workplan root.
+func (e *Engine) PlanIDs() ([]string, error) {
+	l, err := e.scanDir()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, name := range l.primary {
+		if id, err := model.NormalizeID(name); err == nil && id == name {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// ChangeToken changes whenever a plan's state or its evidence, lanes or
+// change log changes (reads through the cache; for change notifications).
+func (e *Engine) ChangeToken(id string) string {
+	tok := "missing"
+	if s, err := e.load(id); err == nil {
+		tok = s.StateHash
+	}
+	for _, rel := range []string{evidenceRel(id), lanesRel(id), historyRel(id)} {
+		if st, err := os.Stat(e.absRel(rel)); err == nil {
+			tok += fmt.Sprintf(" %d.%d", st.Size(), st.ModTime().UnixNano())
+		} else {
+			tok += " -"
+		}
+	}
+	return tok
 }

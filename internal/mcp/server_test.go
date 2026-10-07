@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/engine"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
 
@@ -28,6 +30,7 @@ type client struct {
 	// answer replies to server requests (roots/list, elicitation/create).
 	answer func(method string, params json.RawMessage) any
 	nextID int
+	notes  []string // notification methods (and uris) received
 }
 
 func start(t *testing.T, opts Options) *client {
@@ -69,6 +72,12 @@ func (c *client) next() map[string]json.RawMessage {
 		if method, ok := m["method"]; ok {
 			var name string
 			json.Unmarshal(method, &name)
+			if _, isRequest := m["id"]; !isRequest {
+				var p struct{ URI string }
+				json.Unmarshal(m["params"], &p)
+				c.notes = append(c.notes, strings.TrimSpace(name+" "+p.URI))
+				continue
+			}
 			if c.answer == nil {
 				c.t.Fatalf("unexpected server request %s", name)
 			}
@@ -328,3 +337,74 @@ func TestCancelWhileAwaitingApproval(t *testing.T) {
 		t.Fatalf("a cancelled call left files: %v", m)
 	}
 }
+
+// TestResources: plans are listed and readable as resources; subscribed
+// ones are announced after our own writes and after changes made outside
+// the session, and a new plan changes the list.
+func TestResources(t *testing.T) {
+	root := testutil.NewRoot(t, "full-valid")
+	c := start(t, Options{Root: root.Path, WriteApproval: ApproveClient, PollInterval: 20 * time.Millisecond})
+	info := c.initialize(map[string]any{})
+	caps, _ := info["capabilities"].(map[string]any)
+	if res, _ := caps["resources"].(map[string]any); res["subscribe"] != true || res["listChanged"] != true {
+		t.Fatalf("capabilities %v", caps)
+	}
+	var list struct {
+		Resources []struct{ URI, MimeType string }
+	}
+	json.Unmarshal(c.call("resources/list", nil)["result"], &list)
+	uris := map[string]string{}
+	for _, r := range list.Resources {
+		uris[r.URI] = r.MimeType
+	}
+	if uris["workplan://full-plan/resume"] != "application/json" || uris["workplan://full-plan/report"] != "text/markdown" || uris["workplan://full-plan/history"] == "" {
+		t.Fatalf("resources %v", uris)
+	}
+	var read struct {
+		Contents []struct{ Text string }
+	}
+	json.Unmarshal(c.call("resources/read", map[string]any{"uri": "workplan://full-plan/report"})["result"], &read)
+	if len(read.Contents) != 1 || !strings.Contains(read.Contents[0].Text, "# Full plan") {
+		t.Fatalf("report %+v", read)
+	}
+	if m := c.call("resources/read", map[string]any{"uri": "workplan://full-plan/nope"}); !strings.Contains(string(m["error"]), "-32002") {
+		t.Fatalf("unknown resource: %s", m["error"])
+	}
+	c.call("resources/subscribe", map[string]any{"uri": "workplan://full-plan/resume"})
+	c.tool("update", map[string]any{"id": "full-plan", "expectedHash": stateHash(t, root.Path, "full-plan"), "appendNotes": []string{"from the session"}})
+	if !slices.Contains(c.notes, "notifications/resources/updated workplan://full-plan/resume") {
+		t.Fatalf("own write not announced: %v", c.notes)
+	}
+	wait := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !slices.Contains(c.notes, want) {
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q: %v", want, c.notes)
+			}
+			time.Sleep(10 * time.Millisecond)
+			c.call("ping", nil)
+		}
+	}
+	c.notes = nil
+	e, _ := engine.New(root.Path)
+	in, _ := ojson.Parse([]byte(`{"id":"other","goal":"g"}`))
+	data, _ := input.ParseMutationInput("create", in.Value, input.SurfaceCore)
+	p, err := e.Prepare("create", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Execute(context.Background(), p, allow{}, engine.ExecOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	wait("notifications/resources/list_changed")
+	c.notes = nil
+	pj := filepath.Join(root.Path, ".opencode/workplan/full-plan.json")
+	b, _ := os.ReadFile(pj)
+	os.WriteFile(pj, []byte(strings.Replace(string(b), `"goal": "`, `"goal": "edited `, 1)), 0o644)
+	wait("notifications/resources/updated workplan://full-plan/resume")
+}
+
+type allow struct{}
+
+func (allow) Authorize(context.Context, engine.AuthRequest) error { return nil }

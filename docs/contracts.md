@@ -1827,6 +1827,16 @@ adapter over the same engine, not a new tool surface.
 4. **Doctor** runtime facts: the registered tool names, plugin id
    `shiori-mcp`, and the client and approval mode as the permission
    detail; host version facts are absent.
+5. **Resources** (added 2026-10-07, read-only): `workplan://<id>/resume`
+   (the resume packet with default arguments), `/report` (§25, commit
+   links over 20 commits) and `/history` (the newest 50 log entries,
+   §24), listed per plan and as templates. `resources/subscribe` is
+   supported: a subscribed plan is checked after each write through the
+   server and every two seconds (cached stat-trusting reads of the plan,
+   plus the evidence, lanes and change-log files), and a change sends
+   `notifications/resources/updated`; once the client has listed
+   resources, a changed set of plans sends
+   `notifications/resources/list_changed`. Unknown URIs answer -32002.
 
 Not yet: MCP 2026-07-28 (stateless requests, multi-round-trip
 elicitation, roots deprecated): `--root` already covers its
