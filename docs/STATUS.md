@@ -624,8 +624,16 @@ against it.
 5. **Durability facts** are probed in a private temporary directory, which
    may be a different filesystem from the project; per-commit
    `directorySync` remains the project-filesystem fact.
-6. **Linux**: `writeSupported` is true on linux/amd64 per the approved matrix,
-   but the stage C/D suites have only run on darwin/arm64 (contracts §5.6).
+6. **Linux**: `writeSupported` is true on linux/amd64 per the approved matrix.
+   Resolved 2026-10-07: `go vet`, `go test -count=1 ./...`,
+   `go test -race -count=1 ./...` and the adapter `bun test` (58 pass,
+   1 skip) pass on linux/amd64 (Go 1.27.1, bun on ext4/overlay). The first
+   run found only test-side APFS assumptions: the `list-mixed` `UPPER`
+   vectors recorded case-insensitive lookup. On a case-sensitive
+   filesystem the tests now expect `Workplan file not found` (contracts §10)
+   via `testutil.AdaptCaseLookup`, drop `raw-hashes` for the `UPPER`
+   lookups (the plan is never opened) and skip only the pins whose Go
+   output carries that lookup.
 7. **Host versions**: `SUPPORTED_HOST_VERSIONS` lists the verified OpenCode
    versions (contracts §5.6). Under the default `hostPolicy: "patch"` a later
    patch of a verified line still writes and doctor flags it as unverified;

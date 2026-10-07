@@ -40,6 +40,9 @@ type vector struct {
 	ReadOnly *struct {
 		Unchanged bool `json:"bytesAndMtimesUnchanged"`
 	} `json:"readOnly"`
+	// caseAdapted marks an oracle rewritten for a case-sensitive
+	// filesystem (adaptCaseLookup).
+	caseAdapted bool
 }
 
 // mutationVector is the mutation corpus vector shape.
