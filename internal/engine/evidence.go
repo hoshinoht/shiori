@@ -438,6 +438,9 @@ func (e *Engine) prepareSidecarsOnly(s *snapshot.Snapshot, data ojson.Value, rb 
 	if evAfter != nil {
 		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true, forceWrite: true})
 	}
+	if err := rb.check(s.Plan, s.Plan, specs, nil); err != nil {
+		return nil, err
+	}
 	tx := storage.NewUUID()
 	in := e.buildIntent("update", id, tx, specs, readsOf(s.StateManifest))
 	if err := e.checkTargetPaths(in); err != nil {

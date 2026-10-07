@@ -151,7 +151,9 @@ async function startServer(kind: Kind, scratchBase: string, fixture: string, pla
   // Exact absolute rules: the real plan and the scratch plan's artifacts
   // are "ask" (answered by the test as the user); one target is "deny".
   const rules = [
-    ...[`${planId}.json`, "parity-demo.json", "parity-demo.md", "parity-demo.checkpoint.json"].map((n) => ({ action: "edit", resource: join(wpDir, n), effect: "ask" })),
+    ...[`${planId}.json`, "parity-demo.json", "parity-demo.md", "parity-demo.checkpoint.json",
+      "parity-demo.evidence.json", "parity-demo.lanes.json", "parity-demo.links.json",
+    ].map((n) => ({ action: "edit", resource: join(wpDir, n), effect: "ask" })),
     { action: "edit", resource: deny, effect: "deny" },
   ];
   writeFileSync(join(env.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({
@@ -381,6 +383,20 @@ async function scenario(s: Server, planId: string, steps: StepResult[], facts: R
   }, "once");
   const rr = await step(s, planS, "read-demo", "workplan_read", { id: "parity-demo", includeMarkdown: false });
   const reset = await step(s, planS, "reset", "workplan_reset", { id: "parity-demo", expectedHash: parse(rr).stateHash, mode: "draft", replaceMarkdown: true }, "once");
+  if (s.kind === "shi") {
+    const noNotes = await step(s, planS, "read-no-notes", "workplan_read", { id: "parity-demo", includeMarkdown: false, includeNotes: false });
+    if (!noNotes.ok || parse(noNotes).workplan.notes !== undefined) throw new Error("includeNotes=false did not omit notes");
+    const preExtensions = fileMap(s.root);
+    const extensions = await step(s, planS, "update-extensions", "workplan_update", {
+      id: "parity-demo", expectedHash: parse(reset).stateHash,
+      recordEvidence: [{ phaseId: "active-phase", stepId: "active-step", command: "bun test", exitCode: 0 }],
+      lanes: [{ op: "propose", laneId: "smoke", steps: [{ phaseId: "active-phase", stepId: "active-step" }], claims: ["src"] }],
+      planLinks: [{ planId, relation: "related" }],
+    }, "once");
+    if (!extensions.ok || parse(extensions).stateHash !== parse(reset).stateHash) throw new Error("sidecar update failed or changed the plan state");
+    facts.extensionsChangedFiles = changedFiles(preExtensions, fileMap(s.root));
+    facts.extensionsAskResources = extensions.askResources;
+  }
   const preReject = fileMap(s.root);
   await step(s, planS, "update-rejected", "workplan_update", { id: "parity-demo", expectedHash: parse(reset).stateHash, title: "must not land" }, "reject");
   facts.rejectChangedFiles = changedFiles(preReject, fileMap(s.root));
@@ -492,7 +508,19 @@ smokeIt("runs the adapter on a private OpenCode server (and the reference for pa
     }
     expect(by("update-real-plan").ok).toBe(true);
     expect(by("update-real-plan").asks).toBe(1);
-    expect((shi.facts.realPlanMutationChangedFiles as string[]).filter((f) => !f.endsWith(".md"))).toEqual([`.opencode/workplan/${planId}.json`]);
+    expect((shi.facts.realPlanMutationChangedFiles as string[]).filter((f) => !f.endsWith(".md"))).toEqual([
+      `.opencode/workplan/${planId}.history.jsonl`, `.opencode/workplan/${planId}.json`,
+    ]);
+    expect(shi.facts.realPlanMutationAskResources).toContain(`.opencode/workplan/${planId}.history.jsonl`);
+    expect(by("update-extensions").ok).toBe(true);
+    expect(by("update-extensions").asks).toBe(1);
+    expect(shi.facts.extensionsChangedFiles).toEqual([
+      ".opencode/workplan/parity-demo.evidence.json", ".opencode/workplan/parity-demo.history.jsonl",
+      ".opencode/workplan/parity-demo.lanes.json", ".opencode/workplan/parity-demo.links.json",
+    ]);
+    for (const suffix of ["evidence.json", "history.jsonl", "lanes.json", "links.json"]) {
+      expect(shi.facts.extensionsAskResources).toContain(`.opencode/workplan/parity-demo.${suffix}`);
+    }
     for (const l of ["create", "update", "patch", "checkpoint", "compact-apply", "reset"]) expect(by(l).ok).toBe(true);
     expect(by("update-rejected").ok).toBe(false);
     expect(shi.facts.rejectChangedFiles).toEqual([]);
@@ -506,12 +534,15 @@ smokeIt("runs the adapter on a private OpenCode server (and the reference for pa
     const doctor = JSON.parse(by("doctor-final").content!);
     expect(doctor.runtimeFacts.permission.detail).toContain("host verified");
     expect(doctor.runtimeFacts.permission.detail).toContain("event stream ready");
+    expect(doctor.runtimeFacts.host.writes).toBe("enabled");
+    expect(doctor.runtimeFacts.host.opencodeVersion).toBe(shi.facts.runtimeVersion);
     expect(doctor.runtimeFacts.plugin.effective).toBe(true);
 
     if (runs.ref) {
       const ref = runs.ref;
       const diffs: Array<{ label: string; exact: boolean; normalizedEqual: boolean; ok: [boolean, boolean]; paths?: string[]; shi?: string; ref?: string }> = [];
       for (const s of shi.steps) {
+        if (s.label === "read-no-notes" || s.label === "update-extensions") continue; // Shiori extensions have no reference equivalent.
         const r = ref.steps.find((x) => x.label === s.label)!;
         const a = normalize(s.ok ? s.content : s.error, shi.root);
         const b = normalize(r.ok ? r.content : r.error, ref.root);

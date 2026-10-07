@@ -453,7 +453,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if depsAfter != nil {
 		extra = append(extra, history.Change{Path: "dependencies", Op: "changed"})
 	}
-	if err := rb.check(old, p, extra); err != nil {
+	if err := rb.check(old, p, specs, extra); err != nil {
 		return nil, err
 	}
 	tx := storage.NewUUID()

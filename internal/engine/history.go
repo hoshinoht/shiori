@@ -116,11 +116,17 @@ func (e *Engine) rebaseWanted(data ojson.Value) bool {
 
 // check refuses the rebase when this write changes an element a newer
 // write changed.
-func (rb *rebase) check(cur, next *model.Plan, extra []history.Change) error {
+func (rb *rebase) check(cur, next *model.Plan, targets []targetSpec, extra []history.Change) error {
 	if rb == nil {
 		return nil
 	}
 	ours := append(history.Diff(cur, next), extra...)
+	for _, t := range targets {
+		switch t.kind {
+		case "evidence", "lanes", "links":
+			ours = append(ours, history.Change{Path: t.kind, Op: "changed"})
+		}
+	}
 	c, by, bad := history.Conflict(ours, rb.entries)
 	if !bad {
 		return nil

@@ -317,9 +317,6 @@ func (l *Log) Since(from, to string) ([]Entry, bool) {
 // Conflict is the first change in theirs that overlaps one in ours.
 func Conflict(ours []Change, theirs []Entry) (Change, *Entry, bool) {
 	for i := range theirs {
-		if !theirs[i].StateChange() {
-			continue
-		}
 		for _, t := range theirs[i].Changes {
 			for _, o := range ours {
 				if overlaps(o, t) {

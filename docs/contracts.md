@@ -1890,8 +1890,10 @@ undo is not part of this change.
    current state hash, and committed if no element it changes overlaps
    an element a newer write changed. Overlap is the same path, or a
    parent and child where either side adds, removes or reorders; two note
-   appends never overlap; sidecar-only writes (evidence, lanes) never
-   count. The result carries `rebased: {fromHash, over: [{seq, op,
+   appends never overlap. Changes to evidence, lanes and links also
+   conflict when the log includes them in the rebase range, including
+   sidecar-only writes; they remain outside the state hash. The result
+   carries `rebased: {fromHash, over: [{seq, op,
    source, at}]}`. Otherwise the reference stale refusal is returned with
    `Not rebased: <reason>.` appended. Without `rebase` the stale
    refusal is unchanged. The locked recheck still binds the commit to
