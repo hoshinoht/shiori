@@ -400,6 +400,7 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 			return nil, fmt.Errorf("Workplan transaction %s cannot %s: the %s image of %s is missing or changed; journal evidence preserved", j.TransactionID, mode, side, t.Path)
 		}
 		tg := storage.Target{Rel: t.Path, Kind: "recovery", Before: cur, BeforeExists: exists, After: img, AfterExists: imgHash != nil, Mode: os.FileMode(t.Mode)}
+		tg.Seal()
 		if tg.AfterExists {
 			tg.Stage = storage.StagePath(t.Path, nonce, len(in.Targets))
 		}

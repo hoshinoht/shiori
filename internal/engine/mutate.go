@@ -296,6 +296,7 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		if t.beforeOK && in.JournalVersion == 2 {
 			tg.Backup = storage.BackupPath(t.rel, tx, len(in.Targets))
 		}
+		tg.Seal()
 		in.Targets = append(in.Targets, tg)
 		rels = append(rels, t.rel)
 	}
@@ -326,6 +327,89 @@ func overlay(in *storage.Intent, id string) map[string][]byte {
 	}
 	return m
 }
+
+// postHashes computes the plan and state hashes the committed intent
+// produces without reading or parsing anything: every manifest path that
+// is not a target was verified unchanged under the lock, so its digest is
+// the prepared one, and targets carry their after digests. post is the
+// plan as written. ok=false (a path the prepared manifest does not
+// cover, such as a newly linked spec) means: use postSnapshot.
+func (e *Engine) postHashes(pre *snapshot.Snapshot, in *storage.Intent, post *model.Plan) (planHash, stateHash string, ok bool) {
+	known := map[string]snapshot.Entry{}
+	for _, en := range pre.StateManifest {
+		known[en.Path] = en
+	}
+	known[journalRel(pre.ID)] = snapshot.Entry{Path: journalRel(pre.ID), Missing: true}
+	if in != nil {
+		for _, t := range in.Targets {
+			p := snapshot.ManifestPath(t.Rel)
+			if t.AfterExists {
+				known[p] = snapshot.Entry{Path: p, SHA256: t.AfterHash()}
+			} else {
+				known[p] = snapshot.Entry{Path: p, Missing: true}
+			}
+		}
+	}
+	pf, err := snapshot.NormalizePlanFile(e.Root, post.PlanFile)
+	if err != nil {
+		return "", "", false
+	}
+	paths := []string{snapshot.PlanRel(pre.ID), pf}
+	for _, raw := range post.SpecFiles {
+		sp, err := snapshot.NormalizeSpecFile(e.Root, raw)
+		if err != nil {
+			return "", "", false
+		}
+		paths = append(paths, sp)
+	}
+	seen := map[string]bool{}
+	var planEntries []snapshot.Entry
+	for _, p := range paths {
+		mp := snapshot.ManifestPath(p)
+		if seen[mp] {
+			continue
+		}
+		seen[mp] = true
+		en, hit := known[mp]
+		if !hit {
+			return "", "", false
+		}
+		planEntries = append(planEntries, en)
+	}
+	stateEntries := append([]snapshot.Entry{}, planEntries...)
+	for _, suffix := range []string{".checkpoint.json", ".dependencies.json", ".transaction.json"} {
+		en, hit := known[snapshot.SidecarRel(pre.ID, suffix)]
+		if !hit {
+			return "", "", false
+		}
+		stateEntries = append(stateEntries, en)
+	}
+	planHash = snapshot.ManifestHash(snapshot.PlanHashVersion, planEntries)
+	stateHash = snapshot.ManifestHash(snapshot.StateHashVersion, stateEntries)
+	if verifyPostHashes {
+		if ps, err := e.postSnapshot(in, pre.ID); err != nil || ps.PlanHash != planHash || ps.StateHash != stateHash {
+			panic(fmt.Sprintf("postHashes differ from the reloaded snapshot for %s: %v", pre.ID, err))
+		}
+	}
+	return planHash, stateHash, true
+}
+
+// postSummary is the committed plan's summary and hashes: from the plan
+// as written and the known digests, else from a reload.
+func (e *Engine) postSummary(pre *snapshot.Snapshot, in *storage.Intent, post *model.Plan) (ojson.Value, string, string, error) {
+	if ph, sh, ok := e.postHashes(pre, in, post); ok {
+		return post.Summary(), ph, sh, nil
+	}
+	ps, err := e.postSnapshot(in, pre.ID)
+	if err != nil {
+		return ojson.Value{}, "", "", err
+	}
+	return ps.Plan.Summary(), ps.PlanHash, ps.StateHash, nil
+}
+
+// verifyPostHashes makes postHashes cross-check against a full reload
+// (tests only).
+var verifyPostHashes = false
 
 // postSnapshot is the snapshot the committed intent produces.
 func (e *Engine) postSnapshot(in *storage.Intent, id string) (*snapshot.Snapshot, error) {

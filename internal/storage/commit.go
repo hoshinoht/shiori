@@ -171,9 +171,24 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 		h.AfterLock()
 	}
 
-	// Locked recheck of every precondition.
+	// Locked recheck of every precondition; each file is hashed once.
+	type digest struct {
+		sum string
+		ok  bool
+	}
+	seen := map[string]digest{}
+	digestOf := func(rel string) (string, bool, error) {
+		if d, hit := seen[rel]; hit {
+			return d.sum, d.ok, nil
+		}
+		sum, ok, err := fileDigest(abs(root, rel))
+		if err == nil {
+			seen[rel] = digest{sum, ok}
+		}
+		return sum, ok, err
+	}
 	for _, e := range in.Reads {
-		sum, ok, err := fileDigest(abs(root, e.Rel))
+		sum, ok, err := digestOf(e.Rel)
 		if err != nil {
 			return res, err
 		}
@@ -185,12 +200,12 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 		}
 	}
 	for _, t := range in.Targets {
-		sum, ok, err := fileDigest(abs(root, t.Rel))
+		if in.Recovery != "" {
+			break // recovery preflight is the caller's Recheck
+		}
+		sum, ok, err := digestOf(t.Rel)
 		if err != nil {
 			return res, err
-		}
-		if in.Recovery != "" {
-			continue // recovery preflight is the caller's Recheck
 		}
 		if ok != t.BeforeExists || (ok && sum != t.BeforeHash()) {
 			if !t.BeforeExists {

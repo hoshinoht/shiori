@@ -449,7 +449,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	prep := &Prepared{Tool: "workplan_update", Intent: in}
 	prep.recheck = func() error { return e.claimCheck(id, all, mds) }
 	prep.result = func(sync bool) (Output, error) {
-		post, err := e.postSnapshot(in, id)
+		summary, planHash, stateHash, err := e.postSummary(s, in, p)
 		if err != nil {
 			return Output{}, err
 		}
@@ -457,9 +457,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			Set("updated", ojson.BoolValue(true)).
 			Set("path", ojson.StringValue(e.absRel(s.JSON.Rel))).
 			Set("planPath", ojson.StringValue(e.absRel(newPF))).
-			Set("workplan", post.Plan.Summary()).
-			Set("planHash", ojson.StringValue(post.PlanHash)).
-			Set("stateHash", ojson.StringValue(post.StateHash)).
+			Set("workplan", summary).
+			Set("planHash", ojson.StringValue(planHash)).
+			Set("stateHash", ojson.StringValue(stateHash)).
 			Set("directorySync", dirSyncValue(sync))
 		// Non-failing order warnings, only when present.
 		if len(warnings) > 0 {

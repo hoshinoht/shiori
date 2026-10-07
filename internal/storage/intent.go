@@ -23,11 +23,31 @@ type Target struct {
 	Mode         fs.FileMode
 	Stage        string // same-directory staging path (empty for deletions)
 	Backup       string // journal v2: hard link to the before image (empty when absent)
+
+	sealed          bool // the digests below are computed
+	beforeH, afterH string
+}
+
+// Seal computes the digests once; a sealed target's images must not change.
+func (t *Target) Seal() {
+	t.beforeH, t.afterH = digestOrEmpty(t.Before, t.BeforeExists), digestOrEmpty(t.After, t.AfterExists)
+	t.sealed = true
 }
 
 // BeforeHash / AfterHash are the lowercase SHA-256 digests, "" when absent.
-func (t Target) BeforeHash() string { return digestOrEmpty(t.Before, t.BeforeExists) }
-func (t Target) AfterHash() string  { return digestOrEmpty(t.After, t.AfterExists) }
+func (t Target) BeforeHash() string {
+	if t.sealed {
+		return t.beforeH
+	}
+	return digestOrEmpty(t.Before, t.BeforeExists)
+}
+
+func (t Target) AfterHash() string {
+	if t.sealed {
+		return t.afterH
+	}
+	return digestOrEmpty(t.After, t.AfterExists)
+}
 
 func digestOrEmpty(b []byte, ok bool) string {
 	if !ok {
