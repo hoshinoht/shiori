@@ -16,6 +16,7 @@ import (
 	"github.com/hoshinoht/shiori/internal/engine"
 	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/gitview"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
 )
@@ -90,6 +91,7 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
+	e.Source = history.SourceCLI
 	rec := ojson.NewObject(8).
 		Set("phaseId", ojson.StringValue(*phase)).
 		Set("stepId", ojson.StringValue(*step))

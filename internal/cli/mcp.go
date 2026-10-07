@@ -20,12 +20,13 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	prefix := fs.String("tool-prefix", "", `prefix for tool names ("" suits a server named "workplan": workplan_resume, ...)`)
 	approval := fs.String("write-approval", mcp.ApproveAuto, "auto | elicitation | client | deny")
 	journal := fs.Int("journal-version", 2, "journal format of writes: 2 or 1")
+	rebase := fs.Bool("rebase", false, "apply stale updates over non-conflicting newer writes unless a call sets rebase=false (X4)")
 	advice := fs.String("compaction-advice", "", "compaction advisor thresholds: off, or key=value pairs")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 0 || (*journal != 1 && *journal != 2) {
-		fmt.Fprintln(stderr, "shiori mcp: usage: shiori mcp [--root DIR] [--tool-prefix P] [--write-approval auto|elicitation|client|deny] [--journal-version 1|2] [--compaction-advice SPEC]")
+		fmt.Fprintln(stderr, "shiori mcp: usage: shiori mcp [--root DIR] [--tool-prefix P] [--write-approval auto|elicitation|client|deny] [--journal-version 1|2] [--compaction-advice SPEC] [--rebase]")
 		return 2
 	}
 	var th *advisor.Thresholds
@@ -40,7 +41,7 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	err := mcp.Serve(ctx, mcp.Options{In: stdin, Out: stdout, Err: stderr, Root: *root, ToolPrefix: *prefix,
-		WriteApproval: *approval, Version: Version, Compaction: th, JournalVersion: *journal})
+		WriteApproval: *approval, Version: Version, Compaction: th, JournalVersion: *journal, Rebase: *rebase})
 	if err != nil {
 		fmt.Fprintln(stderr, "shiori mcp:", err)
 		return 1

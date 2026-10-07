@@ -171,14 +171,21 @@ func (e *Engine) errPendingJournal(id string) error {
 }
 
 // StaleHashError is the reference stale-state refusal.
-type StaleHashError struct{ Current string }
+type StaleHashError struct {
+	Current    string
+	NotRebased string // why a requested rebase did not apply
+}
 
 // staleHashGuidance is appended to the reference stale-state refusal; it
 // adds no hash of its own.
 const staleHashGuidance = " Use workplan_resume or workplan_inspect for that re-read before retrying, so the retry is based on the current plan."
 
 func (e *StaleHashError) Error() string {
-	return "Stale expectedHash; current stateHash is " + e.Current + ". Reread the plan and recompute the mutation." + staleHashGuidance
+	msg := "Stale expectedHash; current stateHash is " + e.Current + ". Reread the plan and recompute the mutation." + staleHashGuidance
+	if e.NotRebased != "" {
+		msg += " Not rebased: " + e.NotRebased + "."
+	}
+	return msg
 }
 
 // DuplicateMembersError refuses to mutate a plan whose stored JSON repeats

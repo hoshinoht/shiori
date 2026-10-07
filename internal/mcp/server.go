@@ -28,6 +28,7 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/advisor"
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/protocol"
@@ -61,6 +62,8 @@ type Options struct {
 	Version        string
 	Compaction     *advisor.Thresholds
 	JournalVersion int
+	// Rebase is the default of workplan_update's rebase member.
+	Rebase bool
 }
 
 type tool struct {
@@ -440,6 +443,8 @@ func (s *server) engineFor(ctx context.Context) (*engine.Engine, error) {
 	}
 	ne.Compaction = s.opts.Compaction
 	ne.JournalVersion = s.opts.JournalVersion
+	ne.Rebase = s.opts.Rebase
+	ne.Source = history.SourceMCP
 	ne.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
 	s.mu.Lock()
 	if s.engine != nil && s.engine.Root == ne.Root {

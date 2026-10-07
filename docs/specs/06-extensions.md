@@ -102,6 +102,15 @@ writes ~1× the plan, resume already omits notes, and rollover archives
 old ones, so the remaining gain is plan size for full reads; deferred
 until the reference plugin is retired or notes need concurrent writers.
 
+**Status: implemented** (2026-10-07,
+[contracts §24](../contracts.md#24-approved-design-changes-x4-approved-2026-10-07)):
+the log is appended under the commit's locks after the transaction
+completes (advisory, outside the hashes; gaps are detected, never
+trusted), and its per-entry element changes let a stale
+`workplan_update` with `rebase` apply over newer writes to other
+elements. Resume shows the writes since the last checkpoint, doctor the
+log and stalled steps. Notes stay in the plan; undo is not done.
+
 ### X5 — Cross-plan workspace graph
 
 Optional links between plans in the same coordination root (for example a
@@ -270,7 +279,7 @@ stage it attaches to. Record decisions here with a date.
 | X1 | to-review | | |
 | X2 | accepted, implemented | 2026-10-07 | stage E1 (contracts §20) |
 | X3 | accepted, implemented | 2026-10-07 | stage E2 (contracts §22); merge train as an ordering, never automatic |
-| X4 | to-review | | |
+| X4 | accepted, implemented | 2026-10-07 | change log and rebased updates (contracts §24); notes stay in the plan, undo not done |
 | X5 | to-review | | |
 | X6 | accepted, implemented | 2026-09-30 | implemented in stage D.2 (contracts §12 G6) |
 | X7 | to-review | | |

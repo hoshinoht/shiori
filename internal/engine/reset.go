@@ -108,7 +108,7 @@ func (e *Engine) resetResult(prep *Prepared, s *snapshot.Snapshot, mode, planFil
 			Set("stateHash", ojson.StringValue(post.StateHash)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil
 	}
-	return finalize(prep)
+	return e.logged(prep, s, nil)
 }
 
 // prepareDraftReset resets statuses only.

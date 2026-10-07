@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hoshinoht/shiori/internal/history"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -299,11 +300,13 @@ func checkResumeInvariants(t *testing.T, v *vector, text string) {
 }
 
 // snapshotFiles maps relative path -> sha256 for every regular file.
+// The change log is a Shiori-only advisory sidecar (contracts §24): the
+// reference writes none, so it is left out of every comparison.
 func snapshotFiles(t *testing.T, root string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for rel, st := range testutil.Fingerprint(t, root) {
-		if st.Mode.IsRegular() {
+		if st.Mode.IsRegular() && !strings.HasSuffix(rel, history.Suffix) {
 			out[filepath.ToSlash(rel)] = st.SHA
 		}
 	}

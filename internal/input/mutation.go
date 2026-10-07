@@ -109,7 +109,7 @@ var toolSpecs = map[string]*ospec{
 	}},
 	"update": {fields: []fspec{
 		{key: "id", kind: kID, required: true},
-		hash("expectedHash"), enum("recovery", []string{"resume", "rollback"}), boolean("replaceMarkdown"),
+		hash("expectedHash"), boolean("rebase"), enum("recovery", []string{"resume", "rollback"}), boolean("replaceMarkdown"),
 		str("title"), str("goal"), enum("status", statusEnum),
 		strList("scope"), strList("nonGoals"), strList("constraints"),
 		str("planFile"), str("planMarkdown"), strList("specFiles"),

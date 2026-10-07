@@ -138,6 +138,7 @@ type Packet struct {
 	Compaction          *ojson.Value // compact compaction advice
 	Evidence            *ojson.Value // compact evidence advice
 	Lanes               *ojson.Value // active lanes and the current step's lane
+	Since               *ojson.Value // writes since the last checkpoint (change log)
 	High                []Finding
 	HighCounts          [3]int
 	Warnings            []string
@@ -487,6 +488,9 @@ func (m *Packet) build(pr params) ojson.Value {
 	}
 	if m.Evidence != nil {
 		out.Set("evidence", *m.Evidence)
+	}
+	if m.Since != nil {
+		out.Set("sinceCheckpoint", *m.Since)
 	}
 	return out.
 		Set("safety", safety).

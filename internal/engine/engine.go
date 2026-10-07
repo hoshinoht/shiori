@@ -46,6 +46,13 @@ type Engine struct {
 	// default, images by reference) or 1 (inline, readable by the
 	// reference plugin). Trusted configuration.
 	JournalVersion int
+
+	// Source is the change-log origin of writes ("agent" when empty);
+	// NoHistory turns the change log off. Trusted configuration.
+	Source    string
+	NoHistory bool
+	// Rebase is the default of workplan_update's rebase member.
+	Rebase bool
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.

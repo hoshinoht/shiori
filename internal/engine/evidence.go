@@ -307,7 +307,7 @@ func sidecarsOnly(data ojson.Value) bool {
 	}
 	for _, m := range data.Members() {
 		switch m.Key {
-		case "id", "expectedHash", "workspaceRoot", "recordEvidence", "lanes":
+		case "id", "expectedHash", "rebase", "workspaceRoot", "recordEvidence", "lanes":
 		case "replaceMarkdown":
 			if m.Value.Bool() {
 				return false
@@ -413,7 +413,7 @@ func (e *Engine) updateEvidence(id string, data ojson.Value, old, p *model.Plan,
 }
 
 // prepareSidecarsOnly prepares an update that only touches sidecars.
-func (e *Engine) prepareSidecarsOnly(s *snapshot.Snapshot, data ojson.Value) (*Prepared, error) {
+func (e *Engine) prepareSidecarsOnly(s *snapshot.Snapshot, data ojson.Value, rb *rebase) (*Prepared, error) {
 	id := s.ID
 	ln, lnLedger, lnAfter, lnResult, warnings, err := e.updateLanes(id, data, s.Plan)
 	if err != nil {
@@ -454,7 +454,8 @@ func (e *Engine) prepareSidecarsOnly(s *snapshot.Snapshot, data ojson.Value) (*P
 		if evResult != nil {
 			b.Set("evidence", *evResult)
 		}
+		rb.result(b)
 		return Output{Value: b.Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, s, s.Plan), nil
 }

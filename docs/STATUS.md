@@ -1802,6 +1802,34 @@ reload, recompute every cached Markdown classification, and decode and
 deep-compare every seeded plan; `SHIORI_TEST_CACHE=1` runs the whole
 engine suite with a cache on every engine.
 
+## Stage X4 — change log and rebased writes: DONE
+
+Contracts §24. Every write appends a hash-chained line to
+`<id>.history.jsonl` under the commit's locks (storage `Append`, after
+the journal is removed); `workplan_update.rebase` applies a stale update
+over newer writes to other plan elements; resume shows the writes since
+the last checkpoint, doctor the log and stalled steps; `shiori history`.
+
+- Tests: `internal/history` (chain, torn tail, chain breaks, rotation,
+  `Since`, conflicts, diff), `internal/engine/history_test.go` (every
+  write path logs, a failed append keeps the write, rotation names its
+  archive in the intent, rebase over disjoint writes, refusal on overlap
+  and across an out-of-band edit, operator default, `sinceCheckpoint`,
+  stalled steps), schema/writer agreement, adapter key `x4`.
+- Cost (BenchmarkWrites, n=5): +3.7% time geomean; +0.8 ms on the
+  100 KB plan (the appended, fsynced line), no significant change at
+  1 MB and 10 MB; +2.8% bytes, +5.9% allocations.
+
+### Owner decisions to review (X4)
+
+1. Rebase is opt-in (`rebase: true`, or the operator's `--rebase`), so the
+   `expectedHash` description stays true by default.
+2. Conflicts are per element (a step, a phase's own fields, a finding
+   index), not per field: two writes to different fields of one step
+   conflict.
+3. The append is not journaled: a crash between the commit and the
+   append loses that entry (a gap), never adds a wrong one.
+
 ## Resume after maintenance
 
 See [Resume point](#resume-point-paused-after-d43) at the top. The Go

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -22,6 +23,7 @@ const (
 	kindTransaction  = "transaction"
 	kindEvidence     = "evidence"
 	kindLanes        = "lanes"
+	kindHistory      = "history"
 	kindLock         = "lock"
 	kindTemporary    = "temporary"
 	kindArchive      = "archive"
@@ -57,6 +59,8 @@ func classifyName(name string, isDir bool) (dirEntry, bool) {
 		return dirEntry{name, kindEvidence}, true
 	case strings.HasSuffix(name, lanes.Suffix):
 		return dirEntry{name, kindLanes}, true
+	case strings.HasSuffix(name, history.Suffix):
+		return dirEntry{name, kindHistory}, true
 	case strings.HasSuffix(name, ".json"):
 		return dirEntry{name, ""}, true
 	}

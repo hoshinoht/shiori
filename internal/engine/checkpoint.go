@@ -230,7 +230,7 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 		}
 		return Output{Value: out.Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, s, s.Plan), nil
 }
 
 // mergeMissingError refuses merge=true without a value to keep: the field

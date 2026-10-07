@@ -251,6 +251,10 @@
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
+          "rebase": {
+            "description": "Apply this write even if expectedHash is stale, when the plan's change log shows that every newer write changed other plan elements (other steps, phases, findings, or note appends). The newer changes are kept and the result names the writes rebased over. Refused as stale when a newer write touched an element this write changes, or when the log does not connect the two hashes",
+            "type": "boolean"
+          },
           "recovery": {
             "description": "Finish (resume) or undo (rollback) an interrupted transaction; exclusive with other fields",
             "type": "string",
@@ -1674,6 +1678,15 @@
       {
         "tool": "workplan_update",
         "property": "lanes"
+      }
+    ]
+  },
+  "x4": {
+    "note": "Approved design change X4 (docs/contracts.md §24, 2026-10-07): the change log and rebased writes. Removing the listed additions, then applying the x3/e1/d4_3/d4_1/d4/d3/d1 reversal, reproduces the reference snapshot byte-for-byte (d1.referenceSha256).",
+    "additions": [
+      {
+        "tool": "workplan_update",
+        "property": "rebase"
       }
     ]
   }

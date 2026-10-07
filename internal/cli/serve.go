@@ -27,11 +27,12 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	maxFrame := fs.Int("max-frame-bytes", protocol.DefaultMaxFrameBytes, "request frame limit in bytes")
 	advice := fs.String("compaction-advice", "", "compaction advisor thresholds: off, or key=value pairs (D.4)")
 	journal := fs.Int("journal-version", 2, "journal format of writes: 2 (by reference) or 1 (inline, reference-compatible)")
+	rebase := fs.Bool("rebase", false, "apply stale updates over non-conflicting newer writes unless a call sets rebase=false (X4)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if !*stdio || fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N] [--compaction-advice SPEC] [--journal-version 1|2]")
+		fmt.Fprintln(stderr, "shiori serve: usage: shiori serve --stdio [--idle-timeout 10m] [--max-frame-bytes N] [--compaction-advice SPEC] [--journal-version 1|2] [--rebase]")
 		return 2
 	}
 	if *journal != 1 && *journal != 2 {
@@ -60,6 +61,7 @@ func runServe(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	err := protocol.Serve(ctx, protocol.Options{
 		Compaction:     th,
 		JournalVersion: *journal,
+		Rebase:         *rebase,
 		In:             stdin, Out: stdout, Err: stderr,
 		CoreVersion:   Version,
 		IdleTimeout:   *idle,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hoshinoht/shiori/internal/history"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,11 +71,12 @@ func mustJSON(t *testing.T, s string) ojson.Value {
 }
 
 // semanticFiles maps every regular file except coordination machinery
-// (dot-files in the workplan tree: locks, staging) to its sha256.
+// (dot-files in the workplan tree: locks, staging) and the advisory
+// change log to its sha256.
 func semanticFiles(t *testing.T, root string) map[string]string {
 	out := map[string]string{}
 	for rel, sha := range snapshotFiles(t, root) {
-		if strings.HasPrefix(filepath.Base(rel), ".") && strings.Contains(rel, ".opencode/") {
+		if strings.HasPrefix(filepath.Base(rel), ".") && strings.Contains(rel, ".opencode/") || strings.HasSuffix(rel, history.Suffix) {
 			continue
 		}
 		out[rel] = sha

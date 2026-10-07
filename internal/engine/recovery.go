@@ -464,5 +464,6 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 			Set("stateHash", ojson.StringValue(sh)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil
 	}
-	return finalize(prep), nil
+	pre, _ := e.loadFresh(id)
+	return e.logged(prep, pre, nil), nil
 }

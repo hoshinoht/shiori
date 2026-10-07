@@ -12,8 +12,8 @@ stage B findings (reference behaviour the corpus pins down that stage A did not
 spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
 reference; section 19 the host version policy, section 20 the E1
-evidence ledger, section 21 journal v2, section 22 worktree lanes and
-section 23 the MCP server.
+evidence ledger, section 21 journal v2, section 22 worktree lanes,
+section 23 the MCP server and section 24 the change log.
 
 ## 1. Sources of truth
 
@@ -1830,3 +1830,66 @@ adapter over the same engine, not a new tool surface.
 Not yet: MCP 2026-07-28 (stateless requests, multi-round-trip
 elicitation, roots deprecated): `--root` already covers its
 configuration-based root.
+
+## 24. Approved design changes X4 (APPROVED 2026-10-07)
+
+The change log of spec 06 X4 and the rebased writes it enables. Notes
+stay in the plan (the separate-notes question of X4 remains deferred);
+undo is not part of this change.
+
+1. **Sidecar.** `<id>.history.jsonl`
+   ([history-v1](../schema/v1/history-v1.schema.json)): one compact JSON
+   line per committed write, `{seq, prev, v, at, op, source, tx, before,
+   after, changes}`. `prev` is the sha256 of the previous line, so lines
+   form a hash chain; `before`/`after` are the plan and state hashes
+   around the write (`null` for a plan that did not or no longer
+   exists); `source` is `agent` (native adapter), `cli` or `mcp`, set by
+   the trusted caller. `changes` names the plan elements the write
+   changed: `goal`, `status`, `notes` (`appended` with a count, else
+   `changed`), `findings/<index>`, `phases/<phaseId>`,
+   `phases/<phaseId>/steps/<stepId>` (with `from`/`to` on status
+   changes), `phases` and `.../steps` when reordered, plus `markdown`
+   (explicit Markdown, patch or a move), `dependencies`, `checkpoint`,
+   `evidence` and `lanes`. `updatedAt` alone is not a change.
+2. **Writing.** The entry is part of the prepared intent (its path is a
+   write resource, its payload digest part of the intent digest) and is
+   appended after the transaction completes, still under both locks;
+   storage adds `seq` and `prev` from the last line and cuts a torn last
+   line first. A failed append leaves the committed write standing.
+   Every write path logs: create, update, patch, checkpoint, compaction,
+   reset and explicit recovery. Engines may turn the log off
+   (`NoHistory`); the conformance corpus leaves the file out of its
+   comparisons because the reference writes none.
+3. **Advisory, never authority.** The log is outside the plan and state
+   hashes and is never a precondition. Lost appends and edits outside
+   Shiori show up as gaps (`before` ≠ the previous `after`); an edited or
+   undecodable line breaks the chain and only the part after the last
+   break is trusted. Readers read at most the newest 4 MiB.
+4. **Rotation.** At 4 MiB the log moves to
+   `archive/<id>/history-<createdAt>-<tx8>.jsonl` before the next
+   append; the first line of the new segment chains to the last of the
+   archived one. A write prepared within 256 KiB of the limit names that
+   archive path among its resources, so the intent still lists every
+   path the commit may write.
+5. **Rebased updates.** `workplan_update.rebase` (boolean; the default
+   is the operator's `--rebase` on `serve`, `mcp` and CLI `update`,
+   otherwise false): when `expectedHash` is stale, the update is computed
+   on the current state if the log connects `expectedHash` to the
+   current state hash, and committed if no element it changes overlaps
+   an element a newer write changed. Overlap is the same path, or a
+   parent and child where either side adds, removes or reorders; two note
+   appends never overlap; sidecar-only writes (evidence, lanes) never
+   count. The result carries `rebased: {fromHash, over: [{seq, op,
+   source, at}]}`. Otherwise the reference stale refusal is returned with
+   `Not rebased: <reason>.` appended. Without `rebase` the stale
+   refusal is unchanged. The locked recheck still binds the commit to
+   the state the rebase was computed on.
+6. **Views.** Resume adds `sinceCheckpoint` (writes after the newest
+   logged checkpoint, when the log reaches the current state: count,
+   sources, step status moves first→last, findings added and resolved,
+   notes appended); it is advisory, added only when the packet still
+   fits its budget. Doctor adds `history` per plan with a log: entries,
+   last seq, whether the log reaches the current state, issues, and
+   `stalledSteps` (in progress for over 72 hours per the log, with no
+   evidence recorded since). `shiori history <id> [--since HASH]
+   [--limit N]` prints the log.

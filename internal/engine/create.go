@@ -58,6 +58,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		p.Status = s
 	}
 	planFileSet := false
+	var pre *snapshot.Snapshot // the overwritten plan
 	if raw, ok := getStr(data, "planFile"); ok {
 		if p.PlanFile, err = e.normalizePlanFileInput(raw); err != nil {
 			return nil, err
@@ -181,6 +182,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 				}
 			}
 			jsonBefore, mdBefore = s.JSON, s.Markdown
+			pre = s
 			reads = readsOf(s.StateManifest)
 		}
 	}
@@ -235,7 +237,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			Set("stateHash", ojson.StringValue(post.StateHash)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, pre, p), nil
 }
 
 const (

@@ -96,6 +96,8 @@ type Intent struct {
 	// JournalVersion is 1 (inline base64 images) or 2 (images by
 	// reference to the staged files and before-image hard links).
 	JournalVersion int
+	// History is the change-log entry appended after the commit.
+	History *Append
 }
 
 // Resources is the exact-resource view of an intent (absolute paths), in
@@ -132,6 +134,12 @@ func (in *Intent) Resources() Resources {
 		}
 		if t.Backup != "" {
 			r.Staging = append(r.Staging, a(t.Backup))
+		}
+	}
+	if in.History != nil {
+		r.Write = append(r.Write, a(in.History.Rel))
+		if in.History.ArchiveRel != "" {
+			r.Archive = append(r.Archive, a(in.History.ArchiveRel))
 		}
 	}
 	r.Journal = a(in.JournalRel)
@@ -179,6 +187,11 @@ func (in *Intent) Value() ojson.Value {
 		Set("transactionId", ojson.StringValue(in.TransactionID))
 	if in.JournalVersion == 2 {
 		b.Set("journalVersion", ojson.IntValue(2))
+	}
+	if in.History != nil {
+		b.Set("history", ojson.NewObject(2).
+			Set("path", ojson.StringValue(in.History.Rel)).
+			Set("payloadSha256", ojson.StringValue(digestOrEmpty(in.History.Payload, true))).Value())
 	}
 	if in.Recovery != "" {
 		b.Set("recovery", ojson.StringValue(in.Recovery)).

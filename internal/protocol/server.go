@@ -50,6 +50,8 @@ type Options struct {
 	Compaction *advisor.Thresholds
 	// JournalVersion is the journal format of writes (0: the default).
 	JournalVersion int
+	// Rebase is the default of workplan_update's rebase member.
+	Rebase bool
 }
 
 // ErrIdle is returned by Serve after an idle exit.
@@ -431,6 +433,7 @@ func (s *server) engineFor(h *hostContext) (*engine.Engine, error) {
 	}
 	e.Compaction = s.opts.Compaction
 	e.JournalVersion = s.opts.JournalVersion
+	e.Rebase = s.opts.Rebase
 	if s.cache == nil {
 		s.cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
 	}

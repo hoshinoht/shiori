@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -42,7 +43,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if rec, ok := getStr(data, "recovery"); ok {
 		return e.PrepareRecovery(rawID, rec, optHash(data))
 	}
-	s, err := e.loadForMutation(rawID, optHash(data))
+	s, rb, err := e.loadForUpdate(rawID, data)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +53,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		return nil, err
 	}
 	if sidecarsOnly(data) {
-		return e.prepareSidecarsOnly(s, data)
+		return e.prepareSidecarsOnly(s, data, rb)
 	}
 	targeted := false
 	for _, k := range []string{"updatePhases", "addPhases", "updateSteps", "addSteps", "dependencies"} {
@@ -438,6 +439,16 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if evAfter != nil {
 		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true})
 	}
+	var extra []history.Change
+	if has(data, "planMarkdown") || moved {
+		extra = append(extra, history.Change{Path: "markdown", Op: "changed"})
+	}
+	if depsAfter != nil {
+		extra = append(extra, history.Change{Path: "dependencies", Op: "changed"})
+	}
+	if err := rb.check(old, p, extra); err != nil {
+		return nil, err
+	}
 	tx := storage.NewUUID()
 	in := e.buildIntent("update", id, tx, specs, reads)
 	if err := e.checkTargetPaths(in); err != nil {
@@ -476,9 +487,10 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		if evResult != nil {
 			b.Set("evidence", *evResult)
 		}
+		rb.result(b)
 		return Output{Value: b.Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, s, p, extra...), nil
 }
 
 // nonblankRaw returns an untrimmed string when it is nonblank.

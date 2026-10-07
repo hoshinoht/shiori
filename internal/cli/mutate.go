@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/engine"
 	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
@@ -88,6 +89,9 @@ func printIntent(w io.Writer, req engine.AuthRequest) {
 		fmt.Fprintf(w, "  %-12s %s\n               before %s\n               after  %s\n", t.Kind, t.Rel, b, a)
 	}
 	r := req.Resources
+	if in.History != nil {
+		fmt.Fprintf(w, "  history: %s (append)\n", in.History.Rel)
+	}
 	fmt.Fprintf(w, "  journal: %s\n", r.Journal)
 	for _, l := range in.Locks {
 		fmt.Fprintf(w, "  lock:    %s\n", l.Rel)
@@ -114,6 +118,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	mdFile := fs.String("markdown-file", "", "file with explicit linked Markdown")
 	overwrite := fs.Bool("overwrite", false, "")
 	replaceMD := fs.Bool("replace-markdown", false, "")
+	rebase := fs.Bool("rebase", false, "update: apply over newer non-conflicting writes when --expected-hash is stale (X4)")
 	var notes, blockers, guardrails, refs, validations, appendValidations, phases, noteIdx, findingIdx, pinNotes stringsFlag
 	fs.Var(&notes, "append-note", "")
 	fs.Var(&blockers, "blocker", "")
@@ -156,7 +161,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	allowed := map[string][]string{
 		"create":     {"title", "goal", "kind", "status", "plan-file", "markdown-file", "overwrite", "replace-markdown", "append-note"},
-		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery"},
+		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery", "rebase"},
 		"patch":      {"patch-file", "validate"},
 		"reset":      {"mode", "preserve-notes", "replace-markdown", "preview-token", "confirm"},
 		"checkpoint": {"summary", "next-action", "phase", "step", "blocker", "guardrail", "reference", "validation", "merge", "append-validation"},
@@ -249,6 +254,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	boolFlag("overwrite", "overwrite", *overwrite)
 	boolFlag("replace-markdown", "replaceMarkdown", *replaceMD)
+	boolFlag("rebase", "rebase", *rebase)
 	noteKey := "appendNotes"
 	if cmd == "create" {
 		noteKey = "notes"
@@ -355,6 +361,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	e.JournalVersion = *journal
 	e.EvidenceSource = evidence.SourceCLI
+	e.Source = history.SourceCLI
 	return execMutation(e, cmd, toolIn, *yes, *jsonOut, stdout, stderr)
 }
 

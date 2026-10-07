@@ -57,6 +57,8 @@ type Result struct {
 	// DirectorySync is true when every directory fsync succeeded; false
 	// means the platform refused directory sync (reported, not hidden).
 	DirectorySync bool
+	// HistoryErr is a failed change-log append (the commit stands).
+	HistoryErr error
 }
 
 // StaleError is a precondition that changed between preparation and the
@@ -424,6 +426,11 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 	// The transaction is complete; leftover links are only clutter.
 	removeBackups()
 	res.DirectorySync = syncOK
+	if in.History != nil {
+		if res.HistoryErr = h.fault(FaultHistory); res.HistoryErr == nil {
+			res.HistoryErr = appendChained(root, in.History)
+		}
+	}
 	return res, nil
 }
 

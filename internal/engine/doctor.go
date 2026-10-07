@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/lanes"
@@ -266,6 +267,8 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 			suffix = evidence.Suffix
 		case kindLanes:
 			suffix = lanes.Suffix
+		case kindHistory:
+			suffix = history.Suffix
 		default:
 			continue
 		}
@@ -425,6 +428,9 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 			g = e.graph(index.Build(p), dv)
 		}
 		b.Set("lanes", e.laneDoctor(p, lv, g))
+	}
+	if hv, ok := e.historyDoctor(s); ok {
+		b.Set("history", hv)
 	}
 	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }

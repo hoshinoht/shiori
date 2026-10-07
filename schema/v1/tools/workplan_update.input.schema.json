@@ -13,6 +13,10 @@
       "description": "stateHash from the latest read; binds the write to that exact state.",
       "$ref": "../common.schema.json#/$defs/hash"
     },
+    "rebase": {
+      "description": "X4 (contracts §24): apply over newer writes that changed other plan elements, per the change log; refused as stale otherwise.",
+      "type": "boolean"
+    },
     "recovery": {
       "description": "Explicit recovery of a pending transaction; mutually exclusive with ordinary update fields.",
       "type": "string",

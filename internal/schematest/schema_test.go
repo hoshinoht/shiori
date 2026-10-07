@@ -4,16 +4,19 @@
 package schematest
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
@@ -396,5 +399,50 @@ func TestLanesSchemaAgreesWithParser(t *testing.T) {
 	}
 	if err := ls.Validate(inst); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestHistorySchemaMatchesWriter: lines the engine appends validate, and
+// the decoder rejects what the schema rejects.
+func TestHistorySchemaMatchesWriter(t *testing.T) {
+	c := compiler(t)
+	s, err := c.Compile(idBase + "history-v1.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	h := strings.Repeat("a", 64)
+	for i, en := range []history.Entry{
+		{At: "2026-01-02T03:04:05Z", Op: "create", Source: history.SourceAgent, Tx: "t1", After: &history.Hashes{PlanHash: h, StateHash: h},
+			Changes: []history.Change{{Path: "plan", Op: "added"}}},
+		{At: "2026-01-02T03:04:06Z", Op: "update", Source: history.SourceMCP, Tx: "t2", Before: &history.Hashes{PlanHash: h, StateHash: h}, After: &history.Hashes{PlanHash: h, StateHash: h},
+			Changes: []history.Change{{Path: "notes", Op: "appended", Count: 2}, {Path: "phases/p/steps/s", Op: "changed", From: "draft", To: "completed"}}},
+	} {
+		in := &storage.Intent{Root: root, WorkplanID: "p", TransactionID: en.Tx, Operation: en.Op, CreatedAt: en.At,
+			JournalRel: "p.transaction.json", JournalStage: ".p.transaction." + en.Tx + ".stage",
+			History: &storage.Append{Rel: "p" + history.Suffix, Payload: history.Payload(en)}}
+		if _, err := storage.Commit(context.Background(), in, storage.Hooks{}); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	data, _ := os.ReadFile(filepath.Join(root, "p"+history.Suffix))
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	bad := []string{
+		strings.Replace(lines[1], `"source":"mcp"`, `"source":"model"`, 1),
+		strings.Replace(lines[1], `"op":"appended"`, `"op":"moved"`, 1),
+		strings.Replace(lines[1], `"v":1`, `"v":2`, 1),
+	}
+	for _, in := range append(lines, bad...) {
+		want := !slices.Contains(bad, in)
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Validate(inst) == nil; got != want {
+			t.Errorf("schema ok=%v want %v:\n%s", got, want, in)
+		}
+	}
+	if l := history.Parse(data); len(l.Entries) != 2 || len(l.Issues) != 0 {
+		t.Fatalf("decoded %+v", l)
 	}
 }

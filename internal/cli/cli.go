@@ -35,12 +35,13 @@ Read commands (never prompt, never write):
   resume <id>                Bounded continuation packet (UTF-16 budget)
   doctor [id]                Read-only diagnostics: roots, sidecars, locks, journals
   compact <id> --reason R    Compaction preview (read-only without --apply)
+  history <id>               The plan's change log [--since HASH --limit N] (spec 06 X4)
 
 Mutating commands (print the prepared intent, then require confirmation):
   create <id>                --goal G [--title --kind --status --plan-file --markdown-file F
                              --append-note N --overwrite --replace-markdown]
   update <id>                [--title --goal --status --plan-file --markdown-file F
-                             --append-note N --replace-markdown] | --recovery resume|rollback
+                             --append-note N --replace-markdown --rebase] | --recovery resume|rollback
   patch <id>                 --patch-file F [--validate]
   reset <id>                 [--mode draft|markdown-only|wipe --replace-markdown]
                              draft: statuses to draft, checkpoint removed, content kept;
@@ -113,6 +114,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runEvidence(rest, stdout, stderr)
 	case "mcp":
 		return runMCP(rest, os.Stdin, stdout, stderr)
+	case "history":
+		return runHistory(rest, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {

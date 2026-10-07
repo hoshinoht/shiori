@@ -70,10 +70,11 @@ func TargetPage(maxChars, limit int) int {
 // advisory (the detail stays in inspect/doctor), so it is dropped before
 // any text goes below the readability minimums.
 //
-// Advisory members (lanes, evidence, then compaction advice) never cost page
+// Advisory members (writes since the checkpoint, lanes, evidence, then
+// compaction advice) never cost page
 // content: each is added only if the chosen level still fits with it.
 func (m *Packet) Render() (ojson.Value, string, error) {
-	advisory := []**ojson.Value{&m.Lanes, &m.Evidence, &m.Compaction}
+	advisory := []**ojson.Value{&m.Since, &m.Lanes, &m.Evidence, &m.Compaction}
 	held := make([]*ojson.Value, len(advisory))
 	for i, a := range advisory {
 		held[i], *a = *a, nil
