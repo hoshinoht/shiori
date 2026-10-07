@@ -122,7 +122,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			return nil, fmt.Errorf("Cannot overwrite missing workplan: %s", jsonBefore.Path)
 		}
 		expected := optHash(data)
-		s, err := e.load(id)
+		s, err := e.loadFresh(id)
 		if err != nil {
 			u := e.unreadable(id, err)
 			if u == nil {

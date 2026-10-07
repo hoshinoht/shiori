@@ -198,7 +198,7 @@ func (e *Engine) loadForMutation(raw string, expected *string) (*snapshot.Snapsh
 	if err != nil {
 		return nil, err
 	}
-	s, err := e.load(id)
+	s, err := e.loadFresh(id)
 	if err != nil {
 		return nil, e.repairHint(id, err)
 	}

@@ -67,6 +67,7 @@ type server struct {
 	handshaken  bool
 	boundRoot   string
 	engine      *engine.Engine
+	cache       *snapshot.Cache         // shared by the bound engine
 	live        map[string]*liveRequest // requestId -> in-flight request
 	intents     map[string]*intent      // intentId -> prepared intent
 	byPrepareID map[string]*intent      // prepare requestId -> intent (until commit/discard/expiry)
@@ -430,6 +431,10 @@ func (s *server) engineFor(h *hostContext) (*engine.Engine, error) {
 	}
 	e.Compaction = s.opts.Compaction
 	e.JournalVersion = s.opts.JournalVersion
+	if s.cache == nil {
+		s.cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
+	}
+	e.Cache = s.cache
 	s.engine = e
 	s.boundRoot = e.Root
 	return e, nil

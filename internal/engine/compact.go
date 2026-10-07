@@ -101,7 +101,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	if err != nil {
 		return nil, err
 	}
-	s, err := e.load(id)
+	s, err := e.loadFresh(id)
 	if err != nil {
 		if apply {
 			return nil, e.repairHint(id, err)

@@ -38,6 +38,15 @@ type Artifact struct {
 	Path   string // absolute path
 	Bytes  []byte
 	Exists bool
+	SHA256 string // digest of Bytes when already computed
+}
+
+// entry is the manifest entry of an artifact under a manifest path.
+func (a Artifact) entry(path string) Entry {
+	if a.Exists && a.SHA256 != "" {
+		return Entry{Path: path, SHA256: a.SHA256}
+	}
+	return EntryFor(path, a.Bytes, a.Exists)
 }
 
 // Snapshot is the complete, byte-exact artifact set of one plan.
@@ -78,7 +87,11 @@ type Reader struct {
 	// Overlay substitutes prospective contents (nil = absent) for paths,
 	// so a writer can compute post-commit hashes without touching disk.
 	Overlay map[string][]byte
-	total   int64
+	// Cache, when set, supplies decoded plans by content digest and, with
+	// TrustStat (reads only), unchanged files by stat identity.
+	Cache     *Cache
+	TrustStat bool
+	total     int64
 }
 
 func (r *Reader) read(rel string) (Artifact, error) {
@@ -112,6 +125,12 @@ func (r *Reader) read(rel string) (Artifact, error) {
 	if r.total > r.Limits.MaxSnapshotBytes {
 		return a, fmt.Errorf("%w: snapshot exceeds the %d-byte limit", ErrUnsupported, r.Limits.MaxSnapshotBytes)
 	}
+	if r.Cache != nil && r.TrustStat {
+		if data, sha, ok := r.Cache.file(a.Path, st); ok {
+			a.Bytes, a.SHA256, a.Exists = data, sha, true
+			return a, nil
+		}
+	}
 	// Read into a buffer sized from Stat (one allocation); a file that grew
 	// meanwhile is still bounded by the limit.
 	data := make([]byte, 0, st.Size()+1)
@@ -133,6 +152,13 @@ func (r *Reader) read(rel string) (Artifact, error) {
 	}
 	a.Bytes = data
 	a.Exists = true
+	if r.Cache != nil {
+		a.SHA256 = SHA256Hex(data)
+		// Only a file that did not change while it was read is cached.
+		if after, err := f.Stat(); err == nil && after.Size() == st.Size() && after.ModTime().Equal(st.ModTime()) {
+			r.Cache.putFile(a.Path, st, data, a.SHA256)
+		}
+	}
 	return a, nil
 }
 
@@ -163,6 +189,11 @@ func (r *Reader) LoadPlanDocument(id string) (Artifact, *model.Plan, error) {
 	if !a.Exists {
 		return a, nil, &NotFoundError{Path: a.Path}
 	}
+	if r.Cache != nil && a.SHA256 != "" {
+		if p := r.Cache.plan(a.SHA256); p != nil {
+			return a, p, nil
+		}
+	}
 	parsed, err := ojson.ParseImmutable(a.Bytes)
 	if err != nil {
 		return a, nil, &InvalidJSONError{Path: a.Path, Err: err}
@@ -170,6 +201,9 @@ func (r *Reader) LoadPlanDocument(id string) (Artifact, *model.Plan, error) {
 	p, err := model.DecodePlan(parsed)
 	if err != nil {
 		return a, nil, err
+	}
+	if r.Cache != nil && a.SHA256 != "" {
+		r.Cache.putPlan(a.SHA256, len(a.Bytes), p)
 	}
 	return a, p, nil
 }
@@ -182,13 +216,22 @@ func Load(root, id string, limits Limits) (*Snapshot, error) {
 // LoadOverlay is Load with prospective contents substituted (see
 // Reader.Overlay). A nil slice value marks the path absent.
 func LoadOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Snapshot, error) {
-	r := &Reader{Root: root, Limits: limits, Overlay: overlay}
+	return LoadWith(&Reader{Root: root, Limits: limits, Overlay: overlay}, id)
+}
+
+// LoadWith is Load through a configured reader (cache, overlay).
+func LoadWith(r *Reader, id string) (*Snapshot, error) {
+	root := r.Root
+	limits := r.Limits
 	s := &Snapshot{Root: root, ID: id}
 	var err error
 	s.JSON, s.Plan, err = r.LoadPlanDocument(id)
 	if err != nil {
 		return nil, err
 	}
+	// Normalize a shallow copy: a decoded plan may be shared via the cache.
+	cp := *s.Plan
+	s.Plan = &cp
 	p := s.Plan
 	if p.PlanFile, err = NormalizePlanFile(root, p.PlanFile); err != nil {
 		return nil, err
@@ -212,8 +255,8 @@ func LoadOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Sn
 	}
 	seen := map[string]bool{ManifestPath(s.JSON.Rel): true, ManifestPath(p.PlanFile): true}
 	planEntries := []Entry{
-		EntryFor(ManifestPath(s.JSON.Rel), s.JSON.Bytes, true),
-		EntryFor(ManifestPath(p.PlanFile), s.Markdown.Bytes, s.Markdown.Exists),
+		s.JSON.entry(ManifestPath(s.JSON.Rel)),
+		s.Markdown.entry(ManifestPath(p.PlanFile)),
 	}
 	if !s.Markdown.Exists {
 		s.MissingPlanArtifacts = append(s.MissingPlanArtifacts, p.PlanFile)
@@ -238,7 +281,7 @@ func LoadOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Sn
 			continue
 		}
 		seen[mp] = true
-		planEntries = append(planEntries, EntryFor(mp, a.Bytes, a.Exists))
+		planEntries = append(planEntries, a.entry(mp))
 		if !a.Exists {
 			s.MissingPlanArtifacts = append(s.MissingPlanArtifacts, rel)
 		}
@@ -254,7 +297,7 @@ func LoadOverlay(root, id string, limits Limits, overlay map[string][]byte) (*Sn
 	s.PlanManifest = SortEntries(planEntries)
 	stateEntries := append([]Entry{}, planEntries...)
 	for _, a := range []Artifact{s.Checkpoint, s.Dependencies, s.Journal} {
-		stateEntries = append(stateEntries, EntryFor(a.Rel, a.Bytes, a.Exists))
+		stateEntries = append(stateEntries, a.entry(a.Rel))
 	}
 	s.StateManifest = SortEntries(stateEntries)
 	s.PlanHash = ManifestHash(PlanHashVersion, planEntries)

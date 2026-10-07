@@ -38,6 +38,10 @@ type Engine struct {
 	EvidenceSource string
 	EvidenceTree   *gitview.Tree
 
+	// Cache, when set (serve), keeps artifacts and decoded plans between
+	// operations. Trusted configuration.
+	Cache *snapshot.Cache
+
 	// JournalVersion selects the journal format of new writes: 2 (the
 	// default, images by reference) or 1 (inline, readable by the
 	// reference plugin). Trusted configuration.
@@ -73,8 +77,15 @@ func (e *Engine) dir() string {
 
 func (e *Engine) absRel(rel string) string { return filepath.Join(e.Root, filepath.FromSlash(rel)) }
 
+// load is a read's snapshot: through the cache, trusting unchanged stats.
 func (e *Engine) load(id string) (*snapshot.Snapshot, error) {
-	return snapshot.Load(e.Root, id, e.Limits)
+	return snapshot.LoadWith(&snapshot.Reader{Root: e.Root, Limits: e.Limits, Cache: e.Cache, TrustStat: true}, id)
+}
+
+// loadFresh is a writer's snapshot: every file is read and hashed; only
+// the content-keyed plan decode may come from the cache.
+func (e *Engine) loadFresh(id string) (*snapshot.Snapshot, error) {
+	return snapshot.LoadWith(&snapshot.Reader{Root: e.Root, Limits: e.Limits, Cache: e.Cache}, id)
 }
 
 // normalizeRequested normalizes a caller-supplied id (inputs are already
