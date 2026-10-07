@@ -36,6 +36,8 @@ Read commands (never prompt, never write):
   doctor [id]                Read-only diagnostics: roots, sidecars, locks, journals
   compact <id> --reason R    Compaction preview (read-only without --apply)
   history <id>               The plan's change log [--since HASH --limit N] (spec 06 X4)
+  report <id>                Status report in Markdown (--json): progress, open work, evidence and
+                             the commits it verified [--commits N], findings, lanes, recent activity
 
 Mutating commands (print the prepared intent, then require confirmation):
   create <id>                --goal G [--title --kind --status --plan-file --markdown-file F
@@ -59,6 +61,8 @@ Mutating commands (print the prepared intent, then require confirmation):
                              records evidence for a step (spec 06 X2); with -- COMMAND it runs
                              the command in the root (or the lane's checkout) and records its
                              exit code and output digest
+  verify <id>                Re-run the commands recorded with evidence -- COMMAND for stale or
+                             failing steps and record the results [--all --step P/S --dry-run]
   mcp [--root DIR]           The workplan tools as an MCP server on stdin/stdout (register it as
                              "workplan" so tools appear as workplan_resume, ...); writes are
                              approved through MCP elicitation or the client's tool approval
@@ -116,6 +120,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runMCP(rest, os.Stdin, stdout, stderr)
 	case "history":
 		return runHistory(rest, stdout, stderr)
+	case "verify":
+		return runVerify(rest, stdout, stderr)
+	case "report":
+		return runReport(rest, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {

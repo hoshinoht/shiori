@@ -62,6 +62,8 @@
 - **Checkable completion:** `update --input '{"recordEvidence":[...]}'` (or the `recordEvidence` tool member) records the command run for a step, its exit code and an output digest in `<id>.evidence.json`, bound to the git tree of the working state. Recording evidence alone leaves the plan and its hashes unchanged.
 - **Staleness:** `inspect`, `resume` and `doctor` show each step as `fresh`, `stale` (the code changed since, optionally only within `scope` paths), `failing` or `unknown`. Completing a step without fresh evidence warns once a plan uses the ledger.
 - **Run and record:** `shiori evidence my-plan --phase P --step S --expected-hash H -- go test ./...` runs the command and records its real result. The git tree is computed on a private index and object store; the repository is never written.
+- **Re-verify:** `shiori verify my-plan` lists the commands recorded that way for steps whose evidence went stale or failing, and after confirmation re-runs them and records the results (exit status 1 if any still fails). Commands recorded any other way are listed but never run.
+- **Status report:** `shiori report my-plan` prints a Markdown report (or `--json`): progress per phase, open work, the critical path, evidence with the commit each passing result verified ("verified in 1a2b3c4"), open high findings, lanes and recent activity.
 
 ### Worktree lanes
 - **Claims, not collisions:** `update --input '{"lanes":[{"op":"propose",...}]}'` gives a lane its steps and path claims; overlapping claims and double-owned steps are refused. Lanes move claimed → prepared (with their worktree) → running → review → integrating → merged.

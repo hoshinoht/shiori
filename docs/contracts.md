@@ -13,7 +13,8 @@ spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
 reference; section 19 the host version policy, section 20 the E1
 evidence ledger, section 21 journal v2, section 22 worktree lanes,
-section 23 the MCP server and section 24 the change log.
+section 23 the MCP server, section 24 the change log and section 25
+the verify and report commands.
 
 ## 1. Sources of truth
 
@@ -1893,3 +1894,30 @@ undo is not part of this change.
    `stalledSteps` (in progress for over 72 hours per the log, with no
    evidence recorded since). `shiori history <id> [--since HASH]
    [--limit N]` prints the log.
+
+## 25. Operator commands: verify and report (APPROVED 2026-10-07)
+
+CLI only; no tool, schema or sidecar format changes.
+
+1. **`shiori verify <id>`** lists the latest record of each command for
+   steps whose evidence is stale or failing (`--all`: every step with
+   records; `--step P/S` narrows), and only those recorded with source
+   `cli-run` (`shiori evidence -- COMMAND`): commands asserted by an
+   agent or the operator are named and skipped, never run. The exact list
+   is printed; running needs `yes` on a terminal or `--yes`. Each command
+   runs in the root (or its lane's checkout) against a tree taken just
+   before it, and its result is recorded through
+   `workplan_update.recordEvidence` (source `cli-run`; the intent is
+   printed). The stored command text must split back into words exactly
+   as `shiori evidence` joined them, else it is refused. Exit status 1
+   when any re-run fails.
+2. **Commit links.** A passing record (outside a lane) links to the
+   newest commits from HEAD (`--commits N`, default 50) whose content is
+   what it tested: the whole tree (the commit's tree, as seen from the
+   root and without the workplan directory, computed in memory and equal
+   to the record's tree OID) or, for scoped records, every scope digest.
+   Over a run of matching commits the oldest is named. Read-only git.
+3. **`shiori report <id>`** renders progress, open work (readiness from
+   the dependency sidecar), the critical path, evidence with commit
+   links, open blocker/critical/major findings, lanes and the last ten
+   logged writes, as Markdown or `--json`.

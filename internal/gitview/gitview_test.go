@@ -72,3 +72,54 @@ func TestSnapshotOfSubdirectoryRoot(t *testing.T) {
 		t.Fatalf("outside git: %v", err)
 	}
 }
+
+// TestCommitContentMatchesSnapshot: the in-memory tree OID of a commit
+// equals the snapshot of a clean working state with that content, for a
+// subdirectory root with a committed workplan directory, a symlink and an
+// executable.
+func TestCommitContentMatchesSnapshot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	root := filepath.Join(repo, "app")
+	for _, d := range []string{"app/src/deep/er", "app/.opencode/workplan", "other"} {
+		os.MkdirAll(filepath.Join(repo, d), 0o755)
+	}
+	write := func(rel, body string) { os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644) }
+	write("app/src/a.go", "a")
+	write("app/src-b", "b")
+	write("app/src/deep/er/c", "c")
+	write("app/.opencode/workplan/p.json", "{}")
+	write("other/x", "x")
+	os.Symlink("a.go", filepath.Join(root, "src/link"))
+	os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\n"), 0o755)
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("add", "-A")
+	git("commit", "-qm", "one")
+	first, err := Snapshot(context.Background(), root, ".opencode/workplan", []string{"src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("app/src/a.go", "a2")
+	git("commit", "-qam", "two")
+	second, _ := Snapshot(context.Background(), root, ".opencode/workplan", []string{"src"})
+	cs, err := Commits(context.Background(), root, ".opencode/workplan", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 2 || cs[0].ContentOID != second.OID || cs[1].ContentOID != first.OID {
+		t.Fatalf("commit content %v vs snapshots %s %s", cs, second.OID, first.OID)
+	}
+	if d := cs[1].Tree.Digest("src"); d == nil || *d != *first.Scope["src"] {
+		t.Fatal("scope digest of a commit differs from the snapshot's")
+	}
+}

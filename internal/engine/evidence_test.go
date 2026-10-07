@@ -332,3 +332,57 @@ func TestEvidenceWriteIsRecoverable(t *testing.T) {
 		})
 	}
 }
+
+// TestEvidenceCommitLinks: passing records link to the commit whose
+// content they tested; over a run of commits with the same scope content
+// the oldest (the one that introduced it) is named.
+func TestEvidenceCommitLinks(t *testing.T) {
+	e, root := evidenceRoot(t, true)
+	head := func() string {
+		out, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	initial := head()
+	if _, err := recordT(t, e, `{"phaseId":"p1","stepId":"s1","command":"go test","exitCode":0},{"phaseId":"p1","stepId":"s2","command":"go vet","exitCode":0,"scope":["src"]}`); err != nil {
+		t.Fatal(err)
+	}
+	links := func() map[string]CommitLink {
+		m, err := e.EvidenceCommits(context.Background(), "demo", 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]CommitLink{}
+		for ref, cmds := range m {
+			for _, l := range cmds {
+				out[ref.StepID] = l
+			}
+		}
+		return out
+	}
+	if l := links(); l["s1"] != (CommitLink{initial, "tree"}) || l["s2"] != (CommitLink{initial, "scope"}) {
+		t.Fatalf("clean tree: %v (init %s)", l, initial)
+	}
+	os.WriteFile(filepath.Join(root, "src", "a.go"), []byte("package a\n\nvar X = 1\n"), 0o644)
+	gitT(t, root, "commit", "-qam", "two")
+	two := head()
+	os.WriteFile(filepath.Join(root, "README"), []byte("r\n"), 0o644)
+	gitT(t, root, "add", "README")
+	gitT(t, root, "commit", "-qm", "three")
+	if _, err := recordT(t, e, `{"phaseId":"p1","stepId":"s2","command":"go vet","exitCode":0,"scope":["src"]}`); err != nil {
+		t.Fatal(err)
+	}
+	if l := links(); l["s1"] != (CommitLink{initial, "tree"}) || l["s2"] != (CommitLink{two, "scope"}) {
+		t.Fatalf("after two commits: %v (two %s)", l, two)
+	}
+	// Uncommitted content links nowhere.
+	os.WriteFile(filepath.Join(root, "src", "a.go"), []byte("package a // wip\n"), 0o644)
+	if _, err := recordT(t, e, `{"phaseId":"p1","stepId":"s1","command":"go test","exitCode":0}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := links()["s1"]; ok {
+		t.Fatal("uncommitted state linked to a commit")
+	}
+}

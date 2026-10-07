@@ -1830,6 +1830,22 @@ the last checkpoint, doctor the log and stalled steps; `shiori history`.
 3. The append is not journaled: a crash between the commit and the
    append loses that entry (a gap), never adds a wrong one.
 
+## Operator commands: verify and report: DONE
+
+Contracts §25. `shiori verify` re-runs commands recorded through
+`shiori evidence -- COMMAND` for stale or failing steps and records the
+results; `shiori report` is a Markdown/JSON status report; passing
+evidence links to the commit whose content it tested (tree OIDs computed
+in memory from `ls-tree`, so nothing is written to the repository).
+
+- Tests: `TestCommitContentMatchesSnapshot` (in-memory tree OID equals
+  `write-tree` for a subdirectory root with a symlink, an executable and
+  a committed workplan directory), `TestEvidenceCommitLinks` (tree and
+  scope links, oldest commit of a run, uncommitted content links
+  nowhere), `TestVerifyRerunsStaleEvidence` (fresh: nothing; stale:
+  listed, refused off a terminal without `--yes`, re-run and recorded;
+  asserted records skipped), `TestShellSplitInvertsJoin`, `TestReport`.
+
 ## Resume after maintenance
 
 See [Resume point](#resume-point-paused-after-d43) at the top. The Go
