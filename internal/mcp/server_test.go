@@ -40,6 +40,10 @@ func start(t *testing.T, opts Options) *client {
 	go func() { c.done <- Serve(context.Background(), opts); outW.Close() }()
 	t.Cleanup(func() {
 		inW.Close()
+		go func() {
+			for c.out.Scan() {
+			}
+		}()
 		select {
 		case <-c.done:
 		case <-time.After(5 * time.Second):

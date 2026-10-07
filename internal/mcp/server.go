@@ -246,8 +246,8 @@ func (s *server) handle(ctx context.Context, m message) {
 				cancel()
 			}()
 			res, e := s.callTool(cctx, m.Params)
-			if cctx.Err() != nil && ctx.Err() == nil {
-				return // cancelled by the client: no response
+			if cctx.Err() != nil {
+				return // cancelled by the client or the session ended: no response
 			}
 			s.reply(m.ID, res, e)
 		}()
