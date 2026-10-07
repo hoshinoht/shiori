@@ -85,3 +85,37 @@ func TestFilteredRead(t *testing.T) {
 		}
 	}
 }
+
+// TestFullReadWithoutNotes: includeNotes=false leaves the notes out of an
+// unfiltered read and says how many; the rest of the document is intact.
+func TestFullReadWithoutNotes(t *testing.T) {
+	root := testutil.NewRoot(t, "full-valid")
+	e, _ := New(root.Path)
+	full, err := e.Read(input.ReadInput{ID: "full-plan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := false
+	slim, err := e.Read(input.ReadInput{ID: "full-plan", IncludeNotes: &f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wp, _ := slim.Get("workplan")
+	if _, ok := wp.Get("notes"); ok {
+		t.Fatal("notes still present")
+	}
+	fw, _ := full.Get("workplan")
+	notes, _ := fw.Get("notes")
+	om, _ := slim.Get("notesOmitted")
+	if c, _ := om.Get("count"); c.NumberLiteral() != itoaT(len(notes.Elems())) {
+		t.Fatalf("notesOmitted %s", ojson.Compact(om))
+	}
+	if string(ojson.Compact(withoutMember(fw, "notes"))) != string(ojson.Compact(wp)) {
+		t.Fatal("the rest of the document changed")
+	}
+	tr := true
+	again, _ := e.Read(input.ReadInput{ID: "full-plan", IncludeNotes: &tr})
+	if string(ojson.Compact(again)) != string(ojson.Compact(full)) {
+		t.Fatal("includeNotes=true differs from the default")
+	}
+}

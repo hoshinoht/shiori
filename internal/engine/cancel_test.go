@@ -97,7 +97,7 @@ func TestCancelAfterJournal(t *testing.T) {
 	if !errors.As(err, &rr) || !rr.Uncertain {
 		t.Fatalf("got %v", err)
 	}
-	if m := machinery(t, root.Path); len(m) > 0 {
+	if m := pendingMachinery(t, root.Path, true); len(m) > 0 {
 		t.Fatalf("machinery: %v", m)
 	}
 	v, _ := e.Read(input.ReadInput{ID: "full-plan"})

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -42,7 +43,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if rec, ok := getStr(data, "recovery"); ok {
 		return e.PrepareRecovery(rawID, rec, optHash(data))
 	}
-	s, err := e.loadForMutation(rawID, optHash(data))
+	s, rb, err := e.loadForUpdate(rawID, data)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +51,9 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	old := s.Plan
 	if err := d7Check(old); err != nil {
 		return nil, err
+	}
+	if sidecarsOnly(data) {
+		return e.prepareSidecarsOnly(s, data, rb)
 	}
 	targeted := false
 	for _, k := range []string{"updatePhases", "addPhases", "updateSteps", "addSteps", "dependencies"} {
@@ -345,6 +349,19 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			warnings = statusChangeWarnings(old, g)
 		}
 	}
+	ln, lnLedger, lnAfter, lnResult, lnWarnings, err := e.updateLanes(id, data, p)
+	if err != nil {
+		return nil, err
+	}
+	ev, evAfter, evResult, evWarnings, err := e.updateEvidence(id, data, old, p, lnLedger)
+	if err != nil {
+		return nil, err
+	}
+	lk, lkAfter, lkWarnings, err := e.updateLinks(id, data)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(append(append(warnings, lnWarnings...), evWarnings...), lkWarnings...)
 	p.UpdatedAt = e.nowISO()
 	if v, ok := statusUpdate(data); ok {
 		if err := statusGate(v, p); err != nil {
@@ -399,6 +416,7 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 		}
 		mdWrite = true
 	}
+	mdRendered := mdWrite && gen && !has(data, "planMarkdown")
 
 	specs := []targetSpec{{rel: s.JSON.Rel, kind: "plan", before: s.JSON.Bytes, beforeOK: true, after: p.EncodeStored(), afterOK: true}}
 	reads := readsOf(s.StateManifest)
@@ -419,6 +437,25 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	if depsAfter != nil {
 		specs = append(specs, targetSpec{rel: s.Dependencies.Rel, kind: "dependencies", before: s.Dependencies.Bytes, beforeOK: s.Dependencies.Exists, after: depsAfter, afterOK: true})
 	}
+	if lnAfter != nil {
+		specs = append(specs, targetSpec{rel: ln.rel, kind: "lanes", before: ln.art.Bytes, beforeOK: ln.exists, after: lnAfter, afterOK: true})
+	}
+	if evAfter != nil {
+		specs = append(specs, targetSpec{rel: ev.rel, kind: "evidence", before: ev.art.Bytes, beforeOK: ev.exists, after: evAfter, afterOK: true})
+	}
+	if lkAfter != nil {
+		specs = append(specs, targetSpec{rel: lk.rel, kind: "links", before: lk.art.Bytes, beforeOK: lk.exists, after: lkAfter, afterOK: true})
+	}
+	var extra []history.Change
+	if has(data, "planMarkdown") || moved {
+		extra = append(extra, history.Change{Path: "markdown", Op: "changed"})
+	}
+	if depsAfter != nil {
+		extra = append(extra, history.Change{Path: "dependencies", Op: "changed"})
+	}
+	if err := rb.check(old, p, specs, extra); err != nil {
+		return nil, err
+	}
 	tx := storage.NewUUID()
 	in := e.buildIntent("update", id, tx, specs, reads)
 	if err := e.checkTargetPaths(in); err != nil {
@@ -431,7 +468,11 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 	prep := &Prepared{Tool: "workplan_update", Intent: in}
 	prep.recheck = func() error { return e.claimCheck(id, all, mds) }
 	prep.result = func(sync bool) (Output, error) {
-		post, err := e.postSnapshot(in, id)
+		if mdRendered {
+			e.rememberRendered(in, s.JSON.Rel, newPF, p)
+		}
+		e.seedPlan(in, s.JSON.Rel, p)
+		summary, planHash, stateHash, err := e.postSummary(s, in, p)
 		if err != nil {
 			return Output{}, err
 		}
@@ -439,17 +480,24 @@ func (e *Engine) PrepareUpdate(data ojson.Value) (*Prepared, error) {
 			Set("updated", ojson.BoolValue(true)).
 			Set("path", ojson.StringValue(e.absRel(s.JSON.Rel))).
 			Set("planPath", ojson.StringValue(e.absRel(newPF))).
-			Set("workplan", post.Plan.Summary()).
-			Set("planHash", ojson.StringValue(post.PlanHash)).
-			Set("stateHash", ojson.StringValue(post.StateHash)).
+			Set("workplan", summary).
+			Set("planHash", ojson.StringValue(planHash)).
+			Set("stateHash", ojson.StringValue(stateHash)).
 			Set("directorySync", dirSyncValue(sync))
 		// Non-failing order warnings, only when present.
 		if len(warnings) > 0 {
 			b.Set("warnings", ojson.StringsValue(warnings))
 		}
+		if lnResult != nil {
+			b.Set("lanes", *lnResult)
+		}
+		if evResult != nil {
+			b.Set("evidence", *evResult)
+		}
+		rb.result(b)
 		return Output{Value: b.Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, s, p, extra...), nil
 }
 
 // nonblankRaw returns an untrimmed string when it is nonblank.

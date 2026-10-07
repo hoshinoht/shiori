@@ -101,7 +101,7 @@ func (e *Engine) compactSelect(data ojson.Value, apply bool) (*compactPlan, erro
 	if err != nil {
 		return nil, err
 	}
-	s, err := e.load(id)
+	s, err := e.loadFresh(id)
 	if err != nil {
 		if apply {
 			return nil, e.repairHint(id, err)
@@ -632,7 +632,7 @@ func (e *Engine) PrepareCompact(data ojson.Value) (*Prepared, error) {
 			Set("stateHash", ojson.StringValue(post.StateHash)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, cp.s, nil), nil
 }
 
 // lockFirst lists the lock files before the lock-protocol auxiliaries.

@@ -5,8 +5,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -220,6 +223,12 @@ func (e *Engine) Doctor(in input.DoctorInput) (ojson.Value, error) {
 			Set("omittedStrayArtifacts", ojson.IntValue(int64(len(strays)-len(listed)))).
 			Set("warnings", ojson.StringsValue(warnings))
 	}
+	// The cross-plan view, only when some plan records links.
+	if filterID == nil {
+		if pf, ok, err := e.Portfolio(); err == nil && ok {
+			out.Set("portfolio", pf)
+		}
+	}
 	return out.Set("readOnly", ojson.BoolValue(true)).Value(), nil
 }
 
@@ -260,6 +269,14 @@ func (e *Engine) strayArtifacts(l dirListing) []strayArtifact {
 			suffix = ".checkpoint.json"
 		case kindDependencies:
 			suffix = ".dependencies.json"
+		case kindEvidence:
+			suffix = evidence.Suffix
+		case kindLanes:
+			suffix = lanes.Suffix
+		case kindHistory:
+			suffix = history.Suffix
+		case kindLinks:
+			suffix = LinksSuffix
 		default:
 			continue
 		}
@@ -408,6 +425,25 @@ func (e *Engine) doctorPlan(name string) ojson.Value {
 	// nothing is archived.
 	if a := e.compactionAdvice(s, cv.freshness, true); a != nil {
 		b.Set("compactionRecommended", a.DetailValue(p.ID))
+	}
+	// An invalid ledger never makes the plan invalid.
+	if ev, err := e.loadEvidence(p.ID); err == nil && ev.exists {
+		b.Set("evidence", e.doctorEvidence(p, ev))
+		// Plan quality matters once a plan records evidence (as with the
+		// completion warnings, other plans get none).
+		if q, ok := planQuality(p); ok {
+			b.Set("quality", q)
+		}
+	}
+	if lv, err := e.loadLanes(p.ID); err == nil && lv.exists {
+		var g *index.Graph
+		if dv.deps != nil && len(dv.issues) == 0 {
+			g = e.graph(index.Build(p), dv)
+		}
+		b.Set("lanes", e.laneDoctor(p, lv, g))
+	}
+	if hv, ok := e.historyDoctor(s); ok {
+		b.Set("history", hv)
 	}
 	return b.Set("recoveryRequired", ojson.BoolValue(s.Journal.Exists)).Value()
 }

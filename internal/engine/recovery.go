@@ -44,7 +44,7 @@ func (e *ExternalEditError) Error() string {
 var operationKinds = map[string]map[string]bool{
 	"create":              {"plan": true, "markdown": true},
 	"create:overwrite":    {"plan": true, "markdown": true, "archive": true}, // repair archive
-	"update":              {"plan": true, "markdown": true, "dependencies": true},
+	"update":              {"plan": true, "markdown": true, "dependencies": true, "evidence": true, "lanes": true, "links": true},
 	"patch":               {"markdown": true},
 	"reset:draft":         {"plan": true, "markdown": true, "checkpoint": true},
 	"reset:wipe":          {"plan": true, "markdown": true, "checkpoint": true, "dependencies": true, "archive": true},
@@ -67,9 +67,58 @@ func (e *Engine) readJournal(id string) ([]byte, *model.Journal, bool, error) {
 	}
 	j, ok := model.DecodeJournal(parsed.Value)
 	if !ok {
-		return a.Bytes, nil, true, &JournalInvalidError{Path: a.Path, Detail: "does not match transaction-journal-v1 or its content hashes"}
+		return a.Bytes, nil, true, &JournalInvalidError{Path: a.Path, Detail: "does not match transaction-journal-v1 or v2 or its content hashes"}
+	}
+	if j.Version == 2 {
+		if err := e.loadJournalImages(id, j); err != nil {
+			return a.Bytes, nil, true, err
+		}
 	}
 	return a.Bytes, j, true, nil
+}
+
+// loadJournalImages reads a v2 journal's images: each side from the target
+// itself when it holds that image, else from the staged file or backup
+// link the journal names (only the names Shiori derives are accepted). An
+// image found nowhere stays nil and is reported when recovery needs it.
+func (e *Engine) loadJournalImages(id string, j *model.Journal) error {
+	bad := func(format string, a ...any) error {
+		return &JournalInvalidError{Path: e.absRel(journalRel(id)), Detail: fmt.Sprintf(format, a...)}
+	}
+	if !safeTxID.MatchString(j.TransactionID) {
+		return bad("transaction id %q is not one Shiori writes", j.TransactionID)
+	}
+	r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
+	read := func(rel string, h *string) []byte {
+		if snapshot.CheckWritable(e.Root, rel) != nil {
+			return nil
+		}
+		a, err := r.ReadFile(rel)
+		if err != nil || !a.Exists || hashOf(a.Bytes) != *h {
+			return nil
+		}
+		return a.Bytes
+	}
+	for i := range j.Targets {
+		t := &j.Targets[i]
+		if t.Stage != "" && t.Stage != storage.StagePath(t.Path, j.TransactionID, i) {
+			return bad("target %s names staged file %s", t.Path, t.Stage)
+		}
+		if t.Backup != "" && t.Backup != storage.BackupPath(t.Path, j.TransactionID, i) {
+			return bad("target %s names backup %s", t.Path, t.Backup)
+		}
+		if t.BeforeHash != nil {
+			if t.Before = read(t.Path, t.BeforeHash); t.Before == nil {
+				t.Before = read(t.Backup, t.BeforeHash)
+			}
+		}
+		if t.AfterHash != nil {
+			if t.After = read(t.Path, t.AfterHash); t.After == nil {
+				t.After = read(t.Stage, t.AfterHash)
+			}
+		}
+	}
+	return nil
 }
 
 func planFileOf(root string, data []byte) (string, string, error) {
@@ -120,6 +169,21 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 			kinds[i] = "checkpoint"
 		case t.Path == snapshot.SidecarRel(id, ".dependencies.json"):
 			kinds[i] = "dependencies"
+		case t.Path == evidenceRel(id):
+			kinds[i] = "evidence"
+			if t.AfterHash == nil {
+				return bad("evidence target %s would be deleted", t.Path)
+			}
+		case t.Path == lanesRel(id):
+			kinds[i] = "lanes"
+			if t.AfterHash == nil {
+				return bad("lanes target %s would be deleted", t.Path)
+			}
+		case t.Path == linksRel(id):
+			kinds[i] = "links"
+			if t.AfterHash == nil {
+				return bad("links target %s would be deleted", t.Path)
+			}
 		case strings.HasPrefix(t.Path, dir+"archive/"+id+"/state-") && strings.HasSuffix(t.Path, ".json") && path.Dir(t.Path) == dir+"archive/"+id:
 			kinds[i] = "archive"
 			if t.Before != nil || t.BeforeHash != nil || t.AfterHash == nil {
@@ -164,10 +228,10 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 			}
 			*img.dst = pf
 		}
-		if primary.After == nil && !(j.Operation == "create" || j.Operation == "create:overwrite") {
+		if primary.AfterHash == nil && !(j.Operation == "create" || j.Operation == "create:overwrite") {
 			return bad("operation %s cannot delete the primary plan", j.Operation)
 		}
-		if strings.HasPrefix(j.Operation, "create") && j.Operation == "create" && primary.Before != nil {
+		if strings.HasPrefix(j.Operation, "create") && j.Operation == "create" && primary.BeforeHash != nil {
 			return bad("create journal overwrites an existing primary plan")
 		}
 	}
@@ -175,7 +239,7 @@ func (e *Engine) validateJournal(id string, j *model.Journal) error {
 		r := &snapshot.Reader{Root: e.Root, Limits: e.Limits}
 		if a, _, err := r.LoadPlanDocument(id); err == nil {
 			if _, pf, err := planFileOf(e.Root, a.Bytes); err == nil {
-				if beforePF == "" && (primary == nil || primary.Before != nil) {
+				if beforePF == "" && (primary == nil || primary.BeforeHash != nil) {
 					beforePF = pf
 				}
 				if afterPF == "" && primary == nil {
@@ -336,7 +400,12 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 		if imgHash == nil && !exists || imgHash != nil && exists && hashOf(cur) == *imgHash {
 			continue // already at the recovery image
 		}
+		if imgHash != nil && img == nil {
+			side := map[string]string{"resume": "staged after", "rollback": "before"}[mode]
+			return nil, fmt.Errorf("Workplan transaction %s cannot %s: the %s image of %s is missing or changed; journal evidence preserved", j.TransactionID, mode, side, t.Path)
+		}
 		tg := storage.Target{Rel: t.Path, Kind: "recovery", Before: cur, BeforeExists: exists, After: img, AfterExists: imgHash != nil, Mode: os.FileMode(t.Mode)}
+		tg.Seal()
 		if tg.AfterExists {
 			tg.Stage = storage.StagePath(t.Path, nonce, len(in.Targets))
 		}
@@ -354,6 +423,9 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 	for i, t := range j.Targets {
 		if t.AfterHash != nil && safeTxID.MatchString(j.TransactionID) {
 			stages = append(stages, storage.StagePath(t.Path, j.TransactionID, i))
+		}
+		if j.Version == 2 && t.BeforeHash != nil {
+			stages = append(stages, storage.BackupPath(t.Path, j.TransactionID, i))
 		}
 	}
 	for _, stage := range stages {
@@ -397,5 +469,6 @@ func (e *Engine) PrepareRecovery(rawID, mode string, expected *string) (*Prepare
 			Set("stateHash", ojson.StringValue(sh)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil
 	}
-	return finalize(prep), nil
+	pre, _ := e.loadFresh(id)
+	return e.logged(prep, pre, nil), nil
 }

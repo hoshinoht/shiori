@@ -24,6 +24,10 @@ sections below keep the full record.
 | D.4.2 | done | `cdcaa24` (pushed) |
 | D.4.3 | done | `8b98602` (pushed) |
 | cleanup | done | `797b983` (pushed) |
+| Linux suites (case-sensitive test pins) | done | `d91a6b6` |
+| E1 X2 evidence ledger | done | see git log |
+| P4 journal v2 by reference | done | see git log |
+| E2 X3 worktree lanes | done | see git log |
 
 **Live.** The owner's OpenCode configuration (`~/.config/opencode`) runs
 Shiori as its workplan tools: git submodule `vendor/shiori` pinned to
@@ -38,14 +42,9 @@ OpenCode. Nothing in
 
 **Queue, in order** (each needs its own owner approval):
 
-1. **E1 — X2 evidence ledger.** Start with a tool-surface proposal for
-   owner approval (spec 06 §1 forbids new or renamed `workplan_*` tools
-   without a decision: e.g. evidence through `workplan_update`/
-   `workplan_checkpoint` inputs vs a new tool), then the
-   `<id>.evidence.json` v1 sidecar, git tree binding and staleness.
-2. **E2 — X3 worktree lanes** (needs X2). Proposal first (path-claim
-   trie, lane state machine, baseline fingerprint, merge train; spec 04).
-3. **Measured performance stage** (all still to-review in spec 06): X8
+1. ~~E1 — X2 evidence ledger~~ done (see "Stage E1" below).
+2. ~~E2 — X3 worktree lanes~~ done (see "Stage E2" below).
+3. **Measured performance stage** (P4 done; still to-review in spec 06): X8
    warm snapshot cache in `serve`, X9 derived plan index (open choice:
    SQLite vs a small custom format, decide by measurement), X10 structural
    index and slice parsing. Measure first (spec 03), record targets.
@@ -624,8 +623,16 @@ against it.
 5. **Durability facts** are probed in a private temporary directory, which
    may be a different filesystem from the project; per-commit
    `directorySync` remains the project-filesystem fact.
-6. **Linux**: `writeSupported` is true on linux/amd64 per the approved matrix,
-   but the stage C/D suites have only run on darwin/arm64 (contracts §5.6).
+6. **Linux**: `writeSupported` is true on linux/amd64 per the approved matrix.
+   Resolved 2026-10-07: `go vet`, `go test -count=1 ./...`,
+   `go test -race -count=1 ./...` and the adapter `bun test` (58 pass,
+   1 skip) pass on linux/amd64 (Go 1.27.1, bun on ext4/overlay). The first
+   run found only test-side APFS assumptions: the `list-mixed` `UPPER`
+   vectors recorded case-insensitive lookup. On a case-sensitive
+   filesystem the tests now expect `Workplan file not found` (contracts §10)
+   via `testutil.AdaptCaseLookup`, drop `raw-hashes` for the `UPPER`
+   lookups (the plan is never opened) and skip only the pins whose Go
+   output carries that lookup.
 7. **Host versions**: `SUPPORTED_HOST_VERSIONS` lists the verified OpenCode
    versions (contracts §5.6). Under the default `hostPolicy: "patch"` a later
    patch of a verified line still writes and doctor flags it as unverified;
@@ -1683,6 +1690,181 @@ protocol, schemas and adapter registration are unchanged.
   `--compaction-advice off`, or restate the expectation independently.
 - Comments keep the why and drop stage and section references;
   user-visible strings (help text, flag usage, version) are unchanged.
+
+## Stage E1 — evidence ledger (X2): DONE
+
+Contracts §20. Evidence goes in through `workplan_update.recordEvidence`
+(no new tool) and `shiori evidence`, into `<id>.evidence.json`, outside
+the state manifest.
+
+### Changes
+
+- `internal/evidence`: ledger format, decode/encode, retention, states and
+  the git tree snapshot (copied index, private empty object directory, no
+  alternates; `--literal-pathspecs`, no inherited `GIT_*`).
+- Engine: classification (`evidence`), evidence-only updates, completion
+  warnings, journal kind `evidence` for `update`, inspect/doctor/resume
+  members. Resume tries its advisory members in order evidence, compaction.
+- CLI `shiori evidence` (asserted, or `-- COMMAND` run with the tree pinned
+  before the run). Schema `evidence-v1`, `recordEvidence` in the update
+  schema, adapter registration key `e1`.
+
+### Evidence (linux/amd64, Go 1.27.1, git 2.43.0)
+
+- `go vet ./...`, `go test -count=1 ./...`, adapter `bun test` (58 pass,
+  1 skip) pass; no corpus vector changed.
+- New tests: `internal/evidence` (round trip, decode issues, retention,
+  states, subdirectory roots), `internal/engine/evidence_test.go` (hashes
+  unchanged, scope staleness, `.git` byte/mtime fingerprint unchanged, no
+  git, invalid ledger, warnings, refusals, crash recovery both ways),
+  protocol (native source `agent`), schema/parser agreement.
+- Owner plan `kanade-v5-roadmap` (286 KB, 73 steps) in a scratch git copy:
+  resume 43 ms, inspect 25 ms, doctor 37 ms with a ledger (about 20 ms
+  of git); resume still fits 12 000 with the member.
+
+### Owner decisions to review (E1)
+
+1. Completion is warned, not gated. A trusted `--evidence-gate` flag could
+   refuse completing a step without fresh evidence.
+2. Native evidence is `agent`-asserted. Host-captured evidence (the adapter
+   recording the exit code of the bash tool it observed) is the
+   trustworthy next step.
+3. Without `scope`, any change outside `.opencode/workplan` makes evidence
+   stale; X3 path claims would supply scopes automatically.
+
+## Stage P4 — journal v2 by reference: DONE
+
+Contracts §21. v2 is the default writer; `--journal-version 1` (mutation
+commands, `serve`) keeps v1.
+
+- `storage`: `Target.Backup`, `Intent.JournalVersion`, v2 encoder, commit
+  links and re-hashes before images, syncs, keeps images on failure and
+  removes the links last. New fault point `backup`.
+- `model.DecodeJournal` reads v1 and v2; `engine.loadJournalImages`
+  resolves v2 images (target, link or staged file, fixed names only).
+  Journal validation now tests image presence by hash, not by bytes.
+- Tests: the fault matrix runs every scenario and point under v1 and v2
+  (resume and rollback); v2-specific tests for the format, a missing
+  image (refuses only that direction), foreign names, and a before image
+  changed between the locked check and the link. Schema
+  `transaction-journal-v2` checked against the encoder.
+- Evidence: 286 KB owner plan, one note append: 1 048 240 → 286 440 bytes
+  written (journal 762 494 → 694); the write took 30 ms.
+
+Owner decision to review: the adapter does not yet expose a
+`journalVersion` plugin option; `serve` defaults to v2.
+
+## Stage E2 — worktree lanes (X3): DONE
+
+Contracts §22. Lanes go in through `workplan_update.lanes`
+(propose/transition/claims) into `<id>.lanes.json`, outside the state
+manifest. Git access moved into `internal/gitview` (read-only; working
+trees on a private index and object directory); scope digests now come
+from one `ls-files` listing (byte-identical to the per-path command).
+
+- Tests: `internal/lanes` (trie overlaps, transitions, merge order, round
+  trip), `internal/engine/lanes_test.go` with real `git worktree`s
+  (refusals, checkout checks, outside-claims, blockedBy/mergeOrder, lane
+  evidence fresh → stale after merging into a moved main → fresh after a
+  re-run, cleanup-required, unowned worktrees, dirty baseline, invalid
+  sidecar, crash rollback), schema/parser agreement, adapter key `x3`.
+
+### Owner decisions to review (E2)
+
+1. Claims are path prefixes; glob claims (`src/**/*.test.ts`) are not
+   supported yet.
+2. Session binding (X7: which OpenCode session works in which lane) is not
+   recorded; resume shows the current step's lane checkout instead.
+3. Notes as a separate file: measured and deferred (spec 06 under X4).
+
+## Performance pass (X8 and write hashing)
+
+Benchmarks: `go test -bench 'Ops|OpsCached|Writes|AgentLoop' -benchmem
+./internal/engine` on the 100 KB / 1 MB / 10 MB perf fixtures
+(linux/amd64, n=5, all changes p=0.008).
+
+| Change | Effect |
+| --- | --- |
+| Seal target digests, hash each file once under the lock, post-commit hashes from known digests, before digests from the reads, backup link checked by identity | writes −31% to −39% time, −22% to −27% bytes |
+| `snapshot.Cache` in serve: decoded plans by content digest; stat-identity hits for reads (2 s racy window) | warm reads: inspect −68% to −94%, resume −34% to −78%, read −26% to −45% |
+| Cached generated-Markdown classification, recorded by each update | validate −91% to −96% warm; skips re-rendering the stored plan before a write |
+| Seed the cache with the plan a write serialized | resume+write loop a further −15% (1 MB, 10 MB) |
+| GOGC 200/400 | no significant change; left at default |
+
+Not done: a structural index with spliced writes (X10). In a warm 10 MB
+resume+write loop (~250 ms) what remains is GC (~23%), SHA-256 (~15%,
+three passes are the floor: prepare, after image, locked recheck), the
+new Markdown rendering (~13%), JSON serialization (~11%) and the resume
+packet (~9%). Splicing would remove at most the serialization.
+
+Safety nets: engine tests cross-check post-commit hashes against a full
+reload, recompute every cached Markdown classification, and decode and
+deep-compare every seeded plan; `SHIORI_TEST_CACHE=1` runs the whole
+engine suite with a cache on every engine.
+
+## Stage X4 — change log and rebased writes: DONE
+
+Contracts §24. Every write appends a hash-chained line to
+`<id>.history.jsonl` under the commit's locks (storage `Append`, after
+the journal is removed); `workplan_update.rebase` applies a stale update
+over newer writes to other plan elements; resume shows the writes since
+the last checkpoint, doctor the log and stalled steps; `shiori history`.
+
+- Tests: `internal/history` (chain, torn tail, chain breaks, rotation,
+  `Since`, conflicts, diff), `internal/engine/history_test.go` (every
+  write path logs, a failed append keeps the write, rotation names its
+  archive in the intent, rebase over disjoint writes, refusal on overlap
+  and across an out-of-band edit, operator default, `sinceCheckpoint`,
+  stalled steps), schema/writer agreement, adapter key `x4`.
+- Cost (BenchmarkWrites, n=5): +3.7% time geomean; +0.8 ms on the
+  100 KB plan (the appended, fsynced line), no significant change at
+  1 MB and 10 MB; +2.8% bytes, +5.9% allocations.
+
+### Owner decisions to review (X4)
+
+1. Rebase is opt-in (`rebase: true`, or the operator's `--rebase`), so the
+   `expectedHash` description stays true by default.
+2. Conflicts are per element (a step, a phase's own fields, a finding
+   index), not per field: two writes to different fields of one step
+   conflict.
+3. The append is not journaled: a crash between the commit and the
+   append loses that entry (a gap), never adds a wrong one.
+
+## Operator commands: verify and report: DONE
+
+Contracts §25. `shiori verify` re-runs commands recorded through
+`shiori evidence -- COMMAND` for stale or failing steps and records the
+results; `shiori report` is a Markdown/JSON status report; passing
+evidence links to the commit whose content it tested (tree OIDs computed
+in memory from `ls-tree`, so nothing is written to the repository).
+
+- Tests: `TestCommitContentMatchesSnapshot` (in-memory tree OID equals
+  `write-tree` for a subdirectory root with a symlink, an executable and
+  a committed workplan directory), `TestEvidenceCommitLinks` (tree and
+  scope links, oldest commit of a run, uncommitted content links
+  nowhere), `TestVerifyRerunsStaleEvidence` (fresh: nothing; stale:
+  listed, refused off a terminal without `--yes`, re-run and recorded;
+  asserted records skipped), `TestShellSplitInvertsJoin`, `TestReport`.
+
+## Plan links, templates and quality checks: DONE
+
+Contracts §26 (spec 06 X5). `workplan_update.planLinks` writes
+`<id>.links.json`; the read-only portfolio appears in doctor, resume
+(`waitingOnPlans`) and `shiori portfolio`. `create --template`; advisory
+plan-quality checks (report always, doctor for plans with evidence);
+doctor reports files two active lanes both change.
+
+- Tests: `TestPlanLinksAndPortfolio` (links-only write keeps the state
+  hash, refusals, missing-plan warning, edges, related pairs, resume
+  and doctor members, cycle, release once the blocker completes),
+  `TestPlanQuality`, `TestLanesChangeOverlaps`, `TestCreateFromTemplate`,
+  adapter key `x5`.
+
+### Owner decisions to review
+
+1. Doctor shows `quality` only for plans that record evidence, so the
+   pinned doctor corpus stays unchanged; `report` always shows it.
+2. Templates are CLI-only (no `workplan_create` member).
 
 ## Resume after maintenance
 

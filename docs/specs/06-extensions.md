@@ -57,6 +57,11 @@ index. Evidence is stale when files owned by the step changed after `treeOid`.
 Plan hashes are not code fingerprints (01 §7); this adds the missing code-side
 binding. `metric-loop` results can be imported as evidence.
 
+**Status: implemented in stage E1** (2026-10-07,
+[contracts §20](../contracts.md#20-approved-design-changes-e1-approved-2026-10-07)).
+Evidence enters through `workplan_update.recordEvidence` (no new tool) and
+`shiori evidence`; scope paths stand in for step ownership until X3.
+
 ### X3 — Worktree lanes, concrete structures
 
 - **Path-claim trie:** owned paths and globs per lane in a prefix tree with
@@ -71,6 +76,12 @@ binding. `metric-loop` results can be imported as evidence.
   integration (W02). Merges stay user- or orchestrator-authorized, never
   automatic.
 
+**Status: implemented in stage E2** (2026-10-07,
+[contracts §22](../contracts.md#22-approved-design-changes-x3-approved-2026-10-07))
+through `workplan_update.lanes`. Claims are path prefixes (no globs yet);
+the merge order uses the dependency DAG only (claims never overlap, so
+there is no predicted overlap to break ties); lane evidence covers W02.
+
 ### X4 — Hash-chained event log
 
 Append-only `<id>.history.jsonl`; each entry carries operation, actor source,
@@ -82,11 +93,35 @@ its own compatibility decision before adoption. Compaction archives
 closed log segments instead of rewriting them. Undo is a separately reviewed
 follow-up, not part of X4.
 
+**Measured 2026-10-07 (owner roadmap, 286 KB):** notes are 68% of the
+plan JSON (361 notes, median 485 bytes) and are rendered into the
+generated Markdown. Moving them out is a format change for every notes
+consumer (generated Markdown, rollover, advisor, decision register,
+archives, the reference plugin on rollback). Since P4 a note append
+writes ~1× the plan, resume already omits notes, and rollover archives
+old ones, so the remaining gain is plan size for full reads; deferred
+until the reference plugin is retired or notes need concurrent writers.
+
+**Status: implemented** (2026-10-07,
+[contracts §24](../contracts.md#24-approved-design-changes-x4-approved-2026-10-07)):
+the log is appended under the commit's locks after the transaction
+completes (advisory, outside the hashes; gaps are detected, never
+trusted), and its per-entry element changes let a stale
+`workplan_update` with `rebase` apply over newer writes to other
+elements. Resume shows the writes since the last checkpoint, doctor the
+log and stalled steps. Notes stay in the plan; undo is not done.
+
 ### X5 — Cross-plan workspace graph
 
 Optional links between plans in the same coordination root (for example a
 roadmap blocking a migration plan). Read-only portfolio projection first;
 cross-plan writes need their own locking design.
+
+**Status: implemented** (2026-10-07,
+[contracts §26](../contracts.md#26-plan-links-templates-and-quality-checks-approved-2026-10-07)):
+per-plan `<id>.links.json` written by `workplan_update.planLinks`; the
+portfolio (doctor, resume `waitingOnPlans`, `shiori portfolio`) is
+read-only. No cross-plan writes.
 
 ### X6 — Critical path and slack
 
@@ -216,6 +251,13 @@ v1 journals stay readable and recoverable. Needs its own crash/fault matrix
 (S04) and must not weaken third-state detection (S05). This is the only
 item here that adds a new artifact version.
 
+**Status: implemented** (2026-10-07,
+[contracts §21](../contracts.md#21-approved-design-changes-p4-approved-2026-10-07)):
+before images are hard links next to the targets; 3.66× fewer bytes
+written per mutation on the measured plan.
+The link is checked by file identity against the locked recheck rather
+than re-hashed (2026-10-07, write hashing pass).
+
 ### P5 — Markdown section index for resume
 
 Hash-bound heading/marker ranges over the plan Markdown so `resume` can point
@@ -241,17 +283,17 @@ stage it attaches to. Record decisions here with a date.
 | ID | Decision | Date | Notes |
 | --- | --- | --- | --- |
 | X1 | to-review | | |
-| X2 | accepted | 2026-09-30 | stage E1, after D.4 |
-| X3 | accepted | 2026-09-30 | stage E2, after E1 (needs X2) |
-| X4 | to-review | | |
-| X5 | to-review | | |
+| X2 | accepted, implemented | 2026-10-07 | stage E1 (contracts §20) |
+| X3 | accepted, implemented | 2026-10-07 | stage E2 (contracts §22); merge train as an ordering, never automatic |
+| X4 | accepted, implemented | 2026-10-07 | change log and rebased updates (contracts §24); notes stay in the plan, undo not done |
+| X5 | accepted, implemented | 2026-10-07 | plan links sidecar and a read-only portfolio (contracts §26) |
 | X6 | accepted, implemented | 2026-09-30 | implemented in stage D.2 (contracts §12 G6) |
 | X7 | to-review | | |
-| X8 | to-review | | |
+| X8 | accepted, implemented | 2026-10-07 | serve snapshot cache; see STATUS "Performance pass" |
 | X9 | to-review | | |
-| X10 | to-review | | |
+| X10 | deferred | 2026-10-07 | measured: serialization ~11% of a warm 10 MB write once parsing is cached; not worth splicing yet |
 | P2 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 1) |
 | P3 | accepted, implemented | 2026-09-30 | implemented in stage D.4 (contracts §15 item 2) |
-| P4 | to-review | | |
+| P4 | accepted, implemented | 2026-10-07 | contracts §21; v2 is the default writer |
 | P5 | to-review | | |
 | P6 | accepted | 2026-09-30 | covered by D.1 (F) and D.3 |

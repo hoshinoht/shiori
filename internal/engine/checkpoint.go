@@ -213,7 +213,7 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 	}
 	prep := &Prepared{Tool: "workplan_checkpoint", Intent: in}
 	prep.result = func(sync bool) (Output, error) {
-		post, err := e.postSnapshot(in, id)
+		_, planHash, stateHash, err := e.postSummary(s, in, s.Plan)
 		if err != nil {
 			return Output{}, err
 		}
@@ -222,15 +222,15 @@ func (e *Engine) PrepareCheckpoint(data ojson.Value) (*Prepared, error) {
 			Set("checkpoint", cpValue).
 			Set("planFresh", ojson.BoolValue(len(s.MissingPlanArtifacts) == 0)).
 			Set("evidenceStatus", ojson.StringValue("unverified")).
-			Set("planHash", ojson.StringValue(post.PlanHash)).
-			Set("stateHash", ojson.StringValue(post.StateHash)).
+			Set("planHash", ojson.StringValue(planHash)).
+			Set("stateHash", ojson.StringValue(stateHash)).
 			Set("directorySync", dirSyncValue(sync))
 		if len(warnings) > 0 {
 			out.Set("warnings", ojson.StringsValue(warnings))
 		}
 		return Output{Value: out.Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, s, s.Plan), nil
 }
 
 // mergeMissingError refuses merge=true without a value to keep: the field

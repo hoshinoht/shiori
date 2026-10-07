@@ -11,7 +11,11 @@ section 7 lists the difference and the approved resolution. Section 10 records
 stage B findings (reference behaviour the corpus pins down that stage A did not
 spell out). Sections 11–18 record the approved D.1, D.2, D.3, D.3.1, D.4,
 D.4.1, D.4.2 and D.4.3 design changes, which deliberately depart from the
-reference.
+reference; section 19 the host version policy, section 20 the E1
+evidence ledger, section 21 journal v2, section 22 worktree lanes,
+section 23 the MCP server, section 24 the change log, section 25
+the verify and report commands and section 26 plan links, templates and
+quality checks.
 
 ## 1. Sources of truth
 
@@ -1632,3 +1636,331 @@ Nothing is committed. Gates, in order:
 3. The live runtime smoke test against an installed binary of exactly that
    version (`OPENCODE_BIN`, Homebrew, or the desktop app's bundled CLI),
    on `testdata/fixtures/full-valid` unless `SHIORI_SMOKE_FIXTURE` is set.
+
+## 20. Approved design changes E1 (APPROVED 2026-10-07)
+
+E1: the evidence ledger (spec 06 X2). Everything else stays as in
+sections 1–19: no V2 plan field, no new or renamed tool, the same hashes
+and generated Markdown. The only input change is the optional
+`recordEvidence` member of `workplan_update`. No corpus vector changes:
+every new output member appears only for a plan that has a ledger.
+
+**1. Sidecar.** `.opencode/workplan/<id>.evidence.json`, schema
+[`evidence-v1`](../schema/v1/evidence-v1.schema.json): `{schemaVersion: 1,
+id, updatedAt, records[]}`, each record `{phaseId, stepId, command,
+exitCode, outputDigest|null, summary?, treeOid|null, scope?: [{path,
+digest|null}], source, recordedAt}`. It is classified (`evidence`) and
+never listed as a plan; one without a primary plan is an
+`orphaned-sidecar` stray. It is **not** in the state manifest, so writing
+it changes neither `planHash` nor `stateHash`. Retention: the newest 5
+records per (step, command) and 2000 overall.
+
+**2. Tree binding.** `treeOid` is the git tree of the project root's
+working state: tracked files with uncommitted changes plus untracked,
+non-ignored files, without `.opencode/workplan`. Shiori computes it with
+git on a copy of the index and a private, empty object directory with no
+alternates, so the repository (index, objects, refs and their mtimes) is
+only read. A scope entry's `digest` is the sha256 of `git ls-files -s -z
+-- <path>` in that tree (null when the path has no entries). Outside a
+git work tree `treeOid` is null. Filter drivers (for example LFS clean)
+still run as on `git add`.
+
+**3. States.** Per (step, command), the latest record: `failing` (non-zero
+exit), else `stale` (scope digests, or without a scope the tree, differ
+from now), `unknown` (no tree now or then), `fresh`. A step's state is its
+worst command; `none` without records.
+
+**4. `recordEvidence`** (max 20 items): `phaseId`, `stepId`, `command`
+(nonblank, ≤ 2000), `exitCode` (32-bit integer), `output` (only its
+sha256 is stored) or `outputDigest`, `summary` (≤ 500), `scope` (≤ 50
+project-relative paths, never under `.opencode/workplan`). Steps must
+exist after the update. `source` comes from the surface: `agent` (native),
+`cli`, or `cli-run` (`shiori evidence ... -- COMMAND`, which runs the
+command in the root, binds the tree from before the run and records the
+real exit code and output digest). An update carrying only
+`recordEvidence` writes the ledger alone (plan JSON, `updatedAt`,
+Markdown and hashes unchanged). A ledger that does not decode is never
+overwritten: recording is refused. The ledger is an `update` journal
+target, so recovery resumes or rolls it back like any other.
+
+**5. Read surfaces** (only when the ledger exists): `workplan_inspect`
+adds `evidence {path, valid, tree|issues}` and a per-step `evidence
+{state, commands[]}`; `workplan_doctor` adds per plan `evidence {path,
+valid, records, tree, steps, completedUnverified {count, steps},
+orphanRecords?}` (an invalid ledger never makes the plan invalid);
+`workplan_resume` adds compact `evidence {steps, completedUnverified,
+current}` under the same no-page-cost rule as the compaction advice
+(evidence first).
+
+**6. Completion warnings.** When an update completes steps of a plan that
+has a ledger (or records evidence in the same call), each completed step
+whose evidence is not `fresh` gets a non-failing warning. Completion is
+not gated.
+
+**Rollback.** The reference plugin lists `<id>.evidence.json` as an
+invalid primary plan (`<id>.evidence`) and does not recognise a pending
+journal that targets it; resolve journals before switching back.
+
+Schema: `workplan_update.input.schema.json` adds `recordEvidence`. The
+adapter registration (`registration.json`, key `e1`) lists the addition;
+removing it before the d4_3…d1 reversal reproduces the reference snapshot.
+
+## 21. Approved design changes P4 (APPROVED 2026-10-07)
+
+P4: transaction journal v2 by reference (spec 06 P4). Writes use v2 by
+default; `--journal-version 1` on the mutation commands and on `serve`
+keeps writing v1. Both versions stay readable and recoverable. Hashes,
+plan formats and tool surfaces are unchanged.
+
+**1. Format** ([`transaction-journal-v2`](../schema/v1/transaction-journal-v2.schema.json)):
+v1's fields, but each target carries `beforeBackup` and `afterStage`
+instead of `beforeContent`/`afterContent`. Names are fixed:
+`.<base>.<tx>.<i>.stage` (as in v1) and `.<base>.<tx>.<i>.before`, next
+to the target. Any other name invalidates the journal.
+
+**2. Commit.** After staging and before the journal: each existing target
+is hard-linked to its `.before` name, the link must be the same file
+(device and inode, size, mtime) the locked recheck just hashed (a change
+is a stale-state refusal with nothing published), and the target
+directories are synced. The journal follows
+as in v1. On a failure after the journal, the staged files and links are
+kept (they are the images). After the journal is removed, the links are
+removed. The links are listed as staging paths of the intent, so the
+host authorizes them; compaction/reset previews list them the same way
+(the corpus compares them like the lock auxiliary paths).
+
+**3. Recovery.** Each image comes from the target itself when it already
+holds that hash, else from its link or staged file. An image found
+nowhere refuses only the direction that needs it ("the before image of
+... is missing or changed"); third-state detection is unchanged. Recovery
+removes the transaction's staged files and links.
+
+**4. Cost.** On the measured 286 KB owner plan, one note append wrote
+1 048 240 bytes with v1 (staged plan plus a 762 494-byte journal) and
+286 440 with v2 (a 694-byte journal): 3.66× fewer.
+
+**Rollback.** The reference plugin cannot read a pending v2 journal.
+Resolve pending journals (as the rollback procedure already requires), or
+run with `--journal-version 1`, before switching back.
+
+## 22. Approved design changes X3 (APPROVED 2026-10-07)
+
+X3: worktree lanes (spec 06 X3, spec 04). The only input change is the
+optional `lanes` member of `workplan_update` (and `lane` on a
+`recordEvidence` item). No corpus vector changes.
+
+**1. Sidecar** `.opencode/workplan/<id>.lanes.json`, schema
+[`lanes-v1`](../schema/v1/lanes-v1.schema.json): per lane `laneId`,
+`state`, `steps`, `claims`, `baseline {treeOid, head, dirty}`, `checkout
+{path, branch}|null`, `history` and timestamps. Classified (`lanes`),
+outside the state manifest (lane changes never alter `planHash` or
+`stateHash`), an `update` journal target. A record only: Shiori never
+creates, merges or removes worktrees or runs git commands that write.
+
+**2. Operations**, applied in order, each refused as a whole update on
+error (`Invalid lanes input: lanes.<i>: ...`):
+
+- `propose {laneId, steps, claims?}`: a new id (never reused); each step
+  exists and belongs to no other active lane; claims are project-relative
+  paths outside `.opencode/workplan` (a path claims everything under it).
+  The baseline is the parent working tree (as for evidence), HEAD, and the
+  count of paths that differ from HEAD; a dirty baseline warns that a
+  worktree created from HEAD omits them (spec 04 §3).
+- `transition {laneId, state, checkout?}`: claimed → prepared →
+  running → review → (running | integrating) → merged, and any active
+  state → abandoned. `checkout` only on → prepared: an existing worktree
+  of the same repository (same common git dir), outside the project root,
+  on `branch` when given (recorded when omitted), used by no other active
+  lane. Without it the lane shares the parent checkout. → merged warns when
+  a lane step is still open or the checkout's HEAD is not in the project
+  HEAD; it never refuses (patch handoffs are allowed).
+- `claims {laneId, add?, remove?}` on an active lane.
+
+After every operation, the claims of active lanes must not overlap.
+
+**3. Doctor** (per plan, when the sidecar exists): `lanes {path, valid,
+lanes[], mergeOrder, mergeCycle?, unownedWorktrees?}`. Per lane: steps
+and steps done, claims, `checkout {path, branch, exists, outsideClaims
+{count, paths}}` (paths changed since the baseline commit that no claim
+covers), `blockedBy` (active lanes owning a prerequisite) and `issues`:
+missing checkout, cleanup required (a merged/abandoned lane's checkout
+still exists; never removed), branch moved, a workplan journal inside the
+checkout, changes outside claims, every step done but not integrated.
+`mergeOrder` is a topological order of active lanes by cross-lane step
+dependencies (creation order breaks ties); `unownedWorktrees` lists the
+repository's worktrees no lane records. **Inspect** adds `lanes {path,
+valid, active[]}` and a per-step `lane {laneId, state, checkout}`;
+**resume** adds the advisory `lanes {active, current?}` (tried first of
+the advisory members, same no-page-cost rule).
+
+**4. Evidence.** A record may name an active `lane`: it is bound to that
+lane's checkout tree and compared with it while the lane is active, and
+with the project tree afterwards, so lane results go stale until they are
+repeated on the combined state (unless the combined state is identical).
+`shiori evidence --lane L -- COMMAND` runs in the lane checkout.
+
+## 23. MCP server (APPROVED 2026-10-07)
+
+`shiori mcp` exposes the thirteen tools over the Model Context Protocol
+(stdio, JSON-RPC 2.0; revisions 2025-03-26, 2025-06-18 and 2025-11-25,
+newest offered when the client asks for an unknown one). It is a second
+adapter over the same engine, not a new tool surface.
+
+1. **Tools.** Names are the `workplan_*` identities without the prefix
+   (`--tool-prefix` re-adds one); descriptions and input schemas are the
+   adapter's `registration.json`, embedded verbatim
+   (`internal/mcp/registration.json`, kept byte-equal by a test). Read
+   tools and `compact_preview` carry `readOnlyHint`; create, update,
+   reset and compact `destructiveHint`. Results are the exact tool text
+   (`isError` with the core's message on failure); no
+   `structuredContent`, so resume stays within its budget.
+2. **Root.** `--root`, else the client's roots (exactly one `file://`
+   root; re-listed after `notifications/roots/list_changed`). Native
+   input rules apply, so `workspaceRoot` is refused.
+3. **Writes.** Prepared without side effects; approval by elicitation (a
+   form with one boolean, naming the plan, the operation and every path
+   written, deleted or archived) or, by operator choice or when the
+   client lacks elicitation under `auto`, by the client's tool-call
+   approval. No lock or file exists while the prompt is open; a decline
+   or cancellation (`notifications/cancelled`) changes nothing; locked
+   rechecks are unchanged. Writes stay limited to the approved platform
+   matrix (§5.6).
+4. **Doctor** runtime facts: the registered tool names, plugin id
+   `shiori-mcp`, and the client and approval mode as the permission
+   detail; host version facts are absent.
+5. **Resources** (added 2026-10-07, read-only): `workplan://<id>/resume`
+   (the resume packet with default arguments), `/report` (§25, commit
+   links over 20 commits) and `/history` (the newest 50 log entries,
+   §24), listed per plan and as templates. `resources/subscribe` is
+   supported: a subscribed plan is checked after each write through the
+   server and every two seconds (cached stat-trusting reads of the plan,
+   plus the evidence, lanes and change-log files), and a change sends
+   `notifications/resources/updated`; once the client has listed
+   resources, a changed set of plans sends
+   `notifications/resources/list_changed`. Unknown URIs answer -32002.
+
+Not yet: MCP 2026-07-28 (stateless requests, multi-round-trip
+elicitation, roots deprecated): `--root` already covers its
+configuration-based root.
+
+## 24. Approved design changes X4 (APPROVED 2026-10-07)
+
+The change log of spec 06 X4 and the rebased writes it enables. Notes
+stay in the plan (the separate-notes question of X4 remains deferred);
+undo is not part of this change.
+
+1. **Sidecar.** `<id>.history.jsonl`
+   ([history-v1](../schema/v1/history-v1.schema.json)): one compact JSON
+   line per committed write, `{seq, prev, v, at, op, source, tx, before,
+   after, changes}`. `prev` is the sha256 of the previous line, so lines
+   form a hash chain; `before`/`after` are the plan and state hashes
+   around the write (`null` for a plan that did not or no longer
+   exists); `source` is `agent` (native adapter), `cli` or `mcp`, set by
+   the trusted caller. `changes` names the plan elements the write
+   changed: `goal`, `status`, `notes` (`appended` with a count, else
+   `changed`), `findings/<index>`, `phases/<phaseId>`,
+   `phases/<phaseId>/steps/<stepId>` (with `from`/`to` on status
+   changes), `phases` and `.../steps` when reordered, plus `markdown`
+   (explicit Markdown, patch or a move), `dependencies`, `checkpoint`,
+   `evidence` and `lanes`. `updatedAt` alone is not a change.
+2. **Writing.** The entry is part of the prepared intent (its path is a
+   write resource, its payload digest part of the intent digest) and is
+   appended after the transaction completes, still under both locks;
+   storage adds `seq` and `prev` from the last line and cuts a torn last
+   line first. A failed append leaves the committed write standing.
+   Every write path logs: create, update, patch, checkpoint, compaction,
+   reset and explicit recovery. Engines may turn the log off
+   (`NoHistory`); the conformance corpus leaves the file out of its
+   comparisons because the reference writes none.
+3. **Advisory, never authority.** The log is outside the plan and state
+   hashes and is never a precondition. Lost appends and edits outside
+   Shiori show up as gaps (`before` ≠ the previous `after`); an edited or
+   undecodable line breaks the chain and only the part after the last
+   break is trusted. Readers read at most the newest 4 MiB.
+4. **Rotation.** At 4 MiB the log moves to
+   `archive/<id>/history-<createdAt>-<tx8>.jsonl` before the next
+   append; the first line of the new segment chains to the last of the
+   archived one. A write prepared within 256 KiB of the limit names that
+   archive path among its resources, so the intent still lists every
+   path the commit may write.
+5. **Rebased updates.** `workplan_update.rebase` (boolean; the default
+   is the operator's `--rebase` on `serve`, `mcp` and CLI `update`,
+   otherwise false): when `expectedHash` is stale, the update is computed
+   on the current state if the log connects `expectedHash` to the
+   current state hash, and committed if no element it changes overlaps
+   an element a newer write changed. Overlap is the same path, or a
+   parent and child where either side adds, removes or reorders; two note
+   appends never overlap. Changes to evidence, lanes and links also
+   conflict when the log includes them in the rebase range, including
+   sidecar-only writes; they remain outside the state hash. The result
+   carries `rebased: {fromHash, over: [{seq, op,
+   source, at}]}`. Otherwise the reference stale refusal is returned with
+   `Not rebased: <reason>.` appended. Without `rebase` the stale
+   refusal is unchanged. The locked recheck still binds the commit to
+   the state the rebase was computed on.
+6. **Views.** Resume adds `sinceCheckpoint` (writes after the newest
+   logged checkpoint, when the log reaches the current state: count,
+   sources, step status moves first→last, findings added and resolved,
+   notes appended); it is advisory, added only when the packet still
+   fits its budget. Doctor adds `history` per plan with a log: entries,
+   last seq, whether the log reaches the current state, issues, and
+   `stalledSteps` (in progress for over 72 hours per the log, with no
+   evidence recorded since). `shiori history <id> [--since HASH]
+   [--limit N]` prints the log.
+
+## 25. Operator commands: verify and report (APPROVED 2026-10-07)
+
+CLI only; no tool, schema or sidecar format changes.
+
+1. **`shiori verify <id>`** lists the latest record of each command for
+   steps whose evidence is stale or failing (`--all`: every step with
+   records; `--step P/S` narrows), and only those recorded with source
+   `cli-run` (`shiori evidence -- COMMAND`): commands asserted by an
+   agent or the operator are named and skipped, never run. The exact list
+   is printed; running needs `yes` on a terminal or `--yes`. Each command
+   runs in the root (or its lane's checkout) against a tree taken just
+   before it, and its result is recorded through
+   `workplan_update.recordEvidence` (source `cli-run`; the intent is
+   printed). The stored command text must split back into words exactly
+   as `shiori evidence` joined them, else it is refused. Exit status 1
+   when any re-run fails.
+2. **Commit links.** A passing record (outside a lane) links to the
+   newest commits from HEAD (`--commits N`, default 50) whose content is
+   what it tested: the whole tree (the commit's tree, as seen from the
+   root and without the workplan directory, computed in memory and equal
+   to the record's tree OID) or, for scoped records, every scope digest.
+   Over a run of matching commits the oldest is named. Read-only git.
+3. **`shiori report <id>`** renders progress, open work (readiness from
+   the dependency sidecar), the critical path, evidence with commit
+   links, open blocker/critical/major findings, lanes and the last ten
+   logged writes, as Markdown or `--json`.
+
+## 26. Plan links, templates and quality checks (APPROVED 2026-10-07)
+
+1. **Plan links (spec 06 X5).** `workplan_update.planLinks` (at most
+   100 `{planId, relation, note?}`, relation `blocks`, `blockedBy` or
+   `related`) replaces `<id>.links.json`
+   ([links-v1](../schema/v1/links-v1.schema.json)), a parent-owned
+   sidecar outside the state manifest; with only sidecar members the plan
+   and its hashes stay unchanged. Self-links and duplicate
+   (plan, relation) pairs are refused; links to plans that do not exist
+   yet are kept with a warning. Adapter key `x5`.
+2. **Portfolio.** Read-only and advisory, built from every links
+   sidecar: each plan's status and progress, `blocks` edges (`blockedBy`
+   reversed), `related` pairs, which plans wait on unfinished
+   (not completed or cancelled) blockers, one cycle if any, and links to
+   missing plans. Shown as doctor's top-level `portfolio` (unfiltered
+   doctor, only when some plan has links), as resume's advisory
+   `waitingOnPlans`, and by `shiori portfolio`. Cross-plan writes do not
+   exist.
+3. **Templates.** `shiori create --template feature|bugfix|migration`
+   fills `phases` with standard steps whose validations name a
+   placeholder command (`TEST_COMMAND`, `CHECK_COMMAND`); `kind` defaults
+   to the template name. CLI only; exclusive with `phases` in `--input`.
+4. **Quality checks.** Advisory `quality` per plan: open steps without a
+   validation, open steps whose validation names no command (no code
+   span and no leading command word), and open blocker/critical/major
+   findings while no step is open. Doctor shows it only for plans that
+   record evidence (as with the completion warnings); `shiori report`
+   always does. Doctor's `lanes` adds `changeOverlaps`: paths that two
+   active lanes' checkouts both change, whatever their claims.

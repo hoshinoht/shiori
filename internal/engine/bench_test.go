@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
+	"github.com/hoshinoht/shiori/internal/snapshot"
 	"github.com/hoshinoht/shiori/internal/testutil"
 )
 
@@ -160,6 +162,127 @@ func BenchmarkOps(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					if _, err := perfOp(e, op); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkWrites: go test -bench Writes -benchmem ./internal/engine
+// (prepare + authorize + commit on a private copy of each fixture).
+func BenchmarkWrites(b *testing.B) {
+	writes := map[string]func(i int) string{
+		"append-note": func(i int) string { return `{"id":"perf-plan","appendNotes":["bench note ` + strconv.Itoa(i) + `"]}` },
+		"step-status": func(i int) string {
+			st := []string{"in_progress", "blocked"}[i%2]
+			return `{"id":"perf-plan","updateSteps":[{"phaseId":"phase-1","stepId":"step-1","status":"` + st + `"}]}`
+		},
+	}
+	for _, size := range perfSizes {
+		for _, name := range []string{"append-note", "step-status"} {
+			b.Run(size+"/"+name, func(b *testing.B) {
+				dir := filepath.Join(b.TempDir(), "root")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					b.Fatal(err)
+				}
+				if err := testutil.CopyTree(perfRoot(b, size), dir); err != nil {
+					b.Fatal(err)
+				}
+				e, err := New(dir)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					p, err := ojson.Parse([]byte(writes[name](i)))
+					if err != nil {
+						b.Fatal(err)
+					}
+					data, err := input.ParseMutationInput("update", p.Value, input.SurfaceCore)
+					if err != nil {
+						b.Fatal(err)
+					}
+					prep, err := e.Prepare("update", data)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := e.Execute(context.Background(), prep, allowAll{}, ExecOptions{}); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkOpsCached is BenchmarkOps on a serve-like engine whose cache is
+// warm (the fixture files are old, so stat hits are trusted).
+func BenchmarkOpsCached(b *testing.B) {
+	for _, size := range perfSizes {
+		e, err := New(perfRoot(b, size))
+		if err != nil {
+			b.Fatal(err)
+		}
+		e.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
+		for _, op := range perfOps {
+			b.Run(size+"/"+op, func(b *testing.B) {
+				if _, err := perfOp(e, op); err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := perfOp(e, op); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkAgentLoop: resume then append a note, as an agent does, on a
+// private copy, without and with the serve cache.
+func BenchmarkAgentLoop(b *testing.B) {
+	for _, size := range perfSizes {
+		for _, cached := range []bool{false, true} {
+			b.Run(fmt.Sprintf("size=%s/cache=%v", size, cached), func(b *testing.B) {
+				dir := filepath.Join(b.TempDir(), "root")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					b.Fatal(err)
+				}
+				if err := testutil.CopyTree(perfRoot(b, size), dir); err != nil {
+					b.Fatal(err)
+				}
+				e, err := New(dir)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if cached {
+					e.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
+				}
+				b.ReportAllocs()
+				// One untimed round warms the cache (steady state).
+				for i := -1; i < b.N; i++ {
+					if i == 0 {
+						b.ResetTimer()
+					}
+					if _, err := perfOp(e, "resume"); err != nil {
+						b.Fatal(err)
+					}
+					p, _ := ojson.Parse([]byte(`{"id":"perf-plan","appendNotes":["loop ` + strconv.Itoa(i) + `"]}`))
+					data, err := input.ParseMutationInput("update", p.Value, input.SurfaceCore)
+					if err != nil {
+						b.Fatal(err)
+					}
+					prep, err := e.Prepare("update", data)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := e.Execute(context.Background(), prep, allowAll{}, ExecOptions{}); err != nil {
 						b.Fatal(err)
 					}
 				}

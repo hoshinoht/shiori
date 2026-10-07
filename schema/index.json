@@ -38,9 +38,36 @@
       "storedVersion": 1,
       "path": ".opencode/workplan/<id>.dependencies.json"
     },
-    "transactionJournal": {
-      "schema": "v1/transaction-journal-v1.schema.json",
+    "evidence": {
+      "schema": "v1/evidence-v1.schema.json",
       "storedVersion": 1,
+      "path": ".opencode/workplan/<id>.evidence.json"
+    },
+    "lanes": {
+      "schema": "v1/lanes-v1.schema.json",
+      "storedVersion": 1,
+      "path": ".opencode/workplan/<id>.lanes.json"
+    },
+    "history": {
+      "schema": "v1/history-v1.schema.json",
+      "storedVersion": 1,
+      "path": ".opencode/workplan/<id>.history.jsonl (one JSON object per line)"
+    },
+    "links": {
+      "schema": "v1/links-v1.schema.json",
+      "storedVersion": 1,
+      "path": ".opencode/workplan/<id>.links.json"
+    },
+    "transactionJournal": {
+      "schema": [
+        "v1/transaction-journal-v1.schema.json",
+        "v1/transaction-journal-v2.schema.json"
+      ],
+      "storedVersions": [
+        1,
+        2
+      ],
+      "write": 2,
       "path": ".opencode/workplan/<id>.transaction.json"
     },
     "lockOwner": {

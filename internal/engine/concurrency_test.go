@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,6 +32,13 @@ func TestMain(m *testing.M) {
 	if os.Getenv("SHIORI_KILL_CHILD") == "1" {
 		os.Exit(killChild()) // recovery_test.go
 	}
+	flag.Parse()
+	// Every test commit cross-checks the fast post-commit hashes against
+	// a full reload; benchmarks measure the fast path alone.
+	if f := flag.Lookup("test.bench"); f == nil || f.Value.String() == "" {
+		verifyPostHashes = true
+	}
+	testCacheAll = os.Getenv("SHIORI_TEST_CACHE") == "1"
 	os.Exit(m.Run())
 }
 

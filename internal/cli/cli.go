@@ -35,12 +35,17 @@ Read commands (never prompt, never write):
   resume <id>                Bounded continuation packet (UTF-16 budget)
   doctor [id]                Read-only diagnostics: roots, sidecars, locks, journals
   compact <id> --reason R    Compaction preview (read-only without --apply)
+  history <id>               The plan's change log [--since HASH --limit N] (spec 06 X4)
+  report <id>                Status report in Markdown (--json): progress, open work, evidence and
+                             the commits it verified [--commits N], findings, lanes, recent activity
+  portfolio                  Plans and the plans they wait on, from planLinks (spec 06 X5)
 
 Mutating commands (print the prepared intent, then require confirmation):
   create <id>                --goal G [--title --kind --status --plan-file --markdown-file F
-                             --append-note N --overwrite --replace-markdown]
+                             --append-note N --overwrite --replace-markdown
+                             --template feature|bugfix|migration]
   update <id>                [--title --goal --status --plan-file --markdown-file F
-                             --append-note N --replace-markdown] | --recovery resume|rollback
+                             --append-note N --replace-markdown --rebase] | --recovery resume|rollback
   patch <id>                 --patch-file F [--validate]
   reset <id>                 [--mode draft|markdown-only|wipe --replace-markdown]
                              draft: statuses to draft, checkpoint removed, content kept;
@@ -53,6 +58,17 @@ Mutating commands (print the prepared intent, then require confirmation):
   compact <id> --apply       --reason R [--archive-phase ID --archive-note I --archive-finding I
                              | --rollover [--keep-notes N] [--pin-note I]...]
                              --preview-token T --confirm ARCHIVE_SELECTED_HISTORY
+  evidence <id>              --phase P --step S --expected-hash H [--scope PATH]... [--summary S] [--lane L]
+                             (-- COMMAND [ARGS...] | --command C --exit-code N [--output-file F])
+                             records evidence for a step (spec 06 X2); with -- COMMAND it runs
+                             the command in the root (or the lane's checkout) and records its
+                             exit code and output digest
+  verify <id>                Re-run the commands recorded with evidence -- COMMAND for stale or
+                             failing steps and record the results [--all --step P/S --dry-run]
+  mcp [--root DIR]           The workplan tools as an MCP server on stdin/stdout (register it as
+                             "workplan" so tools appear as workplan_resume, ...); writes are
+                             approved through MCP elicitation or the client's tool approval
+                             (--write-approval auto|elicitation|client|deny)
   serve --stdio              Native adapter protocol on stdin/stdout (JSON lines;
                              prepare -> host authorization -> commit; idle exit)
   version                    Print the version
@@ -67,6 +83,8 @@ Mutation flags:
                              writes, including recovery and compaction apply)
   --legacy-unhashed          Allow an existing-state write without --expected-hash
                              (still rechecked under the lock)
+  --journal-version 1|2      Journal format (default 2: images by reference; 1: inline,
+                             readable by the reference plugin). Also on serve.
   --yes                      Confirm the printed intent (required off a terminal;
                              never read from the environment)
 
@@ -98,6 +116,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "serve":
 		return runServe(rest, os.Stdin, stdout, stderr)
+	case "evidence":
+		return runEvidence(rest, stdout, stderr)
+	case "mcp":
+		return runMCP(rest, os.Stdin, stdout, stderr)
+	case "history":
+		return runHistory(rest, stdout, stderr)
+	case "verify":
+		return runVerify(rest, stdout, stderr)
+	case "report":
+		return runReport(rest, stdout, stderr)
+	case "portfolio":
+		return runPortfolio(rest, stdout, stderr)
 	case "list", "read", "inspect", "validate", "resume", "doctor":
 	default:
 		if mutationCommands[cmd] {

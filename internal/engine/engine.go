@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/hoshinoht/shiori/internal/advisor"
+	"github.com/hoshinoht/shiori/internal/gitview"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
@@ -31,6 +32,27 @@ type Engine struct {
 	// defaults). Set by the trusted caller (CLI or serve flag), never by
 	// model input.
 	Compaction *advisor.Thresholds
+
+	// EvidenceSource and EvidenceTree are set by the trusted caller: the
+	// record source ("agent" when empty) and a tree pinned before a run.
+	EvidenceSource string
+	EvidenceTree   *gitview.Tree
+
+	// Cache, when set (serve), keeps artifacts and decoded plans between
+	// operations. Trusted configuration.
+	Cache *snapshot.Cache
+
+	// JournalVersion selects the journal format of new writes: 2 (the
+	// default, images by reference) or 1 (inline, readable by the
+	// reference plugin). Trusted configuration.
+	JournalVersion int
+
+	// Source is the change-log origin of writes ("agent" when empty);
+	// NoHistory turns the change log off. Trusted configuration.
+	Source    string
+	NoHistory bool
+	// Rebase is the default of workplan_update's rebase member.
+	Rebase bool
 }
 
 // DefaultMaxResponseBytes is the approved response frame limit.
@@ -46,8 +68,15 @@ func New(root string) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{RequestedRoot: req, Root: canon, Limits: snapshot.DefaultLimits}, nil
+	e := &Engine{RequestedRoot: req, Root: canon, Limits: snapshot.DefaultLimits}
+	if testCacheAll {
+		e.Cache = snapshot.NewCache(snapshot.DefaultCacheBudget)
+	}
+	return e, nil
 }
+
+// testCacheAll gives every engine a cache (tests: SHIORI_TEST_CACHE=1).
+var testCacheAll = false
 
 func (e *Engine) maxResponse() int {
 	if e.MaxResponseBytes > 0 {
@@ -62,8 +91,15 @@ func (e *Engine) dir() string {
 
 func (e *Engine) absRel(rel string) string { return filepath.Join(e.Root, filepath.FromSlash(rel)) }
 
+// load is a read's snapshot: through the cache, trusting unchanged stats.
 func (e *Engine) load(id string) (*snapshot.Snapshot, error) {
-	return snapshot.Load(e.Root, id, e.Limits)
+	return snapshot.LoadWith(&snapshot.Reader{Root: e.Root, Limits: e.Limits, Cache: e.Cache, TrustStat: true}, id)
+}
+
+// loadFresh is a writer's snapshot: every file is read and hashed; only
+// the content-keyed plan decode may come from the cache.
+func (e *Engine) loadFresh(id string) (*snapshot.Snapshot, error) {
+	return snapshot.LoadWith(&snapshot.Reader{Root: e.Root, Limits: e.Limits, Cache: e.Cache}, id)
 }
 
 // normalizeRequested normalizes a caller-supplied id (inputs are already

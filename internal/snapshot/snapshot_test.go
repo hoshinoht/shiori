@@ -72,7 +72,7 @@ func TestFixtureSnapshots(t *testing.T) {
 					t.Fatalf("expected error %q", v.Expect.Message)
 				}
 				got := root.Normalize(err.Error())
-				want := v.Expect.Message
+				want, _ := testutil.AdaptCaseLookup(v.Fixture, v.Expect.Message)
 				if i := strings.Index(want, ": JSON Parse error:"); i >= 0 {
 					if !strings.HasPrefix(got, want[:i+2]) {
 						t.Fatalf("error prefix\n got %q\nwant %q", got, want[:i+2])

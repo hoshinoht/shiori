@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/snapshot"
@@ -227,7 +228,7 @@ func (e *Engine) PreparePatch(data ojson.Value) (*Prepared, error) {
 		meta.Set("planHash", ojson.StringValue(post.PlanHash)).Set("stateHash", ojson.StringValue(post.StateHash))
 		return Output{Text: text, Metadata: meta.Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, s, s.Plan, history.Change{Path: "markdown", Op: "changed"}), nil
 }
 
 // snapshotRel normalizes a patch target to a project-relative path.

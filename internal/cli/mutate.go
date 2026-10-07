@@ -13,6 +13,8 @@ import (
 	"syscall"
 
 	"github.com/hoshinoht/shiori/internal/engine"
+	"github.com/hoshinoht/shiori/internal/evidence"
+	"github.com/hoshinoht/shiori/internal/history"
 	"github.com/hoshinoht/shiori/internal/input"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/storage"
@@ -87,6 +89,9 @@ func printIntent(w io.Writer, req engine.AuthRequest) {
 		fmt.Fprintf(w, "  %-12s %s\n               before %s\n               after  %s\n", t.Kind, t.Rel, b, a)
 	}
 	r := req.Resources
+	if in.History != nil {
+		fmt.Fprintf(w, "  history: %s (append)\n", in.History.Rel)
+	}
 	fmt.Fprintf(w, "  journal: %s\n", r.Journal)
 	for _, l := range in.Locks {
 		fmt.Fprintf(w, "  lock:    %s\n", l.Rel)
@@ -103,6 +108,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	yes := fs.Bool("yes", false, "confirm the printed intent without a prompt")
 	expected := fs.String("expected-hash", "", "stateHash from the latest read")
 	legacy := fs.Bool("legacy-unhashed", false, "allow an existing-state write without --expected-hash (still rechecked under the lock)")
+	journal := fs.Int("journal-version", 2, "journal format: 2 (by reference) or 1 (inline, reference-compatible)")
 	// Field flags (the --input object may carry any field instead).
 	title := fs.String("title", "", "")
 	goal := fs.String("goal", "", "")
@@ -112,6 +118,8 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	mdFile := fs.String("markdown-file", "", "file with explicit linked Markdown")
 	overwrite := fs.Bool("overwrite", false, "")
 	replaceMD := fs.Bool("replace-markdown", false, "")
+	template := fs.String("template", "", "create: start from a plan template (feature, bugfix, migration)")
+	rebase := fs.Bool("rebase", false, "update: apply over newer non-conflicting writes when --expected-hash is stale (X4)")
 	var notes, blockers, guardrails, refs, validations, appendValidations, phases, noteIdx, findingIdx, pinNotes stringsFlag
 	fs.Var(&notes, "append-note", "")
 	fs.Var(&blockers, "blocker", "")
@@ -153,8 +161,8 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	allowed := map[string][]string{
-		"create":     {"title", "goal", "kind", "status", "plan-file", "markdown-file", "overwrite", "replace-markdown", "append-note"},
-		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery"},
+		"create":     {"title", "goal", "kind", "status", "plan-file", "markdown-file", "overwrite", "replace-markdown", "append-note", "template"},
+		"update":     {"title", "goal", "status", "plan-file", "markdown-file", "replace-markdown", "append-note", "recovery", "rebase"},
 		"patch":      {"patch-file", "validate"},
 		"reset":      {"mode", "preserve-notes", "replace-markdown", "preview-token", "confirm"},
 		"checkpoint": {"summary", "next-action", "phase", "step", "blocker", "guardrail", "reference", "validation", "merge", "append-validation"},
@@ -162,7 +170,7 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	for name := range set {
 		switch name {
-		case "root", "json", "input", "yes", "expected-hash", "legacy-unhashed":
+		case "root", "json", "input", "yes", "expected-hash", "legacy-unhashed", "journal-version":
 			continue
 		}
 		ok := false
@@ -247,6 +255,22 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	}
 	boolFlag("overwrite", "overwrite", *overwrite)
 	boolFlag("replace-markdown", "replaceMarkdown", *replaceMD)
+	boolFlag("rebase", "rebase", *rebase)
+	if set["template"] {
+		phases, ok := templatePhases(*template)
+		if !ok {
+			return usageErr("unknown template %q (templates: %s)", *template, templateNames())
+		}
+		for _, m := range members {
+			if m.Key == "phases" {
+				return usageErr("--template and phases in --input are exclusive")
+			}
+		}
+		put("phases", phases)
+		if !set["kind"] {
+			put("kind", ojson.StringValue(*template))
+		}
+	}
 	noteKey := "appendNotes"
 	if cmd == "create" {
 		noteKey = "notes"
@@ -348,23 +372,34 @@ func runMutationCommand(cmd string, rest []string, stdout, stderr io.Writer) int
 	if err != nil {
 		return fail(stdout, stderr, *jsonOut, err)
 	}
+	if *journal != 1 && *journal != 2 {
+		return usageErr("--journal-version must be 1 or 2")
+	}
+	e.JournalVersion = *journal
+	e.EvidenceSource = evidence.SourceCLI
+	e.Source = history.SourceCLI
+	return execMutation(e, cmd, toolIn, *yes, *jsonOut, stdout, stderr)
+}
+
+// execMutation parses, prepares, authorizes and commits one mutation.
+func execMutation(e *engine.Engine, cmd string, toolIn ojson.Value, yes, jsonOut bool, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	data, err := input.ParseMutationInput(cmd, toolIn, input.SurfaceCore)
 	if err != nil {
-		return fail(stdout, stderr, *jsonOut, err)
+		return fail(stdout, stderr, jsonOut, err)
 	}
 	prep, err := e.Prepare(cmd, data)
 	if err != nil {
-		return fail(stdout, stderr, *jsonOut, err)
+		return fail(stdout, stderr, jsonOut, err)
 	}
-	auth := &CLIAuthorizer{Yes: *yes, TTY: IsTerminal(), In: Stdin, Out: stderr}
+	auth := &CLIAuthorizer{Yes: yes, TTY: IsTerminal(), In: Stdin, Out: stderr}
 	out, err := e.Execute(ctx, prep, auth, engine.ExecOptions{})
 	if err != nil {
-		return fail(stdout, stderr, *jsonOut, err)
+		return fail(stdout, stderr, jsonOut, err)
 	}
 	if out.Text != "" {
-		if *jsonOut {
+		if jsonOut {
 			fmt.Fprintln(stdout, string(ojson.Pretty(ojson.NewObject(2).Set("output", ojson.StringValue(out.Text)).Set("metadata", out.Metadata).Value())))
 		} else {
 			fmt.Fprintln(stdout, out.Text)

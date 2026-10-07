@@ -58,6 +58,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 		p.Status = s
 	}
 	planFileSet := false
+	var pre *snapshot.Snapshot // the overwritten plan
 	if raw, ok := getStr(data, "planFile"); ok {
 		if p.PlanFile, err = e.normalizePlanFileInput(raw); err != nil {
 			return nil, err
@@ -122,7 +123,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			return nil, fmt.Errorf("Cannot overwrite missing workplan: %s", jsonBefore.Path)
 		}
 		expected := optHash(data)
-		s, err := e.load(id)
+		s, err := e.loadFresh(id)
 		if err != nil {
 			u := e.unreadable(id, err)
 			if u == nil {
@@ -181,6 +182,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 				}
 			}
 			jsonBefore, mdBefore = s.JSON, s.Markdown
+			pre = s
 			reads = readsOf(s.StateManifest)
 		}
 	}
@@ -235,7 +237,7 @@ func (e *Engine) PrepareCreate(data ojson.Value) (*Prepared, error) {
 			Set("stateHash", ojson.StringValue(post.StateHash)).
 			Set("directorySync", dirSyncValue(sync)).Value()}, nil
 	}
-	return finalize(prep), nil
+	return e.logged(prep, pre, p), nil
 }
 
 const (
@@ -261,7 +263,29 @@ func (e *Engine) generatedMarkdown(s *snapshot.Snapshot) (bool, error) {
 	if err := d7Check(s.Plan); err != nil {
 		return false, err
 	}
-	return e.isGenerated(s.Plan, s.Markdown.Bytes)
+	return e.isGeneratedCached(s.Plan, s.JSON.SHA256, s.Markdown.SHA256, s.Markdown.Bytes)
+}
+
+// isGeneratedCached consults the cache's classification (content-keyed)
+// before rendering.
+func (e *Engine) isGeneratedCached(p *model.Plan, planSHA, mdSHA string, md []byte) (bool, error) {
+	if e.Cache == nil || planSHA == "" || mdSHA == "" {
+		return e.isGenerated(p, md)
+	}
+	key := snapshot.GeneratedKey(planSHA, mdSHA, p.PlanFile, p.SpecFiles)
+	if gen, ok := e.Cache.Generated(key); ok {
+		if verifyPostHashes {
+			if real, err := e.isGenerated(p, md); err != nil || real != gen {
+				panic("cached Markdown classification is wrong for " + p.ID)
+			}
+		}
+		return gen, nil
+	}
+	gen, err := e.isGenerated(p, md)
+	if err == nil {
+		e.Cache.SetGenerated(key, gen)
+	}
+	return gen, err
 }
 
 // checkTargetPaths refuses targets that escape the root through symlinks

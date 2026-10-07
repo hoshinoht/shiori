@@ -250,7 +250,8 @@ func TestGeneratedClassification(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error %q", row.Error)
 				}
-				got, want := normEngineText(root.Normalize(err.Error())), normEngineText(row.Error)
+				rowErr, _ := testutil.AdaptCaseLookup(row.Fixture, row.Error)
+				got, want := normEngineText(root.Normalize(err.Error())), normEngineText(rowErr)
 				if got != want {
 					t.Fatalf("error %q want %q", got, want)
 				}

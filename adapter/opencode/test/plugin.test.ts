@@ -69,9 +69,32 @@ describe("registration (identities, shapes, model-facing text)", () => {
     }
   });
 
-  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1 and D.4.3 changes", () => {
+  it("differs from the reference registration only by the approved D.1, D.3, D.4, D.4.1, D.4.3, E1, X3, X4 and X5 changes", () => {
     const text = readFileSync(join(REPO_ROOT, "adapter", "opencode", "src", "registration.json"), "utf8");
     const reg = JSON.parse(text);
+    // X5 (contracts §26): workplan_update planLinks.
+    expect(reg.x5.additions).toEqual([{ tool: "workplan_update", property: "planLinks" }]);
+    expect(reg.tools.find((t: any) => t.name === "workplan_update").input.properties.planLinks.items.properties.relation.enum).toEqual(["blocks", "blockedBy", "related"]);
+    for (const a of reg.x5.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    delete reg.x5;
+    // X4 (contracts §24): workplan_update rebase.
+    expect(reg.x4.additions).toEqual([{ tool: "workplan_update", property: "rebase" }]);
+    expect(reg.tools.find((t: any) => t.name === "workplan_update").input.properties.rebase.type).toBe("boolean");
+    for (const a of reg.x4.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    delete reg.x4;
+    // X3 (contracts §22): workplan_update lanes.
+    expect(reg.x3.additions).toEqual([{ tool: "workplan_update", property: "lanes" }]);
+    const lanesProp = reg.tools.find((t: any) => t.name === "workplan_update").input.properties.lanes;
+    expect(lanesProp.items.properties.op.enum).toEqual(["propose", "transition", "claims"]);
+    for (const a of reg.x3.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    delete reg.x3;
+    // E1 (contracts §20): workplan_update recordEvidence.
+    expect(reg.e1.additions).toEqual([{ tool: "workplan_update", property: "recordEvidence" }]);
+    const rec = reg.tools.find((t: any) => t.name === "workplan_update").input.properties.recordEvidence;
+    expect(rec.items.required).toEqual(["phaseId", "stepId", "command", "exitCode"]);
+    expect(rec.items.additionalProperties).toBe(false);
+    for (const a of reg.e1.additions) delete reg.tools.find((t: any) => t.name === a.tool).input.properties[a.property];
+    delete reg.e1;
     // D.4.3 (contracts §18): workplan_checkpoint merge mode. Its changes are
     // undone first, so the D.4.1 checks below see the D.4.1 text.
     expect(reg.d4_3.additions).toEqual([{ tool: "workplan_checkpoint", property: "merge" }, { tool: "workplan_checkpoint", property: "appendValidation" }]);

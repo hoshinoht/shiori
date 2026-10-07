@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -170,14 +171,21 @@ func (e *Engine) errPendingJournal(id string) error {
 }
 
 // StaleHashError is the reference stale-state refusal.
-type StaleHashError struct{ Current string }
+type StaleHashError struct {
+	Current    string
+	NotRebased string // why a requested rebase did not apply
+}
 
 // staleHashGuidance is appended to the reference stale-state refusal; it
 // adds no hash of its own.
 const staleHashGuidance = " Use workplan_resume or workplan_inspect for that re-read before retrying, so the retry is based on the current plan."
 
 func (e *StaleHashError) Error() string {
-	return "Stale expectedHash; current stateHash is " + e.Current + ". Reread the plan and recompute the mutation." + staleHashGuidance
+	msg := "Stale expectedHash; current stateHash is " + e.Current + ". Reread the plan and recompute the mutation." + staleHashGuidance
+	if e.NotRebased != "" {
+		msg += " Not rebased: " + e.NotRebased + "."
+	}
+	return msg
 }
 
 // DuplicateMembersError refuses to mutate a plan whose stored JSON repeats
@@ -198,7 +206,7 @@ func (e *Engine) loadForMutation(raw string, expected *string) (*snapshot.Snapsh
 	if err != nil {
 		return nil, err
 	}
-	s, err := e.load(id)
+	s, err := e.loadFresh(id)
 	if err != nil {
 		return nil, e.repairHint(id, err)
 	}
@@ -274,14 +282,22 @@ type targetSpec struct {
 // dropped (no needless replacement).
 func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []storage.ReadEntry) *storage.Intent {
 	in := &storage.Intent{
-		Operation:     op,
-		WorkplanID:    id,
-		Root:          e.Root,
-		TransactionID: tx,
-		CreatedAt:     e.nowISO(),
-		Reads:         reads,
-		JournalRel:    journalRel(id),
-		JournalStage:  storage.JournalStagePath(snapshot.WorkplanDir, id, tx),
+		Operation:      op,
+		WorkplanID:     id,
+		Root:           e.Root,
+		TransactionID:  tx,
+		CreatedAt:      e.nowISO(),
+		Reads:          reads,
+		JournalRel:     journalRel(id),
+		JournalStage:   storage.JournalStagePath(snapshot.WorkplanDir, id, tx),
+		JournalVersion: e.journalVersion(),
+	}
+	// Before images are the bytes the reads hashed.
+	known := map[string]string{}
+	for _, r := range reads {
+		if !r.Missing {
+			known[r.Rel] = r.SHA256
+		}
 	}
 	var rels []string
 	for _, t := range specs {
@@ -291,6 +307,17 @@ func (e *Engine) buildIntent(op, id, tx string, specs []targetSpec, reads []stor
 		tg := storage.Target{Rel: t.rel, Kind: t.kind, Before: t.before, BeforeExists: t.beforeOK, After: t.after, AfterExists: t.afterOK, Mode: e.fileMode(t.rel, t.kind)}
 		if t.afterOK {
 			tg.Stage = storage.StagePath(t.rel, tx, len(in.Targets))
+		}
+		if t.beforeOK && in.JournalVersion == 2 {
+			tg.Backup = storage.BackupPath(t.rel, tx, len(in.Targets))
+		}
+		if sum, ok := known[t.rel]; ok && t.beforeOK {
+			tg.SealKnown(sum)
+			if verifyPostHashes && tg.BeforeHash() != hashOf(t.before) {
+				panic("buildIntent: known before digest differs for " + t.rel)
+			}
+		} else {
+			tg.Seal()
 		}
 		in.Targets = append(in.Targets, tg)
 		rels = append(rels, t.rel)
@@ -322,6 +349,143 @@ func overlay(in *storage.Intent, id string) map[string][]byte {
 	}
 	return m
 }
+
+// postHashes computes the plan and state hashes the committed intent
+// produces without reading or parsing anything: every manifest path that
+// is not a target was verified unchanged under the lock, so its digest is
+// the prepared one, and targets carry their after digests. post is the
+// plan as written. ok=false (a path the prepared manifest does not
+// cover, such as a newly linked spec) means: use postSnapshot.
+func (e *Engine) postHashes(pre *snapshot.Snapshot, in *storage.Intent, post *model.Plan) (planHash, stateHash string, ok bool) {
+	known := map[string]snapshot.Entry{}
+	for _, en := range pre.StateManifest {
+		known[en.Path] = en
+	}
+	known[journalRel(pre.ID)] = snapshot.Entry{Path: journalRel(pre.ID), Missing: true}
+	if in != nil {
+		for _, t := range in.Targets {
+			p := snapshot.ManifestPath(t.Rel)
+			if t.AfterExists {
+				known[p] = snapshot.Entry{Path: p, SHA256: t.AfterHash()}
+			} else {
+				known[p] = snapshot.Entry{Path: p, Missing: true}
+			}
+		}
+	}
+	pf, err := snapshot.NormalizePlanFile(e.Root, post.PlanFile)
+	if err != nil {
+		return "", "", false
+	}
+	paths := []string{snapshot.PlanRel(pre.ID), pf}
+	for _, raw := range post.SpecFiles {
+		sp, err := snapshot.NormalizeSpecFile(e.Root, raw)
+		if err != nil {
+			return "", "", false
+		}
+		paths = append(paths, sp)
+	}
+	seen := map[string]bool{}
+	var planEntries []snapshot.Entry
+	for _, p := range paths {
+		mp := snapshot.ManifestPath(p)
+		if seen[mp] {
+			continue
+		}
+		seen[mp] = true
+		en, hit := known[mp]
+		if !hit {
+			return "", "", false
+		}
+		planEntries = append(planEntries, en)
+	}
+	stateEntries := append([]snapshot.Entry{}, planEntries...)
+	for _, suffix := range []string{".checkpoint.json", ".dependencies.json", ".transaction.json"} {
+		en, hit := known[snapshot.SidecarRel(pre.ID, suffix)]
+		if !hit {
+			return "", "", false
+		}
+		stateEntries = append(stateEntries, en)
+	}
+	planHash = snapshot.ManifestHash(snapshot.PlanHashVersion, planEntries)
+	stateHash = snapshot.ManifestHash(snapshot.StateHashVersion, stateEntries)
+	if verifyPostHashes {
+		if ps, err := e.postSnapshot(in, pre.ID); err != nil || ps.PlanHash != planHash || ps.StateHash != stateHash {
+			panic(fmt.Sprintf("postHashes differ from the reloaded snapshot for %s: %v", pre.ID, err))
+		}
+	}
+	return planHash, stateHash, true
+}
+
+// postSummary is the committed plan's summary and hashes: from the plan
+// as written and the known digests, else from a reload.
+func (e *Engine) postSummary(pre *snapshot.Snapshot, in *storage.Intent, post *model.Plan) (ojson.Value, string, string, error) {
+	if ph, sh, ok := e.postHashes(pre, in, post); ok {
+		return post.Summary(), ph, sh, nil
+	}
+	ps, err := e.postSnapshot(in, pre.ID)
+	if err != nil {
+		return ojson.Value{}, "", "", err
+	}
+	return ps.Plan.Summary(), ps.PlanHash, ps.StateHash, nil
+}
+
+// rememberRendered records that the Markdown an update just wrote is the
+// rendering of the plan it wrote, so the next write skips re-rendering the
+// stored plan to classify it.
+func (e *Engine) rememberRendered(in *storage.Intent, jsonRel, mdRel string, p *model.Plan) {
+	if e.Cache == nil || in == nil {
+		return
+	}
+	var planSHA, mdSHA string
+	for _, t := range in.Targets {
+		switch t.Rel {
+		case jsonRel:
+			planSHA = t.AfterHash()
+		case mdRel:
+			mdSHA = t.AfterHash()
+		}
+	}
+	if planSHA != "" && mdSHA != "" {
+		e.Cache.SetGenerated(snapshot.GeneratedKey(planSHA, mdSHA, p.PlanFile, p.SpecFiles), true)
+	}
+}
+
+// seedPlan puts the plan a write just serialized into the cache under the
+// written bytes' digest, as decoding would yield it (decoding never sets
+// SpecFilesAdded or keeps duplicate members), so the next read does not
+// parse what was just written. Engine tests decode and compare.
+func (e *Engine) seedPlan(in *storage.Intent, jsonRel string, p *model.Plan) {
+	if e.Cache == nil || in == nil {
+		return
+	}
+	for _, t := range in.Targets {
+		if t.Rel != jsonRel || !t.AfterExists {
+			continue
+		}
+		c := asDecoded(p)
+		if verifyPostHashes {
+			parsed, err := ojson.ParseImmutable(t.After)
+			if err != nil {
+				panic(err)
+			}
+			d, err := model.DecodePlan(parsed)
+			if err != nil {
+				panic(err)
+			}
+			if len(d.Duplicates) == 0 {
+				d.Duplicates = nil
+			}
+			if !reflect.DeepEqual(c, d) {
+				panic(fmt.Sprintf("seeded plan differs from decoding the written bytes for %s: %s", p.ID, planDiff(c, d)))
+			}
+		}
+		e.Cache.SeedPlan(t.AfterHash(), len(t.After), c)
+	}
+}
+
+// verifyPostHashes makes postHashes cross-check against a full reload
+// (tests only).
+var verifyPostHashes = false
 
 // postSnapshot is the snapshot the committed intent produces.
 func (e *Engine) postSnapshot(in *storage.Intent, id string) (*snapshot.Snapshot, error) {
@@ -423,4 +587,53 @@ func newTargets(in *storage.Intent) (all, markdown []string) {
 		}
 	}
 	return all, markdown
+}
+
+// journalVersion is the journal format new writes use (default 2).
+func (e *Engine) journalVersion() int {
+	if e.JournalVersion == 1 {
+		return 1
+	}
+	return 2
+}
+
+// planDiff names the first top-level field where two plans differ.
+func planDiff(a, b *model.Plan) string {
+	va, vb := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
+	for i := 0; i < va.NumField(); i++ {
+		if !reflect.DeepEqual(va.Field(i).Interface(), vb.Field(i).Interface()) {
+			return fmt.Sprintf("%s: %#v vs %#v", va.Type().Field(i).Name, va.Field(i).Interface(), vb.Field(i).Interface())
+		}
+	}
+	return "no top-level field"
+}
+
+// asDecoded is a copy of p shaped as decoding its stored bytes yields it.
+func asDecoded(p *model.Plan) *model.Plan {
+	c := p.Clone()
+	c.HasSpecFiles = c.HasSpecFiles || c.SpecFilesAdded
+	c.SpecFilesAdded = false
+	c.Duplicates = nil
+	for _, l := range []*[]string{&c.Scope, &c.NonGoals, &c.Constraints, &c.RelevantFiles, &c.Notes} {
+		if *l == nil {
+			*l = []string{}
+		}
+	}
+	// The decoder makes string lists non-nil and leaves empty phase,
+	// step and finding lists nil.
+	if c.SpecFiles == nil {
+		c.SpecFiles = []string{}
+	}
+	if len(c.Findings) == 0 {
+		c.Findings = nil
+	}
+	if len(c.Phases) == 0 {
+		c.Phases = nil
+	}
+	for i := range c.Phases {
+		if len(c.Phases[i].Steps) == 0 {
+			c.Phases[i].Steps = nil
+		}
+	}
+	return c
 }

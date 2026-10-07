@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -20,6 +21,7 @@ const (
 	FaultDirs         = "dirs"
 	FaultLocked       = "locked"
 	FaultStage        = "stage"           // + ":<index>"
+	FaultBackup       = "backup"          // journal v2: before images linked, not synced
 	FaultJournalStage = "journal-stage"   // journal staged, not published
 	FaultJournalLink  = "journal-publish" // journal published, before dir sync
 	FaultJournalSync  = "journal-sync"
@@ -55,6 +57,8 @@ type Result struct {
 	// DirectorySync is true when every directory fsync succeeded; false
 	// means the platform refused directory sync (reported, not hidden).
 	DirectorySync bool
+	// HistoryErr is a failed change-log append (the commit stands).
+	HistoryErr error
 }
 
 // StaleError is a precondition that changed between preparation and the
@@ -85,6 +89,27 @@ func (e *RecoveryRequiredError) Error() string {
 }
 
 func (e *RecoveryRequiredError) Unwrap() error { return e.Cause }
+
+// fileDigestStat is fileDigest plus the stat of the file it read.
+func fileDigestStat(p string) (string, bool, fs.FileInfo, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return "", false, nil, nil
+		}
+		return "", false, nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false, nil, err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", false, nil, err
+	}
+	return hex.EncodeToString(h.Sum(nil)), true, info, nil
+}
 
 func fileDigest(p string) (string, bool, error) {
 	data, err := os.ReadFile(p)
@@ -170,9 +195,25 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 		h.AfterLock()
 	}
 
-	// Locked recheck of every precondition.
+	// Locked recheck of every precondition; each file is hashed once.
+	type digest struct {
+		sum  string
+		ok   bool
+		info fs.FileInfo
+	}
+	seen := map[string]digest{}
+	digestOf := func(rel string) (string, bool, error) {
+		if d, hit := seen[rel]; hit {
+			return d.sum, d.ok, nil
+		}
+		sum, ok, info, err := fileDigestStat(abs(root, rel))
+		if err == nil {
+			seen[rel] = digest{sum, ok, info}
+		}
+		return sum, ok, err
+	}
 	for _, e := range in.Reads {
-		sum, ok, err := fileDigest(abs(root, e.Rel))
+		sum, ok, err := digestOf(e.Rel)
 		if err != nil {
 			return res, err
 		}
@@ -184,12 +225,12 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 		}
 	}
 	for _, t := range in.Targets {
-		sum, ok, err := fileDigest(abs(root, t.Rel))
+		if in.Recovery != "" {
+			break // recovery preflight is the caller's Recheck
+		}
+		sum, ok, err := digestOf(t.Rel)
 		if err != nil {
 			return res, err
-		}
-		if in.Recovery != "" {
-			continue // recovery preflight is the caller's Recheck
 		}
 		if ok != t.BeforeExists || (ok && sum != t.BeforeHash()) {
 			if !t.BeforeExists {
@@ -243,8 +284,18 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 	}
 
 	jp := abs(root, in.JournalRel)
+	v2 := in.JournalVersion == 2 && in.Recovery == ""
+	var backups []string
+	removeBackups := func() {
+		for _, b := range backups {
+			os.Remove(b)
+		}
+	}
 	fail := func(cause error, uncertain bool) (Result, error) {
-		cleanupStage()
+		// A v2 journal names the staged files and backups as its images.
+		if !v2 {
+			cleanupStage()
+		}
 		return res, &RecoveryRequiredError{TransactionID: in.TransactionID, JournalPath: jp, Cause: cause, Uncertain: uncertain}
 	}
 	syncOK := true
@@ -259,20 +310,62 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 		return nil
 	}
 
+	// Journal v2: hard-link each before image to its backup name, check
+	// it is still the prepared before image, and make the staged files
+	// and links durable before the journal names them.
+	if v2 {
+		abort := func(err error) (Result, error) {
+			removeBackups()
+			cleanupStage()
+			return res, err
+		}
+		dirs := map[string]bool{}
+		for _, t := range in.Targets {
+			if t.Stage != "" {
+				dirs[filepath.Dir(abs(root, t.Stage))] = true
+			}
+			if t.Backup == "" {
+				continue
+			}
+			bp := abs(root, t.Backup)
+			if err := os.Link(abs(root, t.Rel), bp); err != nil {
+				return abort(err)
+			}
+			backups = append(backups, bp)
+			dirs[filepath.Dir(bp)] = true
+			// The link must be the file the locked recheck hashed.
+			if st, err := os.Stat(bp); err != nil || seen[t.Rel].info == nil || !os.SameFile(st, seen[t.Rel].info) ||
+				st.Size() != seen[t.Rel].info.Size() || !st.ModTime().Equal(seen[t.Rel].info.ModTime()) {
+				return abort(&StaleError{Message: "Workplan state changed after preparation: " + abs(root, t.Rel) + ". Reread the plan and recompute the mutation."})
+			}
+		}
+		if err := h.fault(FaultBackup); err != nil {
+			return abort(err)
+		}
+		for d := range dirs {
+			if err := syncDir(d); err != nil {
+				return abort(err)
+			}
+		}
+	}
+
 	// Durable journal before the first replacement.
 	if in.Recovery == "" {
 		js := abs(root, in.JournalStage)
 		if err := writeExclusive(js, EncodeJournal(in), 0o600); err != nil {
+			removeBackups()
 			cleanupStage()
 			return res, err
 		}
 		if err := h.fault(FaultJournalStage); err != nil {
 			os.Remove(js)
+			removeBackups()
 			cleanupStage()
 			return res, err
 		}
 		if err := os.Link(js, jp); err != nil {
 			os.Remove(js)
+			removeBackups()
 			cleanupStage()
 			if errors.Is(err, fs.ErrExist) {
 				return res, &StaleError{Message: "Workplan transaction pending requires explicit recovery at " + jp}
@@ -330,7 +423,14 @@ func Commit(ctx context.Context, in *Intent, h Hooks) (res Result, err error) {
 	if err := syncDir(filepath.Dir(jp)); err != nil {
 		return fail(err, false)
 	}
+	// The transaction is complete; leftover links are only clutter.
+	removeBackups()
 	res.DirectorySync = syncOK
+	if in.History != nil {
+		if res.HistoryErr = h.fault(FaultHistory); res.HistoryErr == nil {
+			res.HistoryErr = appendChained(root, in.History)
+		}
+	}
 	return res, nil
 }
 

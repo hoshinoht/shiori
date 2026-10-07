@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/hoshinoht/shiori/internal/evidence"
 	"github.com/hoshinoht/shiori/internal/index"
 	"github.com/hoshinoht/shiori/internal/input"
+	"github.com/hoshinoht/shiori/internal/lanes"
 	"github.com/hoshinoht/shiori/internal/model"
 	"github.com/hoshinoht/shiori/internal/ojson"
 	"github.com/hoshinoht/shiori/internal/resume"
@@ -77,6 +79,21 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	}
 	dv := e.dependencies(s, ix)
 	g := e.graph(ix, dv)
+	ev, err := e.loadEvidence(id)
+	if err != nil {
+		return ojson.Value{}, err
+	}
+	lv, err := e.loadLanes(id)
+	if err != nil {
+		return ojson.Value{}, err
+	}
+	owners := stepLanes(lv.ledger)
+	var evViews map[model.StepRef]*evidence.StepView
+	var evCur evidence.Current
+	if ev.ledger != nil {
+		evCur = e.currentTree(ev.ledger, e.lanesOf(id), nil)
+		evViews = ev.ledger.Views(evCur)
+	}
 	phases := []ojson.Value{}
 	steps := []ojson.Value{}
 	for _, it := range items[offset:end] {
@@ -116,6 +133,16 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 		if g != nil {
 			inspectGraphMembers(sb, g, index.StepKey{PhaseID: ph.ID, StepID: st.ID})
 		}
+		if ln := owners[model.StepRef{PhaseID: ph.ID, StepID: st.ID}]; ln != nil {
+			sb.Set("lane", laneRef(ln))
+		}
+		if evViews != nil {
+			if v := evViews[model.StepRef{PhaseID: ph.ID, StepID: st.ID}]; v != nil {
+				sb.Set("evidence", v.Value())
+			} else {
+				sb.Set("evidence", ojson.NewObject(1).Set("state", ojson.StringValue(evidence.StateNone)).Value())
+			}
+		}
 		steps = append(steps, sb.Value())
 	}
 	next := ojson.NullValue()
@@ -137,6 +164,34 @@ func (e *Engine) Inspect(in input.InspectInput) (ojson.Value, error) {
 	// page), only when it chains at least two open steps.
 	if cp, ok := criticalPathValue(g); ok {
 		out.Set("criticalPath", cp)
+	}
+	if lv.exists {
+		lb := ojson.NewObject(3).
+			Set("path", ojson.StringValue(lv.rel)).
+			Set("valid", ojson.BoolValue(lv.ledger != nil))
+		if lv.ledger == nil {
+			lb.Set("issues", ojson.StringsValue(lv.issues))
+		} else {
+			active := []ojson.Value{}
+			for i := range lv.ledger.Lanes {
+				if lanes.Active(lv.ledger.Lanes[i].State) {
+					active = append(active, laneRef(&lv.ledger.Lanes[i]))
+				}
+			}
+			lb.Set("active", ojson.ArrayValue(active))
+		}
+		out.Set("lanes", lb.Value())
+	}
+	if ev.exists {
+		eb := ojson.NewObject(4).
+			Set("path", ojson.StringValue(ev.rel)).
+			Set("valid", ojson.BoolValue(ev.ledger != nil))
+		if ev.ledger == nil {
+			eb.Set("issues", ojson.StringsValue(ev.issues))
+		} else {
+			eb.Set("tree", evCur.TreeValue())
+		}
+		out.Set("evidence", eb.Value())
 	}
 	return out.
 		Set("pagination", ojson.NewObject(5).

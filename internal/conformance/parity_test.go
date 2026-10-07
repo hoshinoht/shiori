@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -59,6 +60,7 @@ func TestCorpusParity(t *testing.T) {
 		if err := json.Unmarshal(data, &v); err != nil {
 			t.Fatal(err)
 		}
+		adaptCaseLookup(&v)
 		cat := strings.SplitN(v.ID, "/", 2)[0]
 		t.Run(v.ID, func(t *testing.T) {
 			recorded := false
@@ -126,14 +128,44 @@ func runVector(t *testing.T, v *vector) (outcome, string) {
 	if runErr != nil {
 		t.Fatalf("listed in %s but failed: %v", testutil.ExpectedFile, runErr)
 	}
+	if v.caseAdapted && strings.Contains(v.ID, "/UPPER--") {
+		// The plan is never opened, so it has no raw hashes.
+		x.Compare = slices.DeleteFunc(slices.Clone(x.Compare), func(c string) bool { return c == "raw-hashes" })
+	}
 	judgeListed(t, v, root, e, in.Value, text, x)
-	if x.Pinned() {
+	switch {
+	case !x.Pinned():
+	case testutil.CaseLookupMissing(v.Fixture, text):
+		// The pin records APFS output, where the plan was read.
+		t.Logf("pin recorded on a case-insensitive filesystem; not comparable here")
+	default:
 		budgeted := v.Call.Tool == "workplan_resume"
 		if !budgeted || root.SameLength() {
 			testutil.CheckPin(t, v.ID, x, sha(root.Normalize(text)), ojson.UTF16Len(text), root.SameLength())
 		}
 	}
 	return outDifference, v.ID + ": " + x.Reason + " (" + x.Contracts + ")"
+}
+
+// adaptCaseLookup rewrites an APFS-only oracle for a case-sensitive
+// filesystem and recomputes its hash.
+func adaptCaseLookup(v *vector) {
+	msg, a := testutil.AdaptCaseLookup(v.Fixture, v.Expect.Message)
+	out, b := testutil.AdaptCaseLookup(v.Fixture, string(v.Expect.Output))
+	c := false
+	if v.Expect.OutputText != nil {
+		var txt string
+		txt, c = testutil.AdaptCaseLookup(v.Fixture, *v.Expect.OutputText)
+		v.Expect.OutputText = &txt
+	}
+	if !a && !b && !c {
+		return
+	}
+	v.caseAdapted = true
+	v.Expect.Message, v.Expect.Output = msg, json.RawMessage(out)
+	if v.Expect.Kind != "error" {
+		v.Expect.OutputSha256 = sha(oracleText(v))
+	}
 }
 
 // readLayers are the documented read-path differences, in the order their
@@ -287,7 +319,7 @@ func judgeOracle(t *testing.T, v *vector, root testutil.Root, text string, runEr
 	got := root.Normalize(text)
 	want := oracleText(v)
 	if sha(got) == v.Expect.OutputSha256 && got == want {
-		if root.SameLength() && ojson.UTF16Len(text) != v.Expect.RawOutputLength {
+		if root.SameLength() && !v.caseAdapted && ojson.UTF16Len(text) != v.Expect.RawOutputLength {
 			t.Fatalf("raw length %d want %d", ojson.UTF16Len(text), v.Expect.RawOutputLength)
 		}
 		return
